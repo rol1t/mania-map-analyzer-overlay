@@ -1,7 +1,7 @@
 # Mania Map Analyzer Overlay
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
-![Version](https://img.shields.io/badge/version-1.0.1-ff4f9b)
+![Version](https://img.shields.io/badge/version-1.1.0-ff4f9b)
 ![License](https://img.shields.io/badge/launcher-MIT-4cbe89)
 ![AI assisted](https://img.shields.io/badge/development-AI%20assisted-7357ff)
 
@@ -45,7 +45,7 @@ For complete control, select **Custom CSS** and edit `overlay-custom.css` next t
 
 ## Updates and osu!lazer compatibility
 
-At startup the launcher checks the latest official releases of tosu and ManiaMapAnalyser. For osu!lazer it also verifies the availability of a matching offsets file. Analysis data stays on `127.0.0.1:24050`.
+At startup the launcher checks its own latest GitHub Release and offers a one-click update when a newer version is available. The external updater safely replaces the application after shutdown, preserves settings and `overlay-custom.css`, and automatically restarts it. The launcher also checks official tosu and ManiaMapAnalyser releases and verifies a matching offsets file for osu!lazer. Analysis data stays on `127.0.0.1:24050`.
 
 ## Building from source
 

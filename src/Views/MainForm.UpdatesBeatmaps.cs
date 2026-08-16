@@ -20,13 +20,13 @@ namespace ManiaMapAnalyzerOverlay
 {
     internal sealed partial class MainForm : Form
     {
-        private async Task CheckAndApplyUpdatesAsync()
+        private async Task<bool> CheckAndApplyUpdatesAsync()
         {
             string updateScript = Path.Combine(Application.StartupPath, "Update-ManiaMapAnalyzerOverlay.ps1");
             if (!File.Exists(updateScript))
             {
                 startupUpdateSuffix = UiText.Get(" · проверка обновлений не установлена", " · update checker is not installed");
-                return;
+                return true;
             }
 
             SetStatus(UiText.Get("Проверка обновлений…", "Checking for updates…"), null);
@@ -56,6 +56,25 @@ namespace ManiaMapAnalyzerOverlay
                 }
 
                 startupCompatibility = GetJsonString(result, "Compatibility");
+                bool launcherUpdateAvailable = GetJsonBoolean(result, "LauncherUpdateAvailable");
+                string latestLauncherVersion = GetJsonString(result, "LatestLauncherVersion");
+                if (launcherUpdateAvailable)
+                {
+                    DialogResult choice = MessageBox.Show(
+                        UiText.Get(
+                            "Доступна новая версия Mania Map Analyzer Overlay " + latestLauncherVersion + ".\r\n\r\nОбновить приложение сейчас? Оно автоматически перезапустится, а настройки и пользовательский CSS сохранятся.",
+                            "A new version of Mania Map Analyzer Overlay " + latestLauncherVersion + " is available.\r\n\r\nUpdate now? The application will restart automatically, while settings and custom CSS are preserved."),
+                        UiText.Get("Доступно обновление", "Update available"),
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Information);
+
+                    if (choice == DialogResult.Yes && StartSelfUpdate(updateScript))
+                    {
+                        Close();
+                        return false;
+                    }
+                }
+
                 bool updatedTosu = GetJsonBoolean(result, "UpdatedTosu");
                 bool updatedAddon = GetJsonBoolean(result, "UpdatedAddon");
                 string latestTosu = GetJsonString(result, "LatestTosu");
@@ -102,6 +121,35 @@ namespace ManiaMapAnalyzerOverlay
                 catch
                 {
                 }
+            }
+            return true;
+        }
+
+        private static bool StartSelfUpdate(string scriptPath)
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo();
+                startInfo.FileName = "powershell.exe";
+                startInfo.Arguments =
+                    "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + QuoteArgument(scriptPath) +
+                    " -SelfUpdate -InstallPath " + QuoteArgument(Application.StartupPath) +
+                    " -WaitForProcessId " + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture) +
+                    " -Quiet";
+                startInfo.WorkingDirectory = Application.StartupPath;
+                startInfo.UseShellExecute = false;
+                startInfo.CreateNoWindow = true;
+                startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                return Process.Start(startInfo) != null;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    UiText.Get("Не удалось запустить самообновление.\r\n\r\n", "Could not start self-update.\r\n\r\n") + ex.Message,
+                    UiText.Get("Ошибка обновления", "Update error"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return false;
             }
         }
 
