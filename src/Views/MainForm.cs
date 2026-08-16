@@ -27,10 +27,11 @@ namespace ManiaMapAnalyzerOverlay
         private const int OverlayInputHotkeyId = 0x4D42;
         private const int WmHotkey = 0x0312;
         private const int WmMouseActivate = 0x0021;
+        private const int WmNcHitTest = 0x0084;
         private const int WmNcLButtonDown = 0x00A1;
         private const int MaNoActivate = 3;
+        private const int HtTransparent = -1;
         private const int HtCaption = 0x0002;
-        private const int GwlExStyle = -20;
         private const int WsExToolWindow = 0x00000080;
         private const int WsExTransparent = 0x00000020;
         private const int WsExNoActivate = 0x08000000;
@@ -62,6 +63,7 @@ namespace ManiaMapAnalyzerOverlay
         private bool overlayInputBeforePlay;
         private bool overlayExitHotkeyRegistered;
         private bool overlayInputHotkeyRegistered;
+        private System.Windows.Forms.Timer overlayInputGuardTimer;
         private Rectangle normalBounds;
         private LauncherSettings launcherSettings;
         private string startupUpdateSuffix = "";

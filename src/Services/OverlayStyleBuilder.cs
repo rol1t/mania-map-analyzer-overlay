@@ -45,6 +45,35 @@ namespace ManiaMapAnalyzerOverlay
                 "html.launcher-overlay-host .pause-count{font-size:" + Pixels(12, scale) + "!important;}";
         }
 
+        internal static string BuildReadableTypographyCss(double scale)
+        {
+            string small = "clamp(" + Pixels(12, scale) + ",var(--mma-type-small)," + Pixels(16, scale) + ")";
+            string body = "clamp(" + Pixels(15, scale) + ",var(--mma-type-body)," + Pixels(20, scale) + ")";
+            string heading = "clamp(" + Pixels(18, scale) + ",var(--mma-type-heading)," + Pixels(26, scale) + ")";
+            string rating = "clamp(" + Pixels(24, scale) + ",var(--mma-type-rating)," + Pixels(34, scale) + ")";
+
+            return
+                "html.mma-layout-default,html.mma-layout-custom{--mma-type-small:2.9vw;--mma-type-body:3.6vw;--mma-type-heading:4.5vw;--mma-type-rating:6.4vw;}" +
+                "html.mma-layout-horizontal{--mma-type-small:1.35vw;--mma-type-body:1.75vw;--mma-type-heading:2.25vw;--mma-type-rating:3.1vw;}" +
+                "html.mma-layout-companella{--mma-type-small:1.95vw;--mma-type-body:2.55vw;--mma-type-heading:3.15vw;--mma-type-rating:4.15vw;}" +
+                "html.launcher-overlay-host .status{font-size:" + body + "!important;}" +
+                "html.launcher-overlay-host .star-meta,html.launcher-overlay-host .star-caption{font-size:" + small + "!important;}" +
+                "html.launcher-overlay-host .star-subtitle{font-size:" + heading + "!important;}" +
+                "html.launcher-overlay-host .star-value.category-mode{font-size:" + heading + "!important;}" +
+                "html.launcher-overlay-host .cluster-label,html.launcher-overlay-host .ett-skill-label{font-size:" + body + "!important;}" +
+                "html.launcher-overlay-host .cluster-subtype,html.launcher-overlay-host .ett-skill-head,html.launcher-overlay-host .mode-tag,html.launcher-overlay-host .pause-count{font-size:" + small + "!important;}" +
+                "html.mma-layout-companella .mma-comp-meta,html.mma-layout-companella .mma-comp-summary-label,html.mma-layout-companella .mma-comp-summary-note,html.mma-layout-companella .mma-comp-number,html.mma-layout-companella .mode-tag{font-size:" + small + "!important;}" +
+                "html.mma-layout-companella .mma-comp-summary-value,html.mma-layout-companella .mma-comp-label{font-size:" + body + "!important;}" +
+                "html.mma-layout-companella .mma-comp-summary-rating .mma-comp-summary-value{font-size:" + rating + "!important;}";
+        }
+
+        internal static string BuildInteractionCss()
+        {
+            return
+                "html.launcher-overlay-host .main-card,html.launcher-overlay-host .main-card *{-webkit-user-select:none!important;user-select:none!important;-webkit-user-drag:none!important;}" +
+                "html.launcher-transparent-overlay,html.launcher-transparent-overlay body,html.launcher-transparent-overlay .main-card,html.launcher-transparent-overlay .main-card *{cursor:none!important;}";
+        }
+
         internal static string BuildCompanellaCss(double scale, string width)
         {
             return

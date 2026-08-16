@@ -191,6 +191,7 @@ namespace ManiaMapAnalyzerOverlay
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
+            StopOverlayInputGuard();
             SaveOverlayBounds();
             SetOverlayClickThrough(false);
             closing = true;
@@ -337,11 +338,14 @@ namespace ManiaMapAnalyzerOverlay
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr window, int id);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern int GetWindowLong(IntPtr window, int index);
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr window);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern int SetWindowLong(IntPtr window, int index, int newStyle);
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr window);
 
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();

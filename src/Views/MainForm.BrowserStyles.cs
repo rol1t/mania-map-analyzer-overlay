@@ -191,6 +191,9 @@ namespace ManiaMapAnalyzerOverlay
                     "html.mma-layout-companella{--mma-host-width:min(" + companellaWidth + ",calc(100vw - 36px))!important;}";
             }
 
+            css += OverlayStyleBuilder.BuildReadableTypographyCss(nativeScale);
+            string interactionCss = OverlayStyleBuilder.BuildInteractionCss();
+
             var serializer = new JavaScriptSerializer();
             string script =
                 "(function(){" +
@@ -200,12 +203,16 @@ namespace ManiaMapAnalyzerOverlay
                 "var c=document.getElementById('launcher-custom-style');" +
                 "if(!c){c=document.createElement('style');c.id='launcher-custom-style';document.head.appendChild(c);}" +
                 "c.textContent=" + serializer.Serialize(customCss) + ";" +
+                "var i=document.getElementById('launcher-interaction-style');" +
+                "if(!i){i=document.createElement('style');i.id='launcher-interaction-style';document.head.appendChild(i);}" +
+                "i.textContent=" + serializer.Serialize(interactionCss) + ";" +
                 "document.documentElement.classList.toggle('launcher-overlay-host',true);" +
+                "document.documentElement.classList.toggle('launcher-transparent-overlay'," + (overlayMode ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-default'," + (layoutMode == "default" ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-horizontal'," + (layoutMode == "horizontal" ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-companella'," + (layoutMode == "companella" ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-custom'," + (layoutMode == "custom" ? "true" : "false") + ");" +
-                "var card=document.querySelector('.main-card');var details=document.getElementById('mma-host-details');" +
+                "var card=document.querySelector('.main-card');if(card){card.setAttribute('unselectable','on');card.ondragstart=function(){return false;};card.onselectstart=function(){return false;};}var details=document.getElementById('mma-host-details');" +
                 "if(card&&" + (layoutMode == "horizontal" || layoutMode == "companella" ? "true" : "false") + "){" +
                 "if(!details){details=document.createElement('div');details.id='mma-host-details';details.className='mma-host-details';" +
                 "var anchor=card.querySelector('.mode-tag-group');card.insertBefore(details,anchor);" +

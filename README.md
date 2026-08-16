@@ -1,7 +1,7 @@
 # Mania Map Analyzer Overlay
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
-![Version](https://img.shields.io/badge/version-1.0.0-ff4f9b)
+![Version](https://img.shields.io/badge/version-1.0.1-ff4f9b)
 ![License](https://img.shields.io/badge/launcher-MIT-4cbe89)
 ![AI assisted](https://img.shields.io/badge/development-AI%20assisted-7357ff)
 
