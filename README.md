@@ -60,7 +60,13 @@ The build script downloads the pinned WebView2 SDK package from NuGet, compiles 
 ## Project structure
 
 ```text
-src/                       WinForms launcher source
+src/Program.cs             application entry point and single-instance guard
+src/Models/                persisted launcher settings
+src/Properties/            assembly metadata and version
+src/Services/              custom CSS and overlay style generation
+src/Views/MainForm.cs      window construction and primary commands
+src/Views/MainForm.*.cs    browser, updates, overlay, and tosu responsibilities
+src/Views/OverlayStyleDialog.cs
 assets/                    editable CSS template
 scripts/                   build and component updater scripts
 LICENSES/                  bundled third-party license texts

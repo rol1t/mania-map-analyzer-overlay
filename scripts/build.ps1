@@ -30,12 +30,14 @@ New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 $core = Join-Path $sdkRoot "lib\net462\Microsoft.Web.WebView2.Core.dll"
 $forms = Join-Path $sdkRoot "lib\net462\Microsoft.Web.WebView2.WinForms.dll"
 $exe = Join-Path $outputPath "Mania Map Analyzer Overlay.exe"
+$sourceFiles = @(Get-ChildItem (Join-Path $repoRoot "src") -Filter "*.cs" -Recurse | ForEach-Object { $_.FullName })
+if ($sourceFiles.Count -eq 0) { throw "No C# source files were found." }
 
 & $csc /nologo /target:winexe /platform:x64 /optimize+ /out:$exe `
     /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll `
     /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll `
     /reference:$core /reference:$forms `
-    (Join-Path $repoRoot "src\ManiaMapAnalyzerOverlay.cs")
+    $sourceFiles
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE." }
 
 Copy-Item $core, $forms -Destination $outputPath -Force
