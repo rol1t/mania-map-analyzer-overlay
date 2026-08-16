@@ -1,0 +1,33 @@
+/*
+  Custom overlay styles / Пользовательские стили оверлея
+
+  Edit values below, save the file, then choose:
+  Appearance -> Custom CSS -> Apply.
+
+  Измените значения, сохраните файл, затем выберите:
+  Оформление -> Пользовательский CSS -> Применить.
+*/
+
+:root {
+  --custom-accent: #ef5d83;
+  --custom-background: rgba(12, 14, 22, 0.88);
+  --custom-text: #f4f5fa;
+  --custom-radius: 18px;
+}
+
+body {
+  color: var(--custom-text) !important;
+}
+
+#app,
+.main,
+.container {
+  border-radius: var(--custom-radius) !important;
+}
+
+/* Example / Пример:
+.skill-bar,
+.progress-bar {
+  background: var(--custom-accent) !important;
+}
+*/

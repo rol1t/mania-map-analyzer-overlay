@@ -1,0 +1,12 @@
+.vs/
+.vscode/
+artifacts/
+packages/
+.packages/
+*.user
+*.suo
+*.pdb
+*.zip
+install-state.json
+tosu/logs/
+tosu/.cache/
