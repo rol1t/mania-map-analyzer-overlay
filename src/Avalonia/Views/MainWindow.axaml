@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ManiaMapAnalyzerOverlay.Avalonia.ViewModels"
+        x:Class="ManiaMapAnalyzerOverlay.Avalonia.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Width="720" Height="840" MinWidth="650" MinHeight="740"
+        Background="#0E1016" Title="Mania Map Analyzer Overlay">
+  <Grid x:Name="RootGrid" RowDefinitions="150,*">
+    <Border x:Name="Toolbar" Background="#181B24" Padding="18,12,14,10">
+      <Grid RowDefinitions="Auto,Auto,*">
+        <TextBlock Text="MANIA  MAP  ANALYSER" FontSize="16" FontWeight="Bold" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="2,9,0,0">
+          <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#F5B342" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding Status}" Foreground="#B2B8C7" VerticalAlignment="Center" />
+        </StackPanel>
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button x:Name="AnalysisButton" Click="Analysis_Click" Margin="0,0,8,8" />
+            <Button x:Name="AppearanceButton" Click="Appearance_Click" Margin="0,0,8,8" />
+            <Button x:Name="OverlayButton" Click="Overlay_Click" Margin="0,0,8,8" Background="#335C7E" />
+            <Button x:Name="FullscreenButton" Click="Fullscreen_Click" Margin="0,0,8,8" />
+            <Button x:Name="DashboardButton" Click="Dashboard_Click" Margin="0,0,8,8" />
+            <Button x:Name="RestartButton" Click="Restart_Click" Margin="0,0,8,8" />
+            <Button x:Name="LanguageButton" Click="Language_Click" Margin="0,0,8,8" />
+            <Button x:Name="ExitButton" Click="Exit_Click" Margin="0,0,8,8" Background="#A2334B" />
+        </WrapPanel>
+      </Grid>
+    </Border>
+    <NativeWebView x:Name="Browser" Grid.Row="1" Background="#0E1016"
+                   NavigationCompleted="Browser_NavigationCompleted"
+                   WebMessageReceived="Browser_WebMessageReceived"
+                   NewWindowRequested="Browser_NewWindowRequested" />
+  </Grid>
+</Window>

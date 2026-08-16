@@ -1,0 +1,13 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ManiaMapAnalyzerOverlay.Avalonia.Views.MessageDialog"
+        Width="520" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+  <Grid RowDefinitions="Auto,Auto" Margin="24">
+    <TextBlock x:Name="MessageText" FontSize="15" TextWrapping="Wrap" MaxWidth="470" />
+    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,24,0,0">
+      <Button x:Name="NoButton" Click="No_Click" MinWidth="90" />
+      <Button x:Name="YesButton" Click="Yes_Click" MinWidth="90" />
+    </StackPanel>
+  </Grid>
+</Window>

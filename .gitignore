@@ -1,5 +1,7 @@
 .vs/
 .vscode/
+**/bin/
+**/obj/
 artifacts/
 packages/
 .packages/

@@ -1,11 +1,18 @@
 # Mania Map Analyzer Overlay
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
-![Version](https://img.shields.io/badge/version-1.3.0-ff4f9b)
+![Avalonia](https://img.shields.io/badge/UI-Avalonia-8b5cf6)
+![Version](https://img.shields.io/badge/version-2.0.0-ff4f9b)
 ![License](https://img.shields.io/badge/launcher-MIT-4cbe89)
 ![AI assisted](https://img.shields.io/badge/development-AI%20assisted-7357ff)
 
-A lightweight Windows launcher that starts **tosu**, displays live osu!mania map analysis, provides a clean desktop overlay, and guarantees that tosu is closed with the application.
+A lightweight Avalonia launcher that starts **tosu**, displays live osu!mania map analysis, provides a clean desktop overlay, and guarantees that tosu is closed with the application.
+
+## Platform support
+
+The application uses .NET 8 and Avalonia. The shipped installer is a self-contained Windows 10/11 build. Its native WebView uses Microsoft Edge WebView2, included with Windows 11 and installed by the WebView2 Runtime on supported Windows 10 systems.
+
+The desktop shell, tosu lifecycle, settings, layouts, custom CSS, and native WebView abstraction are cross-platform. macOS and Linux packages can use WKWebView and WebKitGTK/WPE respectively; the Windows-only features are desktop click-through/global overlay hotkeys and tosu's official osu!stable exclusive-fullscreen overlay.
 
 ## Highlights
 
@@ -19,7 +26,7 @@ A lightweight Windows launcher that starts **tosu**, displays live osu!mania map
 - Native 50–180% sizing and Per-Monitor DPI V2 rendering without bitmap blur.
 - Beatmap cover art, SR, BPM, Set ID, Map ID, difficulty/Dan label, LN ratio, key count, and pattern details.
 - English and Russian interface; switch with the **EN/RU** button.
-- The default desktop mode uses one WebView2 instance and one local WebSocket connection for low resource use.
+- The default desktop mode uses one native WebView and one local WebSocket connection for low resource use.
 
 ## Displayed data reference
 
@@ -168,24 +175,23 @@ At startup the launcher checks its own latest GitHub Release and offers a one-cl
 
 ## Building from source
 
-Requirements: Windows 10/11, Windows PowerShell 5.1, .NET Framework 4.8, and Microsoft Edge WebView2 Runtime.
+Requirements for source builds: .NET 8 SDK and PowerShell. The released Windows installer is self-contained and does not require a separately installed .NET runtime.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
-The build script downloads the pinned WebView2 SDK package from NuGet, compiles the WinForms launcher, and prepares the installer payload in `artifacts\payload`.
+The build script publishes the Avalonia launcher as a self-contained `win-x64` application and prepares the installer payload in `artifacts\payload`.
 
 ## Project structure
 
 ```text
-src/Program.cs             application entry point and single-instance guard
-src/Models/                persisted launcher settings
-src/Properties/            assembly metadata and version
-src/Services/              custom CSS and overlay style generation
-src/Views/MainForm.cs      window construction and primary commands
-src/Views/MainForm.*.cs    browser, updates, overlay, and tosu responsibilities
-src/Views/OverlayStyleDialog.cs
+src/Avalonia/              Avalonia application project
+src/Avalonia/Models/       persisted launcher settings
+src/Avalonia/Services/     tosu lifecycle, updates, CSS and fullscreen integration
+src/Avalonia/Platform/     Windows-specific overlay and process adapters
+src/Avalonia/Views/        main window and appearance dialogs
+src/Services/              shared CSS/style and UI-text helpers
 assets/                    editable CSS template
 scripts/                   build and component updater scripts
 LICENSES/                  bundled third-party license texts
@@ -199,7 +205,8 @@ This project integrates, but does not claim authorship of:
 
 - [tosu](https://github.com/tosuapp/tosu) — LGPL-3.0.
 - [ManiaMapAnalyser by Leo_Black](https://github.com/LeoBlackMT/osumania_map_analyser) — MIT.
-- [Microsoft Edge WebView2](https://github.com/MicrosoftEdge/WebView2Feedback) and the [`Microsoft.Web.WebView2`](https://www.nuget.org/packages/Microsoft.Web.WebView2) SDK package.
+- [Avalonia](https://avaloniaui.net/) — MIT.
+- [Avalonia.Controls.WebView](https://github.com/AvaloniaUI/Avalonia.Controls.WebView) — MIT; it uses WebView2 on Windows, WKWebView on macOS, and WebKit on Linux.
 - osu!lazer compatibility offsets from [tosu.app](https://tosu.app/) with [osuck.net](https://osuck.net/) as the updater fallback.
 
 The Companella preset is an original CSS/DOM adaptation inspired by a visual reference supplied by the project owner. No Companella source code or assets are bundled.
