@@ -149,11 +149,11 @@ namespace ManiaMapAnalyzerOverlay
             Region = null;
             if (oldRegion != null)
                 oldRegion.Dispose();
-            layout.RowStyles[0].Height = 108F;
+            layout.RowStyles[0].Height = NormalTopBarHeight;
             topBar.Visible = true;
             TopMost = false;
             FormBorderStyle = FormBorderStyle.Sizable;
-            MinimumSize = new Size(650, 720);
+            MinimumSize = new Size(650, 740);
             MaximizeBox = true;
             browser.DefaultBackgroundColor = Color.FromArgb(14, 16, 22);
             if (!normalBounds.IsEmpty)

@@ -26,6 +26,7 @@ namespace ManiaMapAnalyzerOverlay
             analysisButton.Enabled = false;
             designButton.Enabled = false;
             overlayButton.Enabled = false;
+            fullscreenOverlayButton.Enabled = false;
             dashboardButton.Enabled = false;
             SetStatus(UiText.Get("Перезапуск tosu…", "Restarting tosu…"), null);
             ShutdownTosu();
@@ -41,11 +42,13 @@ namespace ManiaMapAnalyzerOverlay
                 SetStatus(UiText.Get("Файл tosu.exe не найден", "tosu.exe was not found"), false);
                 ShowMessagePage(UiText.Get("tosu не найден", "tosu was not found"), UiText.Get("Проверьте, что папка tosu лежит рядом с приложением.", "Make sure the tosu folder is next to the application."), true);
                 restartButton.Enabled = true;
+                fullscreenOverlayButton.Enabled = false;
                 return;
             }
 
             try
             {
+                SynchronizeFullscreenOverlayState();
                 StopStaleBundledInstances(executable);
                 CreateKillOnCloseJob();
 
@@ -81,6 +84,7 @@ namespace ManiaMapAnalyzerOverlay
                 analysisButton.Enabled = true;
                 designButton.Enabled = true;
                 overlayButton.Enabled = true;
+                fullscreenOverlayButton.Enabled = true;
                 dashboardButton.Enabled = true;
                 restartButton.Enabled = true;
                 Navigate(OverlayUrl);
@@ -91,6 +95,7 @@ namespace ManiaMapAnalyzerOverlay
                 SetStatus(UiText.Get("tosu не запущен", "tosu is not running"), false);
                 ShowMessagePage(UiText.Get("Не удалось запустить tosu", "Could not start tosu"), ex.Message + "\n\n" + UiText.Get("Нажмите «Перезапустить», чтобы попробовать ещё раз.", "Click Restart to try again."), true);
                 restartButton.Enabled = true;
+                fullscreenOverlayButton.Enabled = false;
             }
         }
 
@@ -178,6 +183,7 @@ namespace ManiaMapAnalyzerOverlay
                     analysisButton.Enabled = false;
                     designButton.Enabled = false;
                     overlayButton.Enabled = false;
+                    fullscreenOverlayButton.Enabled = false;
                     dashboardButton.Enabled = false;
                     restartButton.Enabled = true;
                     SetStatus(UiText.Get("tosu остановлен", "tosu has stopped"), false);

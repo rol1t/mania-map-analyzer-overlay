@@ -23,6 +23,8 @@ namespace ManiaMapAnalyzerOverlay
         private const string BaseUrl = "http://127.0.0.1:24050";
         private const string OverlayUrl = BaseUrl + "/ManiaMapAnalyser/?launcher=4";
         private const string DesignUrl = BaseUrl + "/settings?overlay=ManiaMapAnalyser";
+        private const string FullscreenOverlayEditorUrl = BaseUrl + "/api/ingame?edit=true";
+        private const int NormalTopBarHeight = 150;
         private const int OverlayExitHotkeyId = 0x4D41;
         private const int OverlayInputHotkeyId = 0x4D42;
         private const int WmHotkey = 0x0312;
@@ -46,6 +48,7 @@ namespace ManiaMapAnalyzerOverlay
         private readonly Button analysisButton;
         private readonly Button designButton;
         private readonly Button overlayButton;
+        private readonly Button fullscreenOverlayButton;
         private readonly Button dashboardButton;
         private readonly Button restartButton;
         private readonly Button languageButton;
@@ -76,8 +79,8 @@ namespace ManiaMapAnalyzerOverlay
             Text = UiText.Get("Mania Map Analyzer Overlay — анализ карты", "Mania Map Analyzer Overlay — map analysis");
             ShowIcon = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(680, 780);
-            MinimumSize = new Size(650, 720);
+            ClientSize = new Size(680, 810);
+            MinimumSize = new Size(650, 740);
             BackColor = Color.FromArgb(14, 16, 22);
             ForeColor = Color.White;
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
@@ -92,7 +95,7 @@ namespace ManiaMapAnalyzerOverlay
 
             topBar = new Panel();
             topBar.Dock = DockStyle.Top;
-            topBar.Height = 108;
+            topBar.Height = NormalTopBarHeight;
             topBar.BackColor = Color.FromArgb(24, 27, 36);
             topBar.Padding = new Padding(18, 12, 14, 10);
 
@@ -118,12 +121,16 @@ namespace ManiaMapAnalyzerOverlay
             analysisButton.Click += delegate { Navigate(OverlayUrl); };
 
             designButton = CreateButton(UiText.Get("Оформление", "Appearance"), 94);
-            designButton.Click += delegate { ShowOverlayStyleDialog(); };
+            designButton.Click += async delegate { await ShowOverlayStyleDialogAsync(); };
 
             overlayButton = CreateButton(UiText.Get("Оверлей", "Overlay"), 82);
             overlayButton.BackColor = Color.FromArgb(51, 92, 126);
             overlayButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(63, 111, 150);
             overlayButton.Click += delegate { EnterOverlayMode(); };
+
+            fullscreenOverlayButton = CreateButton("", 132);
+            fullscreenOverlayButton.Click += async delegate { await ToggleFullscreenOverlayAsync(); };
+            UpdateFullscreenOverlayButton();
 
             dashboardButton = CreateButton(UiText.Get("Панель tosu", "tosu panel"), 94);
             dashboardButton.Click += delegate { Navigate(BaseUrl + "/"); };
@@ -141,13 +148,14 @@ namespace ManiaMapAnalyzerOverlay
 
             var buttons = new FlowLayoutPanel();
             buttons.Dock = DockStyle.Bottom;
-            buttons.Height = 48;
+            buttons.Height = 88;
             buttons.FlowDirection = FlowDirection.LeftToRight;
-            buttons.WrapContents = false;
+            buttons.WrapContents = true;
             buttons.Padding = new Padding(8, 6, 0, 0);
             buttons.Controls.Add(analysisButton);
             buttons.Controls.Add(designButton);
             buttons.Controls.Add(overlayButton);
+            buttons.Controls.Add(fullscreenOverlayButton);
             buttons.Controls.Add(dashboardButton);
             buttons.Controls.Add(restartButton);
             buttons.Controls.Add(languageButton);
@@ -170,7 +178,7 @@ namespace ManiaMapAnalyzerOverlay
             layout.ColumnCount = 1;
             layout.RowCount = 2;
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 108F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, NormalTopBarHeight));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             topBar.Dock = DockStyle.Fill;
@@ -218,6 +226,7 @@ namespace ManiaMapAnalyzerOverlay
             overlayButton.Text = UiText.Get("Оверлей", "Overlay");
             dashboardButton.Text = UiText.Get("Панель tosu", "tosu panel");
             restartButton.Text = UiText.Get("Перезапустить", "Restart");
+            UpdateFullscreenOverlayButton();
             languageButton.Text = UiText.IsEnglish ? "RU" : "EN";
             exitButton.Text = UiText.Get("Выход", "Exit");
             SetStatus(UiText.Get("Язык интерфейса: русский", "Interface language: English"), true);
@@ -228,6 +237,7 @@ namespace ManiaMapAnalyzerOverlay
             analysisButton.Enabled = false;
             designButton.Enabled = false;
             overlayButton.Enabled = false;
+            fullscreenOverlayButton.Enabled = false;
             dashboardButton.Enabled = false;
             restartButton.Enabled = false;
 

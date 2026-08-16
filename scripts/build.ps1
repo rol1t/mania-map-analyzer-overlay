@@ -49,6 +49,7 @@ Copy-Item (Join-Path $repoRoot "assets\overlay-custom.css") $outputPath -Force
 Copy-Item (Join-Path $repoRoot "README.md") $outputPath -Force
 Copy-Item (Join-Path $repoRoot "LICENSE") $outputPath -Force
 Copy-Item (Join-Path $repoRoot "LICENSES") $outputPath -Recurse -Force
+Copy-Item (Join-Path $repoRoot "docs") $outputPath -Recurse -Force
 
-Write-Host "Launcher 1.2.0 built at: $outputPath"
+Write-Host "Launcher 1.3.0 built at: $outputPath"
 Write-Host "Run Update-ManiaMapAnalyzerOverlay.ps1 to download pinned runtime components."

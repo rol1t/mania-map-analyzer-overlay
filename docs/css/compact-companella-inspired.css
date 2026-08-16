@@ -1,0 +1,171 @@
+/*
+  Compact Companella-inspired custom layout
+
+  Usage:
+  1. Open Appearance and select Custom CSS.
+  2. Copy this file into overlay-custom.css.
+  3. Save and click Apply.
+
+  This example rearranges ManiaMapAnalyser's standard elements. The built-in
+  Companella preset also has launcher-generated SR/BPM/Set/Map/DAN summary cards,
+  which cannot be created with CSS alone.
+*/
+
+html.mma-layout-custom {
+    --mma-custom-width: var(--mma-host-width, 760px);
+    --comp-accent: #ff4f9b;
+    --comp-text: #f7f7fb;
+    --comp-muted: #aeb3c2;
+    --comp-panel: rgba(10, 12, 18, 0.82);
+    --comp-tile: rgba(16, 19, 29, 0.72);
+    --comp-border: rgba(255, 255, 255, 0.15);
+}
+
+html.mma-layout-custom .dashboard {
+    width: var(--mma-custom-width) !important;
+    min-width: var(--mma-custom-width) !important;
+    max-width: var(--mma-custom-width) !important;
+}
+
+html.mma-layout-custom .card.main-card {
+    display: grid !important;
+    grid-template-columns: minmax(180px, 30%) minmax(0, 70%) !important;
+    grid-auto-rows: auto !important;
+    column-gap: 18px !important;
+    row-gap: 8px !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    padding: 14px 16px 32px !important;
+    overflow: hidden !important;
+    color: var(--comp-text) !important;
+    background:
+        linear-gradient(100deg, rgba(5, 7, 12, 0.88), rgba(8, 10, 16, 0.78)),
+        var(--ma-cover, var(--comp-panel)) !important;
+    background-position: center !important;
+    background-size: cover !important;
+    border: 1px solid var(--comp-border) !important;
+    border-bottom: 3px solid var(--comp-accent) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+
+html.mma-layout-custom .status-row {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding-bottom: 7px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.16) !important;
+}
+
+html.mma-layout-custom .status {
+    overflow: hidden !important;
+    color: var(--comp-text) !important;
+    font-family: "Segoe UI", sans-serif !important;
+    font-weight: 650 !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+html.mma-layout-custom .star-block {
+    grid-column: 1 !important;
+    grid-row: 2 / span 10 !important;
+    align-self: start !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    min-width: 0 !important;
+    padding: 12px !important;
+    background: var(--comp-tile) !important;
+    border: 1px solid var(--comp-border) !important;
+    border-radius: 8px !important;
+}
+
+html.mma-layout-custom .star-left,
+html.mma-layout-custom .star-right-group {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+html.mma-layout-custom .star-right {
+    align-items: flex-start !important;
+    justify-items: start !important;
+    text-align: left !important;
+}
+
+html.mma-layout-custom .star-value {
+    color: #ffffff !important;
+    background: var(--comp-accent) !important;
+    border-radius: 8px !important;
+    text-shadow: none !important;
+}
+
+html.mma-layout-custom .star-meta,
+html.mma-layout-custom .star-caption,
+html.mma-layout-custom .cluster-subtype,
+html.mma-layout-custom .ett-skill-head {
+    color: var(--comp-muted) !important;
+}
+
+html.mma-layout-custom #sep-pattern,
+html.mma-layout-custom #pattern-clusters,
+html.mma-layout-custom #sep-etterna,
+html.mma-layout-custom #ett-skill-bars,
+html.mma-layout-custom #sep-graph,
+html.mma-layout-custom #body-graph-wrap {
+    grid-column: 2 !important;
+    min-width: 0 !important;
+}
+
+html.mma-layout-custom .cluster-bars,
+html.mma-layout-custom .ett-skill-bars {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding-bottom: 20px !important;
+    overflow: visible !important;
+}
+
+html.mma-layout-custom .cluster-track,
+html.mma-layout-custom .ett-skill-track {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-radius: 999px !important;
+}
+
+html.mma-layout-custom .cluster-fill,
+html.mma-layout-custom .ett-skill-fill {
+    background: linear-gradient(90deg, #ff4f9b, #ff8bbd) !important;
+    border-radius: 999px !important;
+}
+
+html.mma-layout-custom .mode-tag-group {
+    right: 14px !important;
+    bottom: 9px !important;
+    left: auto !important;
+}
+
+html.mma-layout-custom .mode-tag {
+    color: #ffffff !important;
+    background: rgba(24, 27, 38, 0.92) !important;
+    border-color: var(--comp-border) !important;
+}
+
+@media (max-width: 620px) {
+    html.mma-layout-custom .card.main-card {
+        grid-template-columns: 1fr !important;
+    }
+
+    html.mma-layout-custom .star-block,
+    html.mma-layout-custom #sep-pattern,
+    html.mma-layout-custom #pattern-clusters,
+    html.mma-layout-custom #sep-etterna,
+    html.mma-layout-custom #ett-skill-bars,
+    html.mma-layout-custom #sep-graph,
+    html.mma-layout-custom #body-graph-wrap {
+        grid-column: 1 !important;
+        grid-row: auto !important;
+    }
+}

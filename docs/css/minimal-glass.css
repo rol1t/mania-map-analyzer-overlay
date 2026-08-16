@@ -1,0 +1,78 @@
+/*
+  Minimal glass custom layout
+
+  Copy this file into overlay-custom.css, save it, and click Apply in the
+  Appearance window. It preserves the default layout and changes only styling.
+*/
+
+html.mma-layout-custom {
+    --mma-custom-width: var(--mma-host-width, 475px);
+    --glass-accent: #68e0c2;
+    --glass-text: #f5f8ff;
+    --glass-muted: #a8b2c8;
+    --glass-track: rgba(255, 255, 255, 0.10);
+}
+
+html.mma-layout-custom .dashboard {
+    width: var(--mma-custom-width) !important;
+    min-width: var(--mma-custom-width) !important;
+    max-width: var(--mma-custom-width) !important;
+}
+
+html.mma-layout-custom .card.main-card {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    color: var(--glass-text) !important;
+    background: rgba(8, 13, 24, 0.88) !important;
+    border: 1px solid rgba(104, 224, 194, 0.42) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34) !important;
+    backdrop-filter: blur(10px) !important;
+}
+
+html.mma-layout-custom .status {
+    color: var(--glass-text) !important;
+    font-family: "Segoe UI Variable", "Segoe UI", sans-serif !important;
+    font-weight: 650 !important;
+}
+
+html.mma-layout-custom .star-value {
+    color: #07120f !important;
+    background: var(--glass-accent) !important;
+    border-radius: 16px !important;
+    text-shadow: none !important;
+}
+
+html.mma-layout-custom .star-subtitle,
+html.mma-layout-custom .cluster-label,
+html.mma-layout-custom .ett-skill-label {
+    color: var(--glass-text) !important;
+}
+
+html.mma-layout-custom .star-meta,
+html.mma-layout-custom .star-caption,
+html.mma-layout-custom .cluster-subtype,
+html.mma-layout-custom .ett-skill-head,
+html.mma-layout-custom .pause-count {
+    color: var(--glass-muted) !important;
+}
+
+html.mma-layout-custom .cluster-track,
+html.mma-layout-custom .ett-skill-track {
+    background: var(--glass-track) !important;
+    border-radius: 999px !important;
+}
+
+html.mma-layout-custom .cluster-fill,
+html.mma-layout-custom .ett-skill-fill {
+    background: linear-gradient(90deg, #38bfa3, var(--glass-accent)) !important;
+    border-radius: 999px !important;
+    box-shadow: 0 0 12px rgba(104, 224, 194, 0.28) !important;
+}
+
+html.mma-layout-custom .mode-tag {
+    color: #07120f !important;
+    background: var(--glass-accent) !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+}

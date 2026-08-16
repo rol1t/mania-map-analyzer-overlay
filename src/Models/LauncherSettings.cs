@@ -27,6 +27,8 @@ namespace ManiaMapAnalyzerOverlay
         public string OverlayLayoutMode { get; set; }
         public int OverlayScalePercent { get; set; }
         public int CompanellaLayoutVersion { get; set; }
+        public bool FullscreenOverlayEnabled { get; set; }
+        public int FullscreenOverlayStyleVersion { get; set; }
         public string Language { get; set; }
 
         public LauncherSettings()
@@ -39,6 +41,8 @@ namespace ManiaMapAnalyzerOverlay
             OverlayLayoutMode = "default";
             OverlayScalePercent = 100;
             CompanellaLayoutVersion = 0;
+            FullscreenOverlayEnabled = false;
+            FullscreenOverlayStyleVersion = 0;
             Language = string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ru", StringComparison.OrdinalIgnoreCase) ? "ru" : "en";
         }
     }

@@ -49,7 +49,7 @@ namespace ManiaMapAnalyzerOverlay
             return Math.Max(50, Math.Min(180, launcherSettings.OverlayScalePercent));
         }
 
-        private void ShowOverlayStyleDialog()
+        private async Task ShowOverlayStyleDialogAsync()
         {
             CustomCssService.EnsureExists();
             using (var dialog = new OverlayStyleDialog(
@@ -70,6 +70,13 @@ namespace ManiaMapAnalyzerOverlay
                 launcherSettings.OverlayLayoutMode = dialog.LayoutMode;
                 launcherSettings.OverlayScalePercent = dialog.ScalePercent;
                 SaveLauncherSettings();
+
+                if (launcherSettings.FullscreenOverlayEnabled)
+                {
+                    EnsureFullscreenOverlayProfile(true);
+                    await RestartTosuAsync();
+                    return;
+                }
 
                 Uri uri = browser.Source;
                 if (uri != null && uri.AbsolutePath.StartsWith("/ManiaMapAnalyser", StringComparison.OrdinalIgnoreCase))
@@ -179,6 +186,9 @@ namespace ManiaMapAnalyzerOverlay
                     ".dashboard{margin:0 auto!important;min-height:0!important;align-content:start!important;}";
             }
 
+            string readableTypographyCss = OverlayStyleBuilder.BuildReadableTypographyCss(nativeScale);
+            string fullscreenCss = css + readableTypographyCss;
+
             if (!overlayMode)
             {
                 css +=
@@ -191,11 +201,65 @@ namespace ManiaMapAnalyzerOverlay
                     "html.mma-layout-companella{--mma-host-width:min(" + companellaWidth + ",calc(100vw - 36px))!important;}";
             }
 
-            css += OverlayStyleBuilder.BuildReadableTypographyCss(nativeScale);
+            css += readableTypographyCss;
             string interactionCss = OverlayStyleBuilder.BuildInteractionCss();
+            string script = BuildLauncherSetupScript(css, customCss, interactionCss, layoutMode, overlayMode);
+            string fullscreenScript = BuildLauncherSetupScript(fullscreenCss, customCss, interactionCss, layoutMode, true);
+            await browser.ExecuteScriptAsync(script);
 
+            if (renderSelectedPreset)
+            {
+                string observerScript =
+                    "(function(){" +
+                    "var card=document.querySelector('.main-card');if(!card)return;var mmaBridge=!!(window.chrome&&chrome.webview);" +
+                    "function report(){if(!mmaBridge)return;var r=card.getBoundingClientRect();var s=getComputedStyle(card);var dpr=Math.max(1,window.devicePixelRatio||1);" +
+                    "chrome.webview.postMessage('mma:size:'+Math.ceil(r.width*dpr)+','+Math.ceil(r.height*dpr)+','+((parseFloat(s.borderTopLeftRadius)||0)*dpr));}" +
+                    "function syncCompanellaSummary(){var source=document.getElementById('rework-star'),target=document.getElementById('mma-summary-star'),meta=document.getElementById('mma-summary-star-meta'),diff=document.getElementById('rework-diff'),dan=document.getElementById('mma-summary-dan'),caption=document.getElementById('est-diff-caption'),danValue=document.getElementById('mma-summary-dan-value');if(source&&target){var unit=source.getAttribute('data-unit')||'SR';target.textContent=((source.textContent||'—').trim()||'—')+(unit?' '+unit:'');}var sourceMeta=document.getElementById('rework-meta');if(sourceMeta&&meta)meta.textContent=(sourceMeta.textContent||'').replace(/\\s+/g,' ').trim()||'LN — · Keys —';if(diff&&dan)dan.textContent=(diff.textContent||'—').trim()||'—';if(danValue){var match=String(caption&&caption.textContent||'').match(/\\((?:RC\\s*)?(-?\\d+(?:[.,]\\d+)?)\\)/i),numeric=match?Number(match[1].replace(',','.')):NaN;danValue.textContent=isFinite(numeric)?'≈ '+numeric.toFixed(2):'—';}}" +
+                    "function syncCompanella(){if(!document.documentElement.classList.contains('mma-layout-companella'))return;syncCompanellaSummary();var chart=document.getElementById('mma-comp-chart');if(!chart)return;" +
+                    "var p=document.getElementById('pattern-clusters'),e=document.getElementById('ett-skill-bars');var list=p&&!p.hidden?p:(e&&!e.hidden?e:null);var graph=document.getElementById('body-graph-wrap');var graphOnly=!list&&graph&&!graph.hidden;chart.hidden=!!graphOnly;var rows=list?Array.prototype.slice.call(list.children):[];var items=[];" +
+                    "rows.forEach(function(row){if(row.classList.contains('empty')||row.classList.contains('skeleton'))return;var label=row.querySelector('.cluster-label,.ett-skill-label');var value=row.querySelector('.cluster-subtype,.ett-skill-head');var fill=row.querySelector('.cluster-fill,.ett-skill-fill');if(!label||!fill)return;var raw=fill.style.getPropertyValue('--bar-width')||getComputedStyle(fill).getPropertyValue('--bar-width')||fill.style.width||'0';var pct=parseFloat(raw);if(!isFinite(pct))pct=0;pct=Math.max(2,Math.min(100,pct));items.push({label:(label.textContent||'—').trim(),value:value?(value.textContent||'').trim():'',pct:pct});});" +
+                    "items=items.slice(0,8);var signature=items.map(function(x){return x.label+'|'+x.value+'|'+x.pct;}).join('~');if(signature===window.__mmaCompSignature)return;window.__mmaCompSignature=signature;chart.textContent='';chart.style.setProperty('--mma-comp-count',String(Math.max(1,items.length)));var colors=['#dedee1','#58b8f0','#5fd56b','#ffae5c','#ae5be2','#ef5d72','#f4d95f','#66cdd0'];" +
+                    "items.forEach(function(item,i){var col=document.createElement('div');col.className='mma-comp-column';var box=document.createElement('div');box.className='mma-comp-barbox';var bar=document.createElement('div');bar.className='mma-comp-bar';bar.style.setProperty('--mma-value',item.pct+'%');bar.style.setProperty('--mma-color',colors[i%colors.length]);box.appendChild(bar);var value=document.createElement('div');value.className='mma-comp-number';value.textContent=item.value||Math.round(item.pct);var label=document.createElement('div');label.className='mma-comp-label';label.textContent=item.label;col.appendChild(box);col.appendChild(label);col.appendChild(value);chart.appendChild(col);});}" +
+                    "window.__mmaSyncCompanella=syncCompanella;" +
+                    "function getNumber(obj,names){if(!obj)return null;for(var i=0;i<names.length;i++){var v=Number(obj[names[i]]);if(isFinite(v))return v;}return null;}" +
+                    "function formatNumber(v){if(v===null||!isFinite(v))return '';return (Math.round(v*10)/10).toString();}" +
+                    "function formatBpm(bm,stats){var bpm=bm.bpm||bm.BPM||(stats&&(stats.bpm||stats.BPM));if(bpm&&typeof bpm==='object'){var lo=getNumber(bpm,['min','minimum','lowest']);var hi=getNumber(bpm,['max','maximum','highest']);var common=getNumber(bpm,['common','base','current']);if(lo!==null&&hi!==null&&Math.abs(lo-hi)>.1)return formatNumber(lo)+'–'+formatNumber(hi)+' BPM';if(common!==null)return formatNumber(common)+' BPM';if(hi!==null)return formatNumber(hi)+' BPM';if(lo!==null)return formatNumber(lo)+' BPM';}var num=Number(bpm);return isFinite(num)&&num>0?formatNumber(num)+' BPM':'BPM —';}" +
+                    "function updateCompanellaMeta(data){if(!document.documentElement.classList.contains('mma-layout-companella'))return;var bm=data&&data.beatmap;if(!bm)return;var md=bm.metadata||{};var stats=bm.stats||{};var mapper=String(bm.mapper||md.mapper||md.creator||'').trim();var version=String(bm.version||md.difficulty||md.version||'').trim();var mapEl=document.getElementById('mma-comp-mapper'),verEl=document.getElementById('mma-comp-version'),statsEl=document.getElementById('mma-comp-stats'),idsEl=document.getElementById('mma-comp-ids');if(mapEl)mapEl.textContent=mapper?'" + UiText.Get("Автор карты: ", "Mapped by ") + "'+mapper:'" + UiText.Get("Автор —", "Mapper —") + "';if(verEl)verEl.textContent=version?' · ['+version+']':'';" +
+                    "var bpmText=formatBpm(bm,stats);var od=getNumber(stats,['OD','od','overallDifficulty']),hp=getNumber(stats,['HP','hp','drainRate']);var statParts=[bpmText];if(od!==null)statParts.push('OD '+formatNumber(od));if(hp!==null)statParts.push('HP '+formatNumber(hp));if(statsEl)statsEl.textContent=statParts.join(' · ');var mapId=bm.id||bm.beatmapId||'',setId=bm.set||bm.setId||bm.beatmapSetId||'';if(idsEl)idsEl.textContent='Set '+(setId||'—')+' · Map '+(mapId||'—');var bpmEl=document.getElementById('mma-summary-bpm'),setEl=document.getElementById('mma-summary-set'),mapIdEl=document.getElementById('mma-summary-map');if(bpmEl)bpmEl.textContent=bpmText.replace(/\\s*BPM$/i,'')||'—';if(setEl)setEl.textContent=setId||'—';if(mapIdEl)mapIdEl.textContent=mapId||'—';" +
+                    "var title=String(bm.title||md.title||''),artist=String(bm.artist||md.artist||'');var identity=String(mapId||setId||(artist+'-'+title+'-'+version));if(identity&&identity!==window.__mmaCompCoverIdentity){window.__mmaCompCoverIdentity=identity;var cover='url(\"http://'+location.host+'/files/beatmap/background?ts='+encodeURIComponent(identity)+'\")';document.documentElement.style.setProperty('--mma-comp-cover',cover);}}" +
+                    "window.__mmaUpdateCompanellaMeta=updateCompanellaMeta;" +
+                    "function queueCompanella(){if(window.__mmaCompFrame)return;window.__mmaCompFrame=requestAnimationFrame(function(){window.__mmaCompFrame=0;if(window.__mmaSyncCompanella)window.__mmaSyncCompanella();});}" +
+                    "if(!window.__mmaLauncherBound){window.__mmaLauncherBound=true;" +
+                    "if(mmaBridge&&" + (overlayMode ? "true" : "false") + "){document.addEventListener('mousedown',function(e){if(e.button===0)chrome.webview.postMessage('mma:drag');},true);" +
+                    "document.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var now=Date.now();if(now-(window.__mmaScaleWheelAt||0)<160)return;window.__mmaScaleWheelAt=now;chrome.webview.postMessage('mma:scale:'+(e.deltaY<0?'5':'-5'));},{capture:true,passive:false});}" +
+                    "window.addEventListener('resize',report);" +
+                    "if(window.ResizeObserver)new ResizeObserver(report).observe(card);" +
+                    "new MutationObserver(function(){report();queueCompanella();}).observe(card,{attributes:true,subtree:true,childList:true,characterData:true});}" +
+                    "if(!window.__mmaPlayWatcherBound){window.__mmaPlayWatcherBound=true;var lastPlay=null;" +
+                    "function connectPlayWatcher(){var ws=new WebSocket('ws://'+location.host+'/websocket/v2?l='+encodeURIComponent(window.COUNTER_PATH||location.pathname));" +
+                    "window.__mmaPlayWatcherSocket=ws;" +
+                    "ws.onopen=function(){ws.send('applyFilters:'+JSON.stringify([{field:'state',keys:['name']},{field:'beatmap',keys:['artist','title','version','mapper','id','set','setId','beatmapSetId','metadata','stats','bpm']}]));};" +
+                    "ws.onmessage=function(e){try{var d=JSON.parse(e.data);var n=String(d&&d.state&&d.state.name||'').toLowerCase().replace(/[^a-z]/g,'');" +
+                    "if(window.__mmaUpdateCompanellaMeta)window.__mmaUpdateCompanellaMeta(d);if(!n)return;var playing=n==='play'||n==='gameplay'||n==='playing';if(playing!==lastPlay){lastPlay=playing;if(mmaBridge)chrome.webview.postMessage('mma:play:'+(playing?'1':'0'));}}catch(_){}};" +
+                    "ws.onclose=function(){if(document.documentElement.classList.contains('launcher-overlay-host'))setTimeout(connectPlayWatcher,1000);};}" +
+                    "connectPlayWatcher();}" +
+                    "syncCompanella();report();setTimeout(function(){syncCompanella();report();},120);setTimeout(function(){syncCompanella();report();},600);" +
+                    "})();";
+                await browser.ExecuteScriptAsync(observerScript);
+                if (launcherSettings.FullscreenOverlayEnabled)
+                    WriteFullscreenOverlayRuntime(fullscreenScript, observerScript);
+            }
+        }
+
+        private string BuildLauncherSetupScript(
+            string css,
+            string customCss,
+            string interactionCss,
+            string layoutMode,
+            bool transparentOverlay)
+        {
             var serializer = new JavaScriptSerializer();
-            string script =
+            return
                 "(function(){" +
                 "var s=document.getElementById('launcher-host-style');" +
                 "if(!s){s=document.createElement('style');s.id='launcher-host-style';document.head.appendChild(s);}" +
@@ -207,7 +271,7 @@ namespace ManiaMapAnalyzerOverlay
                 "if(!i){i=document.createElement('style');i.id='launcher-interaction-style';document.head.appendChild(i);}" +
                 "i.textContent=" + serializer.Serialize(interactionCss) + ";" +
                 "document.documentElement.classList.toggle('launcher-overlay-host',true);" +
-                "document.documentElement.classList.toggle('launcher-transparent-overlay'," + (overlayMode ? "true" : "false") + ");" +
+                "document.documentElement.classList.toggle('launcher-transparent-overlay'," + (transparentOverlay ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-default'," + (layoutMode == "default" ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-horizontal'," + (layoutMode == "horizontal" ? "true" : "false") + ");" +
                 "document.documentElement.classList.toggle('mma-layout-companella'," + (layoutMode == "companella" ? "true" : "false") + ");" +
@@ -226,48 +290,6 @@ namespace ManiaMapAnalyzerOverlay
                 "if(!compChart){compChart=document.createElement('div');compChart.id='mma-comp-chart';compChart.className='mma-comp-chart';card.insertBefore(compChart,details||card.querySelector('.mode-tag-group'));}}" +
                 "else{if(compCover)compCover.remove();if(compMeta)compMeta.remove();if(compSummary)compSummary.remove();if(compChart)compChart.remove();document.documentElement.style.removeProperty('--mma-comp-cover');}" +
                 "})();";
-            await browser.ExecuteScriptAsync(script);
-
-            if (renderSelectedPreset)
-            {
-                string observerScript =
-                    "(function(){" +
-                    "var card=document.querySelector('.main-card');if(!card||!window.chrome||!chrome.webview)return;" +
-                    "function report(){var r=card.getBoundingClientRect();var s=getComputedStyle(card);var dpr=Math.max(1,window.devicePixelRatio||1);" +
-                    "chrome.webview.postMessage('mma:size:'+Math.ceil(r.width*dpr)+','+Math.ceil(r.height*dpr)+','+((parseFloat(s.borderTopLeftRadius)||0)*dpr));}" +
-                    "function syncCompanellaSummary(){var source=document.getElementById('rework-star'),target=document.getElementById('mma-summary-star'),meta=document.getElementById('mma-summary-star-meta'),diff=document.getElementById('rework-diff'),dan=document.getElementById('mma-summary-dan'),caption=document.getElementById('est-diff-caption'),danValue=document.getElementById('mma-summary-dan-value');if(source&&target){var unit=source.getAttribute('data-unit')||'SR';target.textContent=((source.textContent||'—').trim()||'—')+(unit?' '+unit:'');}var sourceMeta=document.getElementById('rework-meta');if(sourceMeta&&meta)meta.textContent=(sourceMeta.textContent||'').replace(/\\s+/g,' ').trim()||'LN — · Keys —';if(diff&&dan)dan.textContent=(diff.textContent||'—').trim()||'—';if(danValue){var match=String(caption&&caption.textContent||'').match(/\\((?:RC\\s*)?(-?\\d+(?:[.,]\\d+)?)\\)/i),numeric=match?Number(match[1].replace(',','.')):NaN;danValue.textContent=isFinite(numeric)?'≈ '+numeric.toFixed(2):'—';}}" +
-                    "function syncCompanella(){if(!document.documentElement.classList.contains('mma-layout-companella'))return;syncCompanellaSummary();var chart=document.getElementById('mma-comp-chart');if(!chart)return;" +
-                    "var p=document.getElementById('pattern-clusters'),e=document.getElementById('ett-skill-bars');var list=p&&!p.hidden?p:(e&&!e.hidden?e:null);var graph=document.getElementById('body-graph-wrap');var graphOnly=!list&&graph&&!graph.hidden;chart.hidden=!!graphOnly;var rows=list?Array.prototype.slice.call(list.children):[];var items=[];" +
-                    "rows.forEach(function(row){if(row.classList.contains('empty')||row.classList.contains('skeleton'))return;var label=row.querySelector('.cluster-label,.ett-skill-label');var value=row.querySelector('.cluster-subtype,.ett-skill-head');var fill=row.querySelector('.cluster-fill,.ett-skill-fill');if(!label||!fill)return;var raw=fill.style.getPropertyValue('--bar-width')||getComputedStyle(fill).getPropertyValue('--bar-width')||fill.style.width||'0';var pct=parseFloat(raw);if(!isFinite(pct))pct=0;pct=Math.max(2,Math.min(100,pct));items.push({label:(label.textContent||'—').trim(),value:value?(value.textContent||'').trim():'',pct:pct});});" +
-                    "items=items.slice(0,8);var signature=items.map(function(x){return x.label+'|'+x.value+'|'+x.pct;}).join('~');if(signature===window.__mmaCompSignature)return;window.__mmaCompSignature=signature;chart.textContent='';chart.style.setProperty('--mma-comp-count',String(Math.max(1,items.length)));var colors=['#dedee1','#58b8f0','#5fd56b','#ffae5c','#ae5be2','#ef5d72','#f4d95f','#66cdd0'];" +
-                    "items.forEach(function(item,i){var col=document.createElement('div');col.className='mma-comp-column';var box=document.createElement('div');box.className='mma-comp-barbox';var bar=document.createElement('div');bar.className='mma-comp-bar';bar.style.setProperty('--mma-value',item.pct+'%');bar.style.setProperty('--mma-color',colors[i%colors.length]);box.appendChild(bar);var value=document.createElement('div');value.className='mma-comp-number';value.textContent=item.value||Math.round(item.pct);var label=document.createElement('div');label.className='mma-comp-label';label.textContent=item.label;col.appendChild(box);col.appendChild(label);col.appendChild(value);chart.appendChild(col);});}" +
-                    "window.__mmaSyncCompanella=syncCompanella;" +
-                    "function getNumber(obj,names){if(!obj)return null;for(var i=0;i<names.length;i++){var v=Number(obj[names[i]]);if(isFinite(v))return v;}return null;}" +
-                    "function formatNumber(v){if(v===null||!isFinite(v))return '';return (Math.round(v*10)/10).toString();}" +
-                    "function formatBpm(bm,stats){var bpm=bm.bpm||bm.BPM||(stats&&(stats.bpm||stats.BPM));if(bpm&&typeof bpm==='object'){var lo=getNumber(bpm,['min','minimum','lowest']);var hi=getNumber(bpm,['max','maximum','highest']);var common=getNumber(bpm,['common','base','current']);if(lo!==null&&hi!==null&&Math.abs(lo-hi)>.1)return formatNumber(lo)+'–'+formatNumber(hi)+' BPM';if(common!==null)return formatNumber(common)+' BPM';if(hi!==null)return formatNumber(hi)+' BPM';if(lo!==null)return formatNumber(lo)+' BPM';}var num=Number(bpm);return isFinite(num)&&num>0?formatNumber(num)+' BPM':'BPM —';}" +
-                    "function updateCompanellaMeta(data){if(!document.documentElement.classList.contains('mma-layout-companella'))return;var bm=data&&data.beatmap;if(!bm)return;var md=bm.metadata||{};var stats=bm.stats||{};var mapper=String(bm.mapper||md.mapper||md.creator||'').trim();var version=String(bm.version||md.difficulty||md.version||'').trim();var mapEl=document.getElementById('mma-comp-mapper'),verEl=document.getElementById('mma-comp-version'),statsEl=document.getElementById('mma-comp-stats'),idsEl=document.getElementById('mma-comp-ids');if(mapEl)mapEl.textContent=mapper?'" + UiText.Get("Автор карты: ", "Mapped by ") + "'+mapper:'" + UiText.Get("Автор —", "Mapper —") + "';if(verEl)verEl.textContent=version?' · ['+version+']':'';" +
-                    "var bpmText=formatBpm(bm,stats);var od=getNumber(stats,['OD','od','overallDifficulty']),hp=getNumber(stats,['HP','hp','drainRate']);var statParts=[bpmText];if(od!==null)statParts.push('OD '+formatNumber(od));if(hp!==null)statParts.push('HP '+formatNumber(hp));if(statsEl)statsEl.textContent=statParts.join(' · ');var mapId=bm.id||bm.beatmapId||'',setId=bm.set||bm.setId||bm.beatmapSetId||'';if(idsEl)idsEl.textContent='Set '+(setId||'—')+' · Map '+(mapId||'—');var bpmEl=document.getElementById('mma-summary-bpm'),setEl=document.getElementById('mma-summary-set'),mapIdEl=document.getElementById('mma-summary-map');if(bpmEl)bpmEl.textContent=bpmText.replace(/\\s*BPM$/i,'')||'—';if(setEl)setEl.textContent=setId||'—';if(mapIdEl)mapIdEl.textContent=mapId||'—';" +
-                    "var title=String(bm.title||md.title||''),artist=String(bm.artist||md.artist||'');var identity=String(mapId||setId||(artist+'-'+title+'-'+version));if(identity&&identity!==window.__mmaCompCoverIdentity){window.__mmaCompCoverIdentity=identity;var cover='url(\"http://'+location.host+'/files/beatmap/background?ts='+encodeURIComponent(identity)+'\")';document.documentElement.style.setProperty('--mma-comp-cover',cover);}}" +
-                    "window.__mmaUpdateCompanellaMeta=updateCompanellaMeta;" +
-                    "function queueCompanella(){if(window.__mmaCompFrame)return;window.__mmaCompFrame=requestAnimationFrame(function(){window.__mmaCompFrame=0;if(window.__mmaSyncCompanella)window.__mmaSyncCompanella();});}" +
-                    "if(!window.__mmaLauncherBound){window.__mmaLauncherBound=true;" +
-                    "if(" + (overlayMode ? "true" : "false") + "){document.addEventListener('mousedown',function(e){if(e.button===0)chrome.webview.postMessage('mma:drag');},true);" +
-                    "document.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var now=Date.now();if(now-(window.__mmaScaleWheelAt||0)<160)return;window.__mmaScaleWheelAt=now;chrome.webview.postMessage('mma:scale:'+(e.deltaY<0?'5':'-5'));},{capture:true,passive:false});}" +
-                    "window.addEventListener('resize',report);" +
-                    "if(window.ResizeObserver)new ResizeObserver(report).observe(card);" +
-                    "new MutationObserver(function(){report();queueCompanella();}).observe(card,{attributes:true,subtree:true,childList:true,characterData:true});}" +
-                    "if(!window.__mmaPlayWatcherBound){window.__mmaPlayWatcherBound=true;var lastPlay=null;" +
-                    "function connectPlayWatcher(){var ws=new WebSocket('ws://'+location.host+'/websocket/v2?l='+encodeURIComponent(window.COUNTER_PATH||location.pathname));" +
-                    "window.__mmaPlayWatcherSocket=ws;" +
-                    "ws.onopen=function(){ws.send('applyFilters:'+JSON.stringify([{field:'state',keys:['name']},{field:'beatmap',keys:['artist','title','version','mapper','id','set','setId','beatmapSetId','metadata','stats','bpm']}]));};" +
-                    "ws.onmessage=function(e){try{var d=JSON.parse(e.data);var n=String(d&&d.state&&d.state.name||'').toLowerCase().replace(/[^a-z]/g,'');" +
-                    "if(window.__mmaUpdateCompanellaMeta)window.__mmaUpdateCompanellaMeta(d);if(!n)return;var playing=n==='play'||n==='gameplay'||n==='playing';if(playing!==lastPlay){lastPlay=playing;chrome.webview.postMessage('mma:play:'+(playing?'1':'0'));}}catch(_){}};" +
-                    "ws.onclose=function(){if(document.documentElement.classList.contains('launcher-overlay-host'))setTimeout(connectPlayWatcher,1000);};}" +
-                    "connectPlayWatcher();}" +
-                    "syncCompanella();report();setTimeout(function(){syncCompanella();report();},120);setTimeout(function(){syncCompanella();report();},600);" +
-                    "})();";
-                await browser.ExecuteScriptAsync(observerScript);
-            }
         }
 
         private void OnBrowserWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs args)
