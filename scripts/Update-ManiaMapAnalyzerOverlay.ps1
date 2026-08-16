@@ -5,6 +5,8 @@ param(
     [switch]$ComponentsOnly,
     [switch]$Force,
     [switch]$Launch,
+    [switch]$SelfUpdate,
+    [int]$WaitForProcessId = 0,
     [switch]$Json,
     [switch]$Quiet
 )
@@ -104,6 +106,79 @@ function Get-ReleaseAsset($Release, [string]$NamePattern) {
         throw "Не удалось однозначно выбрать файл релиза по шаблону: $NamePattern"
     }
     return $assets[0]
+}
+
+function ConvertTo-Version([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return [version]'0.0.0.0' }
+    $normalized = $Value.Trim().TrimStart('v', 'V')
+    try { return [version]$normalized }
+    catch { return [version]'0.0.0.0' }
+}
+
+function Get-InstalledLauncherVersion([string]$TargetRoot) {
+    $launcherPath = Join-Path $TargetRoot 'Mania Map Analyzer Overlay.exe'
+    if (-not (Test-Path -LiteralPath $launcherPath)) { return [version]'0.0.0.0' }
+    return ConvertTo-Version ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($launcherPath).FileVersion)
+}
+
+function Copy-LauncherFiles([string]$PayloadRoot, [string]$TargetRoot) {
+    New-Item -ItemType Directory -Path $TargetRoot -Force | Out-Null
+    foreach ($item in Get-ChildItem -LiteralPath $PayloadRoot -Force) {
+        $target = Join-Path $TargetRoot $item.Name
+        if ($item.Name -eq 'overlay-custom.css' -and (Test-Path -LiteralPath $target)) {
+            continue
+        }
+        Copy-Item -LiteralPath $item.FullName -Destination $target -Recurse -Force
+    }
+}
+
+function Install-LatestLauncherRelease([string]$TargetRoot, [int]$ProcessId) {
+    $release = Get-LatestRelease 'rol1t/mania-map-analyzer-overlay'
+    $asset = Get-ReleaseAsset $release '^Mania-Map-Analyzer-Overlay-Installer-.*\.zip$'
+    $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('ManiaMapAnalyzerOverlaySelfUpdate-' + [guid]::NewGuid().ToString('N'))
+    $archivePath = Join-Path $temporaryRoot 'release.zip'
+    $extractPath = Join-Path $temporaryRoot 'release'
+
+    try {
+        New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+        Invoke-Download ([string]$asset.browser_download_url) $archivePath
+
+        $expectedDigest = [string](Get-PropertyValue $asset 'digest' '')
+        if ($expectedDigest -match '^sha256:(?<hash>[0-9a-fA-F]{64})$') {
+            $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+            if (-not [string]::Equals($actualHash, $Matches.hash, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw 'SHA-256 скачанного обновления не совпадает с данными GitHub Release.'
+            }
+        }
+
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
+        $payloadExecutables = @(Get-ChildItem -LiteralPath $extractPath -Recurse -File -Filter 'Mania Map Analyzer Overlay.exe')
+        if ($payloadExecutables.Count -ne 1) { throw 'В обновлении не найден единственный исполняемый файл приложения.' }
+
+        $payloadRoot = $payloadExecutables[0].Directory.FullName
+        $payloadVersion = ConvertTo-Version $payloadExecutables[0].VersionInfo.FileVersion
+        $releaseVersion = ConvertTo-Version ([string]$release.tag_name)
+        if ($payloadVersion -lt $releaseVersion) { throw 'Версия приложения внутри архива ниже версии GitHub Release.' }
+        if ($releaseVersion -le (Get-InstalledLauncherVersion $TargetRoot)) {
+            throw 'Установленная версия приложения уже актуальна.'
+        }
+
+        if ($ProcessId -gt 0) {
+            Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue
+            if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+                throw 'Приложение не завершилось за 60 секунд.'
+            }
+        }
+
+        Copy-LauncherFiles $payloadRoot $TargetRoot
+        $launcherPath = Join-Path $TargetRoot 'Mania Map Analyzer Overlay.exe'
+        Start-Process -FilePath $launcherPath -WorkingDirectory $TargetRoot
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryRoot) {
+            Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Test-LazerOffsets([string]$Version) {
@@ -420,6 +495,29 @@ function Install-LauncherPayload([string]$TargetRoot) {
     return $true
 }
 
+if ($SelfUpdate) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($InstallPath)) {
+            throw 'Для самообновления не указан путь установки.'
+        }
+        $InstallPath = Get-FullSafeInstallPath $InstallPath
+        Install-LatestLauncherRelease $InstallPath $WaitForProcessId
+        exit 0
+    }
+    catch {
+        $errorPath = if ([string]::IsNullOrWhiteSpace($InstallPath)) {
+            Join-Path $PSScriptRoot 'self-update-error.log'
+        } else {
+            Join-Path $InstallPath 'self-update-error.log'
+        }
+        try {
+            [IO.File]::WriteAllText($errorPath, (Get-Date).ToString('s') + [Environment]::NewLine + $_.Exception, (New-Object Text.UTF8Encoding($false)))
+        }
+        catch { }
+        exit 1
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($InstallPath)) {
     if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Mania Map Analyzer Overlay.exe')) {
         $InstallPath = $PSScriptRoot
@@ -445,6 +543,9 @@ $result = [ordered]@{
     UpdatedTosu = $false
     UpdatedAddon = $false
     InstalledLauncher = $false
+    InstalledLauncherVersion = ''
+    LatestLauncherVersion = ''
+    LauncherUpdateAvailable = $false
     Error = ''
 }
 
@@ -458,6 +559,12 @@ try {
     $result.InstalledTosu = [string](Get-PropertyValue $state 'TosuVersion' '')
     $result.InstalledAddon = [string](Get-PropertyValue $state 'AddonVersion' '')
     $result.LazerVersion = Get-LazerVersion
+    $installedLauncherVersion = Get-InstalledLauncherVersion $InstallPath
+    $launcherRelease = Get-LatestRelease 'rol1t/mania-map-analyzer-overlay'
+    $latestLauncherVersion = ConvertTo-Version ([string]$launcherRelease.tag_name)
+    $result.InstalledLauncherVersion = $installedLauncherVersion.ToString()
+    $result.LatestLauncherVersion = $latestLauncherVersion.ToString()
+    $result.LauncherUpdateAvailable = $latestLauncherVersion -gt $installedLauncherVersion
 
     # The packaged launcher update is local and must not depend on GitHub being
     # reachable. This also lets an installer repair/update the shell while the

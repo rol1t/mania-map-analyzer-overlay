@@ -280,7 +280,8 @@ namespace ManiaMapAnalyzerOverlay
                 return;
             }
 
-            await CheckAndApplyUpdatesAsync();
+            if (!await CheckAndApplyUpdatesAsync())
+                return;
             await StartTosuAsync();
         }
 
