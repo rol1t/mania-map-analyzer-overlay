@@ -66,6 +66,7 @@ namespace ManiaMapAnalyzerOverlay
             topBar.Visible = false;
             layout.RowStyles[0].Height = 0F;
             browser.DefaultBackgroundColor = Color.FromArgb(0, 0, 0, 0);
+            SetOverlayWindowNoActivate(true);
 
             string activeLayout = GetOverlayLayoutMode();
             bool horizontalLayout = string.Equals(activeLayout, "horizontal", StringComparison.Ordinal);
@@ -120,6 +121,7 @@ namespace ManiaMapAnalyzerOverlay
             overlaySuppressedByPlay = false;
             overlayInputBeforePlay = false;
             Opacity = 1D;
+            SetOverlayWindowNoActivate(false);
 
             SuspendLayout();
             Region oldRegion = Region;
@@ -206,6 +208,19 @@ namespace ManiaMapAnalyzerOverlay
                 style &= ~WsExTransparent;
             SetWindowLong(Handle, GwlExStyle, style);
             overlayClickThrough = enabled;
+        }
+
+        private void SetOverlayWindowNoActivate(bool enabled)
+        {
+            if (!IsHandleCreated)
+                return;
+
+            int style = GetWindowLong(Handle, GwlExStyle);
+            if (enabled)
+                style |= WsExNoActivate | WsExToolWindow;
+            else
+                style &= ~(WsExNoActivate | WsExToolWindow);
+            SetWindowLong(Handle, GwlExStyle, style);
         }
 
         private void BeginOverlayDrag()
@@ -348,6 +363,14 @@ namespace ManiaMapAnalyzerOverlay
 
         protected override void WndProc(ref Message m)
         {
+            // A desktop overlay must never become the foreground window. Otherwise
+            // exclusive-fullscreen osu! can lose focus and show the Windows cursor.
+            if (overlayMode && m.Msg == WmMouseActivate)
+            {
+                m.Result = (IntPtr)MaNoActivate;
+                return;
+            }
+
             if (m.Msg == WmHotkey && m.WParam.ToInt32() == OverlayExitHotkeyId)
             {
                 if (overlayMode)

@@ -26,10 +26,14 @@ namespace ManiaMapAnalyzerOverlay
         private const int OverlayExitHotkeyId = 0x4D41;
         private const int OverlayInputHotkeyId = 0x4D42;
         private const int WmHotkey = 0x0312;
+        private const int WmMouseActivate = 0x0021;
         private const int WmNcLButtonDown = 0x00A1;
+        private const int MaNoActivate = 3;
         private const int HtCaption = 0x0002;
         private const int GwlExStyle = -20;
+        private const int WsExToolWindow = 0x00000080;
         private const int WsExTransparent = 0x00000020;
+        private const int WsExNoActivate = 0x08000000;
         private const uint ModControl = 0x0002;
         private const uint ModShift = 0x0004;
 
