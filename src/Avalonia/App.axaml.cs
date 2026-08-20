@@ -1,12 +1,12 @@
+﻿using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using ManiaMapAnalyzerOverlay.Avalonia.Services;
 using ManiaMapAnalyzerOverlay.Avalonia.ViewModels;
 using ManiaMapAnalyzerOverlay.Avalonia.Views;
-using ManiaMapAnalyzerOverlay.Avalonia.Services;
-using Avalonia.Threading;
-using System;
-using System.IO;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia;
 
@@ -20,6 +20,8 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.MainWindow = new MainWindow
@@ -33,13 +35,21 @@ public partial class App : Application
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        try
-        {
-            Directory.CreateDirectory(AppPaths.DataDirectory);
-            File.AppendAllText(Path.Combine(AppPaths.DataDirectory, "avalonia-error.log"),
-                DateTime.Now.ToString("O") + Environment.NewLine + e.Exception + Environment.NewLine + Environment.NewLine);
-        }
-        catch { }
+        AppLogger.Error("Avalonia dispatcher", e.Exception);
         e.Handled = true;
+    }
+
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        AppLogger.Error("Unobserved background task", e.Exception);
+        e.SetObserved();
+    }
+
+    private static void OnAppDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.ExceptionObject is Exception exception)
+            AppLogger.Error("Unhandled application exception", exception);
+        else
+            AppLogger.Error("Unhandled application exception", e.ExceptionObject?.ToString() ?? "Unknown exception.");
     }
 }

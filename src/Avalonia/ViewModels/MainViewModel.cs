@@ -1,15 +1,15 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
-using ManiaMapAnalyzerOverlay.Avalonia.Services;
-using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using Avalonia.Threading;
+using ManiaMapAnalyzerOverlay.Avalonia.Models;
+using ManiaMapAnalyzerOverlay.Avalonia.Services;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.ViewModels;
 
 public sealed class MainViewModel : ViewModelBase, IDisposable
 {
     private readonly SettingsStore settingsStore;
-    private string status = "tosu is not running";
+    private string status = UiText.Get("status.tosu_not_running");
     private bool isRunning;
 
     public MainViewModel()
@@ -20,32 +20,50 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         Tosu.StateChanged += OnTosuStateChanged;
     }
 
-    public TosuService Tosu { get; }
-    public LauncherSettings Settings { get; }
+    public TosuService Tosu
+    {
+        get;
+    }
+    public LauncherSettings Settings
+    {
+        get;
+    }
 
     public string Status
     {
-        get { return status; }
-        private set { SetProperty(ref status, value); }
+        get
+        {
+            return status;
+        }
+        private set
+        {
+            SetProperty(ref status, value);
+        }
     }
 
     public bool IsRunning
     {
-        get { return isRunning; }
-        private set { SetProperty(ref isRunning, value); }
+        get
+        {
+            return isRunning;
+        }
+        private set
+        {
+            SetProperty(ref isRunning, value);
+        }
     }
 
-    public string TosuPath => Tosu.ExecutablePath ?? "tosu executable was not found next to the application";
+    public string TosuPath => Tosu.ExecutablePath ?? string.Empty;
 
     public async Task StartAsync()
     {
-        Status = "Starting tosu…";
+        Status = UiText.Get("status.tosu_starting");
         await Tosu.StartAsync();
     }
 
     public async Task RestartAsync()
     {
-        Status = "Restarting tosu…";
+        Status = UiText.Get("status.tosu_restarting");
         await Tosu.RestartAsync();
     }
 
@@ -61,10 +79,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         Dispatcher.UIThread.Post(() =>
         {
-            Status = e.Message;
+            Status = LocalizeStateMessage(e.Message);
             IsRunning = e.IsRunning;
             OnPropertyChanged(nameof(TosuPath));
         });
+    }
+
+    private static string LocalizeStateMessage(string messageKey)
+    {
+        const string failurePrefix = "status.tosu_start_failed|";
+        return messageKey.StartsWith(failurePrefix, StringComparison.Ordinal)
+            ? UiText.Format("status.tosu_start_failed", messageKey[failurePrefix.Length..])
+            : UiText.Get(messageKey);
     }
 
     public void Dispose()

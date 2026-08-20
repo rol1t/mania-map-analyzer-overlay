@@ -1,0 +1,14 @@
+{
+  "id": "default",
+  "name": "Default",
+  "nameRu": "По умолчанию",
+  "description": "Classic vertical analyser layout.",
+  "descriptionRu": "Классическое вертикальное оформление анализатора.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "always",
+  "requiredCssMarker": ".overlay-layout-default .main-card",
+  "supportsFullscreen": true,
+  "minWidth": 240,
+  "minHeight": 180
+}

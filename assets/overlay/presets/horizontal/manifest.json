@@ -1,0 +1,14 @@
+{
+  "id": "horizontal",
+  "name": "Horizontal",
+  "nameRu": "Горизонтальный",
+  "description": "A wide compact panel for the top or bottom of the screen.",
+  "descriptionRu": "Широкая компактная панель для верхней или нижней части экрана.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "always",
+  "requiredCssMarker": ".overlay-layout-horizontal .main-card",
+  "supportsFullscreen": true,
+  "minWidth": 520,
+  "minHeight": 180
+}

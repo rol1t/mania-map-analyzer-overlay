@@ -1,0 +1,6 @@
+{
+  "languages": [
+    { "id": "en", "name": "English", "file": "en.json" },
+    { "id": "ru", "name": "Русский", "file": "ru.json" }
+  ]
+}

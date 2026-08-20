@@ -1,0 +1,14 @@
+{
+  "id": "companella",
+  "name": "Companella",
+  "nameRu": "Companella",
+  "description": "Compact card with beatmap artwork, summary data and wide charts.",
+  "descriptionRu": "Компактная карточка с фоном карты, сводкой и широкими графиками.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".overlay-comp-cover-layer",
+  "supportsFullscreen": true,
+  "minWidth": 520,
+  "minHeight": 180
+}

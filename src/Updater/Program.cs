@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -18,7 +18,8 @@ internal static class Program
         {
             var options = ParseArguments(args);
             if (!options.TryGetValue("pid", out var pidText) || !int.TryParse(pidText, out var pid) ||
-                !options.TryGetValue("install-dir", out var installDirectory)) return 2;
+                !options.TryGetValue("install-dir", out var installDirectory))
+                return 2;
 
             await WaitForProcessAsync(pid);
             var release = await GetLatestReleaseAsync();
@@ -26,7 +27,8 @@ internal static class Program
             var asset = release.Assets.SingleOrDefault(a =>
                 a.Name.StartsWith("Mania-Map-Analyzer-Overlay-", StringComparison.OrdinalIgnoreCase) &&
                 a.Name.EndsWith(assetSuffix, StringComparison.OrdinalIgnoreCase));
-            if (asset is null) throw new InvalidOperationException("No launcher archive was found in the latest release.");
+            if (asset is null)
+                throw new InvalidOperationException("No launcher archive was found in the latest release.");
 
             var temporaryRoot = Path.Combine(Path.GetTempPath(), "ManiaMapAnalyzerOverlayUpdater-" + Guid.NewGuid().ToString("N"));
             try
@@ -39,7 +41,8 @@ internal static class Program
                     throw new PlatformNotSupportedException("Automatic launcher updates are not enabled for this package format yet.");
                 ZipFile.ExtractToDirectory(archivePath, extractPath, overwriteFiles: true);
                 var payloadExecutables = Directory.EnumerateFiles(extractPath, GetLauncherExecutableName(), SearchOption.AllDirectories).ToArray();
-                if (payloadExecutables.Length != 1) throw new InvalidOperationException("The launcher archive does not contain a unique executable.");
+                if (payloadExecutables.Length != 1)
+                    throw new InvalidOperationException("The launcher archive does not contain a unique executable.");
 
                 var payloadRoot = Path.GetDirectoryName(payloadExecutables[0])!;
                 var targetLauncher = Path.Combine(installDirectory, GetLauncherExecutableName());
@@ -47,16 +50,18 @@ internal static class Program
                 var installedVersion = File.Exists(targetLauncher)
                     ? ParseVersion(FileVersionInfo.GetVersionInfo(targetLauncher).FileVersion)
                     : new Version(0, 0, 0, 0);
-                if (payloadVersion <= installedVersion) return 0;
+                if (payloadVersion <= installedVersion)
+                    return 0;
 
                 CopyLauncherFiles(payloadRoot, installDirectory);
-                if (File.Exists(targetLauncher)) Process.Start(new ProcessStartInfo
-                {
-                    FileName = targetLauncher,
-                    WorkingDirectory = installDirectory,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
+                if (File.Exists(targetLauncher))
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = targetLauncher,
+                        WorkingDirectory = installDirectory,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
             }
             finally
             {
@@ -64,10 +69,12 @@ internal static class Program
             }
             return 0;
         }
-        catch
+        catch (Exception exception)
         {
-            // The helper is intentionally silent. The main app will report a failed
-            // update on its next start while preserving the installed version.
+            UpdaterLogger.Error("Self-update", exception);
+            UpdaterLogger.ShowError(
+                "Mania Map Analyzer Overlay could not be updated.\n\n" +
+                exception.Message + "\n\nDetails were written to:\n" + UpdaterLogger.LogPath);
             return 1;
         }
     }
@@ -91,7 +98,8 @@ internal static class Program
         await using var output = File.Create(destination);
         await input.CopyToAsync(output);
         await output.FlushAsync();
-        if (new FileInfo(destination).Length == 0) throw new InvalidOperationException("The launcher archive is empty.");
+        if (new FileInfo(destination).Length == 0)
+            throw new InvalidOperationException("The launcher archive is empty.");
         if (string.IsNullOrWhiteSpace(asset.Digest) ||
             !asset.Digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("GitHub did not provide a SHA-256 digest for the launcher archive.");
@@ -105,7 +113,7 @@ internal static class Program
     private static HttpClient CreateHttpClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay.Updater", "2.1.0"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay.Updater", "2.2.0"));
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return client;
     }
@@ -117,9 +125,18 @@ internal static class Program
             using var process = Process.GetProcessById(processId);
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
         }
-        catch (ArgumentException) { }
-        catch (InvalidOperationException) { }
-        catch (TimeoutException) { throw new InvalidOperationException("The launcher did not close in time."); }
+        catch (ArgumentException exception)
+        {
+            UpdaterLogger.Warning("Waiting for launcher", "The launcher process no longer exists.", exception);
+        }
+        catch (InvalidOperationException exception)
+        {
+            UpdaterLogger.Warning("Waiting for launcher", "The launcher process could not be inspected.", exception);
+        }
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException("The launcher did not close in time.", exception);
+        }
     }
 
     private static void CopyLauncherFiles(string source, string target)
@@ -129,9 +146,12 @@ internal static class Program
         {
             var relative = Path.GetRelativePath(source, item);
             var destination = Path.Combine(target, relative);
-            if (Path.GetFileName(item).Equals("overlay-custom.css", StringComparison.OrdinalIgnoreCase) && File.Exists(destination)) continue;
-            if (Path.GetFileName(item).Equals(GetUpdaterExecutableName(), StringComparison.OrdinalIgnoreCase)) continue;
-            if (Directory.Exists(item)) Directory.CreateDirectory(destination);
+            if (Path.GetFileName(item).Equals("overlay-custom.css", StringComparison.OrdinalIgnoreCase) && File.Exists(destination))
+                continue;
+            if (Path.GetFileName(item).Equals(GetUpdaterExecutableName(), StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (Directory.Exists(item))
+                Directory.CreateDirectory(destination);
             else
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -145,7 +165,8 @@ internal static class Program
         var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < args.Length - 1; i++)
         {
-            if (!args[i].StartsWith("--", StringComparison.Ordinal)) continue;
+            if (!args[i].StartsWith("--", StringComparison.Ordinal))
+                continue;
             options[args[i][2..]] = args[++i];
         }
         return options;
@@ -153,7 +174,8 @@ internal static class Program
 
     private static Version ParseVersion(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return new Version(0, 0, 0, 0);
+        if (string.IsNullOrWhiteSpace(value))
+            return new Version(0, 0, 0, 0);
         return Version.TryParse(value.Trim().TrimStart('v', 'V'), out var version)
             ? version : new Version(0, 0, 0, 0);
     }
@@ -168,7 +190,67 @@ internal static class Program
 
     private static void TryDeleteDirectory(string path)
     {
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (Exception exception) { UpdaterLogger.Warning($"Cleaning updater directory '{path}'", "Cleanup failed.", exception); }
+    }
+
+    private static class UpdaterLogger
+    {
+        private static readonly object Sync = new();
+
+        public static string LogPath
+        {
+            get
+            {
+                var root = OperatingSystem.IsWindows()
+                    ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                    : Environment.GetEnvironmentVariable("XDG_DATA_HOME") ??
+                      Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+                return Path.Combine(root, "ManiaMapAnalyzerOverlay", "application.log");
+            }
+        }
+
+        public static void Error(string operation, Exception exception) => Write("ERROR", operation, exception.ToString());
+
+        public static void Warning(string operation, string message, Exception exception) =>
+            Write("WARN", operation, message + Environment.NewLine + exception);
+
+        public static void ShowError(string message)
+        {
+            if (!OperatingSystem.IsWindows())
+                return;
+            try
+            {
+                MessageBox(IntPtr.Zero, message, "Mania Map Analyzer Overlay", 0x10);
+            }
+            catch (Exception exception) { Write("ERROR", "Showing updater error", "The error dialog could not be displayed." + Environment.NewLine + exception); }
+        }
+
+        private static void Write(string level, string operation, string message)
+        {
+            var line = $"[{DateTimeOffset.Now:O}] [{level}] [{operation}] {message}{Environment.NewLine}{Environment.NewLine}";
+            try
+            {
+                lock (Sync)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                    File.AppendAllText(LogPath, line);
+                }
+            }
+            catch (Exception loggingException)
+            {
+                // There is no reliable UI or file sink left if the updater cannot
+                // write its own diagnostics. The primary failure is already shown.
+                Debug.WriteLine($"Updater logging failed: {loggingException}");
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
     }
 
     private sealed class GitHubRelease
@@ -180,6 +262,10 @@ internal static class Program
     {
         [JsonPropertyName("name")] public string Name { get; set; } = "";
         [JsonPropertyName("browser_download_url")] public string DownloadUrl { get; set; } = "";
-        [JsonPropertyName("digest")] public string? Digest { get; set; }
+        [JsonPropertyName("digest")]
+        public string? Digest
+        {
+            get; set;
+        }
     }
 }

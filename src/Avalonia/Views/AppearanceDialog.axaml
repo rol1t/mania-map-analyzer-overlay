@@ -1,9 +1,9 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="ManiaMapAnalyzerOverlay.Avalonia.Views.AppearanceDialog"
-        Width="560" Height="430" CanResize="False" WindowStartupLocation="CenterOwner"
+        Width="560" Height="485" CanResize="False" WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="26">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="26">
     <TextBlock x:Name="HeadingText" FontSize="23" FontWeight="SemiBold" />
     <Grid Grid.Row="1" ColumnDefinitions="150,*" Margin="0,24,0,0">
       <TextBlock x:Name="LayoutLabel" VerticalAlignment="Center" />
@@ -14,19 +14,25 @@
         <ComboBoxItem Tag="custom" />
       </ComboBox>
     </Grid>
-    <Grid Grid.Row="2" ColumnDefinitions="150,*,55" Margin="0,18,0,0">
+    <Grid Grid.Row="2" ColumnDefinitions="150,*" Margin="0,18,0,0">
+      <TextBlock x:Name="AnalyzerLabel" VerticalAlignment="Center" />
+      <ComboBox x:Name="AnalyzerBox" Grid.Column="1" SelectionChanged="AnalyzerBox_SelectionChanged" />
+    </Grid>
+    <Grid Grid.Row="3" ColumnDefinitions="150,*,55,38,38" Margin="0,18,0,0">
       <TextBlock x:Name="ScaleLabel" VerticalAlignment="Center" />
       <Slider x:Name="ScaleSlider" Grid.Column="1" Minimum="50" Maximum="180" TickFrequency="5" ValueChanged="ScaleSlider_ValueChanged" />
       <TextBlock x:Name="ScaleValueText" Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" />
+      <Button x:Name="ScaleDownButton" Grid.Column="3" Content="−" Click="ScaleDown_Click" Margin="8,0,0,0" />
+      <Button x:Name="ScaleUpButton" Grid.Column="4" Content="+" Click="ScaleUp_Click" Margin="8,0,0,0" />
     </Grid>
-    <StackPanel Grid.Row="3" Margin="0,20,0,0" Spacing="12">
+    <StackPanel Grid.Row="4" Margin="0,20,0,0" Spacing="12">
       <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Opacity="0.75" />
       <StackPanel Orientation="Horizontal" Spacing="10">
         <Button x:Name="EditCssButton" Click="EditCss_Click" />
         <Button x:Name="AnalyzerSettingsButton" Click="AnalyzerSettings_Click" />
       </StackPanel>
     </StackPanel>
-    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
       <Button x:Name="CancelButton" Click="Cancel_Click" />
       <Button x:Name="ApplyButton" Click="Apply_Click" />
     </StackPanel>
