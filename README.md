@@ -2,7 +2,7 @@
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
 ![Avalonia](https://img.shields.io/badge/UI-Avalonia-8b5cf6)
-![Version](https://img.shields.io/badge/version-2.0.0-ff4f9b)
+![Version](https://img.shields.io/badge/version-2.1.0-ff4f9b)
 ![License](https://img.shields.io/badge/launcher-MIT-4cbe89)
 ![AI assisted](https://img.shields.io/badge/development-AI%20assisted-7357ff)
 
@@ -80,7 +80,7 @@ These values are selected in ManiaMapAnalyser settings, which can be opened from
 
 ## Installation
 
-Download the **Installer** archive from GitHub Releases, extract it, and run `Install-or-Update.cmd`. The installer creates or updates the application folder and downloads compatible official component versions.
+Download the **Application package** for your platform from GitHub Releases, extract it to a folder, and launch **Mania Map Analyzer Overlay** (`.exe` on Windows). This is the only file users need to start. On first launch the GUI downloads compatible official tosu and ManiaMapAnalyser components, verifies their SHA-256 hashes, and prepares them automatically. Linux is distributed as a `tar.gz` archive so executable permissions are preserved.
 
 Do not start `tosu.exe` separately. The launcher owns its lifecycle and terminates it on exit.
 
@@ -90,7 +90,7 @@ Do not start `tosu.exe` separately. The launcher owns its lifecycle and terminat
 |---|---|
 | Toggle click-through | `Ctrl+Shift+F9` |
 | Leave overlay mode | `Ctrl+Shift+F10` |
-| Resize overlay | `Ctrl` + mouse wheel |
+| Resize overlay | Drag an edge or corner while osu! is inactive, or use `Ctrl` + mouse wheel |
 | Move overlay | Drag anywhere while click-through is disabled |
 
 The **Overlay** button opens the lightweight desktop widget for windowed and borderless osu!. The **Stable FS** button is the second option for osu!stable exclusive fullscreen:
@@ -106,7 +106,7 @@ The fullscreen layer uses tosu's official In-Game Overlay. Its position remains 
 
 Open **Appearance** to select a preset and size. The normal application window immediately previews the same layout used by overlay mode.
 
-For complete control, select **Custom CSS** and edit `overlay-custom.css` next to the executable. The updater preserves this file.
+For complete control, select **Custom CSS** and edit `overlay-custom.css` from the appearance window. The editable copy is stored in the per-user application data folder and is preserved across updates.
 
 ### Using a CSS example
 
@@ -171,24 +171,34 @@ The Companella example is an approximation for **Custom CSS** using ManiaMapAnal
 
 ## Updates and osu!lazer compatibility
 
-At startup the launcher checks its own latest GitHub Release and offers a one-click update when a newer version is available. The external updater safely replaces the application after shutdown, preserves settings and `overlay-custom.css`, and automatically restarts it. The launcher also checks official tosu and ManiaMapAnalyser releases and verifies a matching offsets file for osu!lazer. Analysis data stays on `127.0.0.1:24050`.
+At startup the launcher checks its own latest GitHub Release and offers a one-click update when a newer version is available. A hidden updater helper safely replaces the application after shutdown, preserves settings and custom CSS, and automatically restarts it. The same GUI flow checks official tosu and ManiaMapAnalyser releases, verifies downloaded SHA-256 hashes, and verifies a matching offsets file for osu!lazer. Analysis data stays on `127.0.0.1:24050`.
 
 ## Building from source
 
-Requirements for source builds: .NET 8 SDK and PowerShell. The released Windows installer is self-contained and does not require a separately installed .NET runtime.
+Requirements for source builds: the pinned .NET 8 SDK from `global.json`. Windows uses PowerShell; Linux uses Bash. Released packages are self-contained and do not require a separately installed .NET runtime.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
-The build script publishes the Avalonia launcher as a self-contained `win-x64` application and prepares the installer payload in `artifacts\payload`.
+The build script publishes the Avalonia launcher and hidden self-update helper as a self-contained `win-x64` application package in `artifacts\payload`. Runtime component setup is implemented in C#; the PowerShell files under `scripts/` are developer/CI utilities only and are not shipped to users.
+
+On Linux, run the native Bash scripts:
+
+```bash
+./scripts/build.sh --runtime linux-x64 --output artifacts/payload
+./scripts/package.sh --version 2.1.0 --runtime linux-x64
+```
+
+The Linux package is written to `artifacts/Mania-Map-Analyzer-Overlay-2.1.0-linux-x64.tar.gz` and preserves executable permissions.
 
 ## Project structure
 
 ```text
 src/Avalonia/              Avalonia application project
 src/Avalonia/Models/       persisted launcher settings
-src/Avalonia/Services/     tosu lifecycle, updates, CSS and fullscreen integration
+src/Avalonia/Services/     tosu lifecycle, GUI bootstrap/update, CSS and fullscreen integration
+src/Updater/               hidden self-update helper
 src/Avalonia/Platform/     Windows-specific overlay and process adapters
 src/Avalonia/Views/        main window and appearance dialogs
 src/Services/              shared CSS/style and UI-text helpers
@@ -196,7 +206,7 @@ assets/                    editable CSS template
 scripts/                   build and component updater scripts
 LICENSES/                  bundled third-party license texts
 docs/                      release notes and copy-ready CSS examples
-.github/workflows/         Windows CI build
+.github/workflows/         Windows and Linux CI builds
 ```
 
 ## Credits and source disclosure

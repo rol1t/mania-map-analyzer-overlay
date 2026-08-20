@@ -128,7 +128,7 @@ public sealed class FullscreenOverlayService
         var size = settings.OverlayLayoutMode?.ToLowerInvariant() switch
         {
             "horizontal" => (960, 650),
-            "companella" => (640, 470),
+            "companella" => (760, 470),
             "custom" => (620, 700),
             _ => (520, 640)
         };

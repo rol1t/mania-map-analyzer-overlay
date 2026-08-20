@@ -26,13 +26,22 @@ public partial class MainWindow : Window
     private readonly FullscreenOverlayService fullscreen = new();
     private readonly UpdateService updates = new();
     private readonly WindowsOverlayController windowsOverlay;
+    private readonly DispatcherTimer overlayResizeDebounceTimer;
     private MainViewModel? model;
     private bool initialized;
     private bool overlayMode;
     private bool overlayWidgetSized;
     private bool overlayPlayStateKnown;
     private bool overlaySuppressedByPlay;
-    private bool overlayInputBeforePlay;
+    private bool overlayInteractive;
+    private bool suppressOverlayResizeFeedback;
+    private bool overlayResizeScaleUpdateRunning;
+    private bool overlayResizeScaleUpdatePending;
+    private bool overlayNativeResizePending;
+    private bool componentPreparationFailed;
+    private int? overlayExpectedWidgetPhysicalWidth;
+    private DateTime overlayResizeGuardUntilUtc;
+    private Size? ignoredProgrammaticOverlaySize;
     private PixelPoint normalPosition;
     private Size normalClientSize;
 
@@ -42,12 +51,23 @@ public partial class MainWindow : Window
         windowsOverlay = new WindowsOverlayController(this);
         windowsOverlay.ExitRequested += (_, _) => LeaveOverlayMode();
         windowsOverlay.ClickThroughChanged += enabled => Browser.IsHitTestVisible = !enabled;
+        windowsOverlay.InteractionChanged += interactive =>
+        {
+            overlayInteractive = interactive;
+            if (overlayMode) CanResize = interactive;
+            UpdateOverlayVisibility();
+        };
+        overlayResizeDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
+        overlayResizeDebounceTimer.Tick += OverlayResizeDebounceTimer_Tick;
+        SizeChanged += MainWindow_SizeChanged;
         Opened += async (_, _) => await InitializeAsync();
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        overlayResizeDebounceTimer.Stop();
         windowsOverlay.Dispose();
+        updates.Dispose();
         model?.Dispose();
         base.OnClosed(e);
     }
@@ -71,13 +91,15 @@ public partial class MainWindow : Window
         await model.StartAsync();
         if (model.Tosu.IsRunning)
         {
+            SetComponentPreparationState(false);
             model.SetStatus(Pick("tosu работает", "tosu is running"), true);
             SetControlsEnabled(true);
             Navigate(OverlayUrl);
         }
         else
         {
-            RestartButton.IsEnabled = true;
+            SetComponentPreparationState(true);
+            SetControlsEnabled(false, keepRestart: true);
             ShowMessagePage(Pick("tosu не запущен", "tosu is not running"), model.Status, true);
         }
     }
@@ -97,18 +119,14 @@ public partial class MainWindow : Window
     private async Task<bool> CheckUpdatesAsync()
     {
         if (model is null) return false;
-        if (!updates.IsInstalled)
-        {
-            model.SetStatus(Pick("Проверка обновлений не установлена", "Update checker is not installed"));
-            return true;
-        }
-
         model.SetStatus(Pick("Проверка обновлений…", "Checking for updates…"));
         try
         {
-            var result = await updates.CheckComponentsAsync();
+            var progress = new Progress<UpdateProgress>(update =>
+                model.SetStatus(LocalizeUpdateMessage(update.Message)));
+            var result = await updates.CheckComponentsAsync(progress: progress);
             if (!result.Success)
-                throw new InvalidOperationException(result.Error ?? Pick("Скрипт обновления завершился с ошибкой.", "The update script failed."));
+                throw new InvalidOperationException(result.Error ?? Pick("Не удалось подготовить компоненты.", "Could not prepare the components."));
             if (result.LauncherUpdateAvailable)
             {
                 var accept = await ConfirmAsync(Pick("Доступно обновление", "Update available"),
@@ -126,14 +144,56 @@ public partial class MainWindow : Window
                 await InfoAsync(Pick("Совместимость osu!lazer", "osu!lazer compatibility"),
                     Pick("Для osu!lazer " + result.LazerVersion + " ещё нет официального файла совместимости tosu. Часть данных может быть недоступна.",
                         "There is no official tosu compatibility file for osu!lazer " + result.LazerVersion + " yet. Some data may be unavailable."));
+            if (!string.IsNullOrWhiteSpace(result.Warning))
+                model.SetStatus(Pick(result.Warning, result.Warning));
+
+            SetComponentPreparationState(false);
+            return true;
         }
         catch (Exception exception)
         {
-            model.SetStatus(Pick("Обновления не проверены", "Updates were not checked"));
-            try { File.WriteAllText(Path.Combine(AppPaths.BaseDirectory, "startup-update-error.log"), DateTime.Now + Environment.NewLine + exception); }
+            SetComponentPreparationState(true);
+            var title = Pick("Не удалось подготовить компоненты", "Could not prepare components");
+            var retry = Pick("tosu не запущен. Нажмите «Повторить подготовку», чтобы повторить установку компонентов.",
+                "tosu is not running. Click “Retry preparation” to try installing the components again.");
+            var details = exception.Message.Trim();
+            model.SetStatus(title);
+            SetControlsEnabled(false, keepRestart: true);
+            ShowMessagePage(title, string.IsNullOrWhiteSpace(details) ? retry : retry + "\n\n" + details, true);
+            try
+            {
+                Directory.CreateDirectory(AppPaths.DataDirectory);
+                File.WriteAllText(Path.Combine(AppPaths.DataDirectory, "startup-update-error.log"),
+                    DateTime.Now + Environment.NewLine + exception);
+            }
             catch { }
+            return false;
         }
-        return true;
+    }
+
+    private void SetComponentPreparationState(bool failed)
+    {
+        componentPreparationFailed = failed;
+        RestartButton.Content = failed
+            ? Pick("Повторить подготовку", "Retry preparation")
+            : Pick("Перезапустить", "Restart");
+    }
+
+    private string LocalizeUpdateMessage(string message)
+    {
+        if (ManiaMapAnalyzerOverlay.UiText.IsEnglish) return message;
+        return message switch
+        {
+            "Checking component releases…" => "Проверяю версии компонентов…",
+            "Downloading tosu…" => "Скачиваю tosu…",
+            "Downloading ManiaMapAnalyser…" => "Скачиваю ManiaMapAnalyser…",
+            "Components are ready." => "Компоненты готовы.",
+            "Components are up to date." => "Компоненты уже обновлены.",
+            "Component preparation failed." => "Не удалось подготовить компоненты.",
+            _ when message.StartsWith("Downloading tosu ", StringComparison.Ordinal) => "Скачиваю tosu…",
+            _ when message.StartsWith("Downloading ManiaMapAnalyser ", StringComparison.Ordinal) => "Скачиваю ManiaMapAnalyser…",
+            _ => message
+        };
     }
 
     private void SynchronizeFullscreenState()
@@ -158,7 +218,7 @@ public partial class MainWindow : Window
         AppearanceButton.Content = Pick("Оформление", "Appearance");
         OverlayButton.Content = Pick("Оверлей", "Overlay");
         DashboardButton.Content = Pick("Панель tosu", "tosu panel");
-        RestartButton.Content = Pick("Перезапустить", "Restart");
+         SetComponentPreparationState(componentPreparationFailed);
         LanguageButton.Content = ManiaMapAnalyzerOverlay.UiText.IsEnglish ? "RU" : "EN";
         ExitButton.Content = Pick("Выход", "Exit");
         UpdateFullscreenButton();
@@ -205,8 +265,15 @@ public partial class MainWindow : Window
         if (!overlayMode || string.IsNullOrEmpty(e.Body)) return;
         var message = e.Body;
         if (message == "mma:drag") { windowsOverlay.BeginDrag(); return; }
+        if (message.StartsWith("mma:resize:", StringComparison.Ordinal))
+        {
+            windowsOverlay.BeginResize(message[11..]);
+            return;
+        }
         if (message == "mma:play:1") { SetOverlaySuppressedByPlay(true); return; }
         if (message == "mma:play:0") { SetOverlaySuppressedByPlay(false); return; }
+        if (message == "mma:focus:1") { windowsOverlay.SetOsuFocused(true); return; }
+        if (message == "mma:focus:0") { windowsOverlay.SetOsuFocused(false); return; }
         if (message.StartsWith("mma:scale:", StringComparison.Ordinal) &&
             int.TryParse(message[10..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var delta))
         {
@@ -229,7 +296,7 @@ public partial class MainWindow : Window
             await Browser.InvokeScript(scripts.SetupScript);
             await Browser.InvokeScript(scripts.ObserverScript);
             if (model.Settings.FullscreenOverlayEnabled)
-                fullscreen.WriteRuntime(model.Settings, scripts.FullscreenSetupScript, scripts.ObserverScript);
+                fullscreen.WriteRuntime(model.Settings, scripts.FullscreenSetupScript, scripts.FullscreenObserverScript);
         }
         catch (Exception exception)
         {
@@ -237,9 +304,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task RequestOverlayWidgetSizeReportAsync()
+    {
+        if (!overlayMode) return;
+        try
+        {
+            await Browser.InvokeScript("window.dispatchEvent(new Event('resize'));");
+        }
+        catch { }
+    }
+
     private async Task AdjustScaleAsync(int delta)
     {
         if (model is null) return;
+        overlayResizeDebounceTimer.Stop();
+        overlayResizeScaleUpdatePending = false;
+        overlayNativeResizePending = false;
+        overlayExpectedWidgetPhysicalWidth = null;
+        overlayResizeGuardUntilUtc = default;
         var next = Math.Clamp(model.Settings.OverlayScalePercent + delta, 50, 180);
         if (next == model.Settings.OverlayScalePercent) return;
         model.Settings.OverlayScalePercent = next;
@@ -271,12 +353,25 @@ public partial class MainWindow : Window
     private async void Restart_Click(object? sender, RoutedEventArgs e)
     {
         if (model is null) return;
+        SetComponentPreparationState(componentPreparationFailed);
         SetControlsEnabled(false);
-        ShowMessagePage(Pick("Перезапуск tosu", "Restarting tosu"), Pick("Запускаю локальный сервис…", "Starting the local service…"), false);
+        ShowMessagePage(Pick("Подготовка tosu", "Preparing tosu"),
+            Pick("Проверяю компоненты и запускаю локальный сервис…", "Checking components and starting the local service…"), false);
+        if (!await CheckUpdatesAsync()) return;
         await model.RestartAsync();
         var running = model.Tosu.IsRunning;
         if (running)
+        {
+            SetComponentPreparationState(false);
             model.SetStatus(Pick("tosu работает", "tosu is running"), true);
+        }
+        else
+        {
+            SetComponentPreparationState(true);
+            ShowMessagePage(Pick("tosu не запущен", "tosu is not running"),
+                Pick("Не удалось запустить tosu. Нажмите «Повторить подготовку», чтобы повторить попытку.",
+                    "tosu could not be started. Click “Retry preparation” to try again."), true);
+        }
         SetControlsEnabled(running, keepRestart: !running);
         if (running) Navigate(OverlayUrl);
     }
@@ -318,12 +413,24 @@ public partial class MainWindow : Window
         overlayWidgetSized = false;
         overlayPlayStateKnown = false;
         overlaySuppressedByPlay = false;
-        overlayInputBeforePlay = true;
+        overlayInteractive = false;
+        suppressOverlayResizeFeedback = false;
+        overlayResizeScaleUpdatePending = false;
+        overlayNativeResizePending = false;
+        overlayExpectedWidgetPhysicalWidth = null;
+        overlayResizeGuardUntilUtc = default;
+        ignoredProgrammaticOverlaySize = null;
+        overlayResizeDebounceTimer.Stop();
         Opacity = 0;
         Toolbar.IsVisible = false;
         RootGrid.RowDefinitions[0].Height = new GridLength(0);
         SystemDecorations = SystemDecorations.None;
         CanResize = false;
+        // The normal launcher has a much larger minimum size. In overlay
+        // editing mode keep the widget's native resize range independent of
+        // that launcher constraint.
+        MinWidth = 120;
+        MinHeight = 80;
         Topmost = true;
         ShowInTaskbar = false;
         Background = Brushes.Transparent;
@@ -332,8 +439,8 @@ public partial class MainWindow : Window
 
         var layout = OverlayPresentationService.NormalizeLayout(model.Settings.OverlayLayoutMode);
         var scale = Math.Clamp(model.Settings.OverlayScalePercent, 50, 180) / 100d;
-        var width = (layout == "horizontal" ? 920 : layout == "companella" ? 620 : 475) * scale;
-        var height = (layout == "horizontal" ? 360 : layout == "companella" ? 320 : 540) * scale;
+        var width = (layout == "horizontal" ? 920 : layout == "companella" ? 760 : 475) * scale;
+        var height = (layout == "horizontal" ? 360 : layout == "companella" ? 340 : 540) * scale;
         ClientSize = new Size(width, height);
         var working = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
         var savedVisible = model.Settings.OverlayX > -30000 && model.Settings.OverlayY > -30000;
@@ -348,6 +455,13 @@ public partial class MainWindow : Window
     {
         if (!overlayMode || model is null) return;
         SaveOverlayBounds();
+        overlayInteractive = false;
+        overlayResizeDebounceTimer.Stop();
+        overlayResizeScaleUpdatePending = false;
+        overlayNativeResizePending = false;
+        overlayExpectedWidgetPhysicalWidth = null;
+        overlayResizeGuardUntilUtc = default;
+        ignoredProgrammaticOverlaySize = null;
         windowsOverlay.Leave();
         overlayMode = false;
         overlayWidgetSized = false;
@@ -373,34 +487,155 @@ public partial class MainWindow : Window
     private void ResizeOverlayToWidget(int physicalWidth, int physicalHeight)
     {
         if (!overlayMode || physicalWidth is < 120 or > 2400 || physicalHeight is < 80 or > 3200) return;
+        if (overlayInteractive)
+        {
+            if (overlayExpectedWidgetPhysicalWidth is int expectedWidth)
+            {
+                var matchesExpectedWidth = IsCloseToPhysicalWidth(physicalWidth, expectedWidth);
+                if (!matchesExpectedWidth &&
+                    (overlayNativeResizePending || overlayResizeScaleUpdateRunning ||
+                     DateTime.UtcNow < overlayResizeGuardUntilUtc)) return;
+                if (!matchesExpectedWidth || DateTime.UtcNow >= overlayResizeGuardUntilUtc)
+                {
+                    overlayExpectedWidgetPhysicalWidth = null;
+                    overlayResizeGuardUntilUtc = default;
+                }
+            }
+            else if (overlayNativeResizePending || overlayResizeDebounceTimer.IsEnabled)
+            {
+                // The browser reports its old fixed-size card while a native
+                // resize is still being dragged. Let the debounced scale
+                // update establish the new content size first.
+                return;
+            }
+        }
         var position = Position;
-        ClientSize = new Size(physicalWidth / RenderScaling, physicalHeight / RenderScaling);
-        Position = position;
+        var targetSize = new Size(physicalWidth / RenderScaling, physicalHeight / RenderScaling);
+        var sizeChanged = !IsCloseToSize(ClientSize, targetSize);
+        if (sizeChanged) ignoredProgrammaticOverlaySize = targetSize;
+        else ignoredProgrammaticOverlaySize = null;
+        suppressOverlayResizeFeedback = true;
+        try
+        {
+            ClientSize = targetSize;
+            Position = position;
+        }
+        finally
+        {
+            suppressOverlayResizeFeedback = false;
+        }
         overlayWidgetSized = true;
-        if (overlayPlayStateKnown && !overlaySuppressedByPlay) Opacity = 1;
+        UpdateOverlayVisibility();
         SaveOverlayBounds();
     }
+
+    private void MainWindow_SizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (!overlayMode || !overlayInteractive || suppressOverlayResizeFeedback) return;
+        if (ignoredProgrammaticOverlaySize is Size programmaticSize && IsCloseToSize(ClientSize, programmaticSize))
+        {
+            ignoredProgrammaticOverlaySize = null;
+            return;
+        }
+        ignoredProgrammaticOverlaySize = null;
+        overlayNativeResizePending = true;
+        overlayExpectedWidgetPhysicalWidth = null;
+        QueueOverlayScaleUpdate();
+    }
+
+    private void QueueOverlayScaleUpdate()
+    {
+        if (!overlayMode || !overlayInteractive || suppressOverlayResizeFeedback) return;
+        overlayResizeDebounceTimer.Stop();
+        overlayResizeDebounceTimer.Start();
+    }
+
+    private async void OverlayResizeDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        overlayResizeDebounceTimer.Stop();
+        if (overlayResizeScaleUpdateRunning)
+        {
+            overlayResizeScaleUpdatePending = true;
+            return;
+        }
+
+        overlayResizeScaleUpdateRunning = true;
+        try
+        {
+            await ApplyOverlayScaleFromWindowAsync();
+        }
+        finally
+        {
+            overlayResizeScaleUpdateRunning = false;
+            if (overlayResizeScaleUpdatePending)
+            {
+                overlayResizeScaleUpdatePending = false;
+                QueueOverlayScaleUpdate();
+            }
+        }
+    }
+
+    private async Task ApplyOverlayScaleFromWindowAsync()
+    {
+        if (!overlayMode || !overlayInteractive || suppressOverlayResizeFeedback || model is null) return;
+        var baseWidth = GetOverlayBaseWidth(model.Settings.OverlayLayoutMode);
+        if (baseWidth <= 0 || ClientSize.Width <= 0) return;
+
+        var next = Math.Clamp((int)Math.Round(ClientSize.Width / baseWidth * 100d), 50, 180);
+        if (next == model.Settings.OverlayScalePercent)
+        {
+            overlayNativeResizePending = false;
+            overlayExpectedWidgetPhysicalWidth = null;
+            overlayResizeGuardUntilUtc = default;
+            await RequestOverlayWidgetSizeReportAsync();
+            return;
+        }
+        overlayExpectedWidgetPhysicalWidth = (int)Math.Round(baseWidth * next / 100d * RenderScaling);
+        overlayResizeGuardUntilUtc = DateTime.UtcNow.AddMilliseconds(600);
+        model.Settings.OverlayScalePercent = next;
+        model.SaveSettings();
+        try
+        {
+            await ApplyPresentationAsync();
+            await RequestOverlayWidgetSizeReportAsync();
+        }
+        finally
+        {
+            overlayNativeResizePending = false;
+        }
+    }
+
+    private static double GetOverlayBaseWidth(string? layout) =>
+        OverlayPresentationService.NormalizeLayout(layout) switch
+        {
+            "horizontal" => 920,
+            "companella" => 760,
+            _ => 475
+        };
+
+    private static bool IsCloseToPhysicalWidth(int actual, int expected) => Math.Abs(actual - expected) <= 3;
+
+    private static bool IsCloseToSize(Size actual, Size expected) =>
+        Math.Abs(actual.Width - expected.Width) <= 1.5 && Math.Abs(actual.Height - expected.Height) <= 1.5;
 
     private void SetOverlaySuppressedByPlay(bool suppressed)
     {
         overlayPlayStateKnown = true;
         if (overlaySuppressedByPlay == suppressed)
         {
-            if (!suppressed && overlayWidgetSized) Opacity = 1;
+            UpdateOverlayVisibility();
             return;
         }
         overlaySuppressedByPlay = suppressed;
-        if (suppressed)
-        {
-            overlayInputBeforePlay = windowsOverlay.IsClickThrough;
-            windowsOverlay.SetClickThrough(true);
-            Opacity = 0;
-        }
-        else
-        {
-            windowsOverlay.SetClickThrough(overlayInputBeforePlay);
-            if (overlayWidgetSized) Opacity = 1;
-        }
+        UpdateOverlayVisibility();
+    }
+
+    private void UpdateOverlayVisibility()
+    {
+        if (!overlayMode) return;
+        var visible = overlayWidgetSized &&
+            (overlayInteractive || (overlayPlayStateKnown && !overlaySuppressedByPlay));
+        Opacity = visible ? 1 : 0;
     }
 
     private void SaveOverlayBounds()

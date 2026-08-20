@@ -7,17 +7,40 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            package: Mania-Map-Analyzer-Overlay-2.1.0-win-x64.zip
+          - os: ubuntu-latest
+            rid: linux-x64
+            package: Mania-Map-Analyzer-Overlay-2.1.0-linux-x64.tar.gz
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
-      - name: Build installer payload
-        shell: powershell
-        run: .\scripts\build.ps1
+          dotnet-version: '8.0.419'
+          dotnet-quality: ga
+      - name: Build application payload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\build.ps1 -RuntimeIdentifier ${{ matrix.rid }} -OutputDirectory artifacts/payload
+      - name: Build application payload (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/build.sh --runtime "${{ matrix.rid }}" --output artifacts/payload
+      - name: Package application (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\package-installer.ps1 -Version 2.1.0 -RuntimeIdentifier ${{ matrix.rid }}
+      - name: Package application (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/package.sh --version 2.1.0 --runtime "${{ matrix.rid }}"
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: Mania-Map-Analyzer-Overlay-Payload-2.0.0
-          path: artifacts/payload
+          name: Mania-Map-Analyzer-Overlay-2.1.0-${{ matrix.rid }}
+          path: artifacts/${{ matrix.package }}

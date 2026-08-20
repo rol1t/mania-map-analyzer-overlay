@@ -3,7 +3,7 @@
         xmlns:vm="using:ManiaMapAnalyzerOverlay.Avalonia.ViewModels"
         x:Class="ManiaMapAnalyzerOverlay.Avalonia.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Width="720" Height="840" MinWidth="650" MinHeight="740"
+        Width="860" Height="840" MinWidth="650" MinHeight="740"
         Background="#0E1016" Title="Mania Map Analyzer Overlay">
   <Grid x:Name="RootGrid" RowDefinitions="150,*">
     <Border x:Name="Toolbar" Background="#181B24" Padding="18,12,14,10">

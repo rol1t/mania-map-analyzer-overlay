@@ -34,7 +34,7 @@ public sealed class TosuService : IDisposable
         var executable = FindExecutable();
         if (executable is null)
         {
-            Publish("tosu was not found. Run the installer or place it in the tosu folder next to the application.", false);
+            Publish("tosu was not found. Open the launcher to prepare the components.", false);
             return;
         }
 
@@ -132,6 +132,7 @@ public sealed class TosuService : IDisposable
         var candidates = new[]
         {
             Path.Combine(AppPaths.TosuDirectory, name),
+            Path.Combine(AppPaths.LegacyTosuDirectory, name),
             Path.Combine(Directory.GetCurrentDirectory(), "tosu", name)
         };
 
