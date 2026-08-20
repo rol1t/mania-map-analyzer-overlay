@@ -71,6 +71,7 @@ namespace ManiaMapAnalyzerOverlay
         {
             return
                 "html.launcher-overlay-host .main-card,html.launcher-overlay-host .main-card *{-webkit-user-select:none!important;user-select:none!important;-webkit-user-drag:none!important;}" +
+                "html.launcher-transparent-overlay,html.launcher-transparent-overlay body,html.launcher-transparent-overlay .main-card,html.launcher-transparent-overlay .main-card *{cursor:auto!important;}" +
                 "html.launcher-transparent-overlay.mma-osu-focused,html.launcher-transparent-overlay.mma-osu-focused body,html.launcher-transparent-overlay.mma-osu-focused .main-card,html.launcher-transparent-overlay.mma-osu-focused .main-card *{cursor:none!important;}";
         }
 
