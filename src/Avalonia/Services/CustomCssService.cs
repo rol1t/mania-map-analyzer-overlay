@@ -10,10 +10,22 @@ public static class CustomCssService
     public static void EnsureExists()
     {
         if (File.Exists(Path)) return;
+
+        // Migrate the editable file from older portable builds on first run. The
+        // installation directory may be read-only, so all future writes use the
+        // per-user data directory.
+        if (File.Exists(AppPaths.LegacyCustomCssPath))
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+            File.Copy(AppPaths.LegacyCustomCssPath, Path, overwrite: false);
+            return;
+        }
+
         var bundledTemplate = System.IO.Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay-custom.css");
         var content = File.Exists(bundledTemplate)
             ? File.ReadAllText(bundledTemplate, Encoding.UTF8)
             : "/* Custom Mania Map Analyzer Overlay CSS */\n";
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
         File.WriteAllText(Path, content, new UTF8Encoding(false));
     }
 
