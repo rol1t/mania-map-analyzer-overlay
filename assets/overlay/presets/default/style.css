@@ -1,0 +1,295 @@
+html,body {
+  width:100%!important;
+  height:100%!important;
+  min-height:0!important;
+  background:transparent!important;
+  overflow:hidden!important;
+  
+}
+body {
+  padding:0!important;
+  margin:0!important;
+  
+}
+.dashboard {
+  min-height:0!important;
+  margin:0!important;
+  gap:0!important;
+  align-content:start!important;
+  
+}
+.card.main-card {
+  margin:0!important;
+  box-shadow:none!important;
+  
+}
+html.launcher-overlay-host {
+  --overlay-host-scale: 1;
+  zoom: var(--overlay-host-scale);
+  
+}
+html.launcher-overlay-host .card {
+  border-radius:16px!important;
+  padding:12px!important;
+  
+}
+html.launcher-overlay-host .main-card {
+  gap:8px!important;
+  
+}
+html.launcher-overlay-host .status-row {
+  gap:10px!important;
+  margin-bottom:8px!important;
+  
+}
+html.launcher-overlay-host .status {
+  font-size:15px!important;
+  
+}
+html.launcher-overlay-host .star-block {
+  gap:6px!important;
+  
+}
+html.launcher-overlay-host .star-left {
+  gap:4px!important;
+  
+}
+html.launcher-overlay-host .star-meta {
+  font-size:14px!important;
+  
+}
+html.launcher-overlay-host .star-value {
+  font-size:48px!important;
+  padding:4px 10px!important;
+  border-radius:20px!important;
+  
+}
+html.launcher-overlay-host .main-card:not(.bars-none) .star-value:not(.category-mode) {
+  font-size:52px!important;
+  padding:5px 12px!important;
+  border-radius:22px!important;
+  
+}
+html.launcher-overlay-host .star-value.category-mode {
+  font-size:24px!important;
+  
+}
+html.launcher-overlay-host .star-right-group {
+  gap:5px!important;
+  
+}
+html.launcher-overlay-host .star-right {
+  gap:3px!important;
+  margin-bottom:2px!important;
+  
+}
+html.launcher-overlay-host .star-subtitle {
+  font-size:27px!important;
+  
+}
+html.launcher-overlay-host .star-caption {
+  font-size:12px!important;
+  
+}
+html.launcher-overlay-host .top-right-capsule {
+  font-size:30px!important;
+  padding:4px 10px!important;
+  border-radius:18px!important;
+  
+}
+html.launcher-overlay-host .cluster-bars {
+  gap:6px!important;
+  padding-right:4px!important;
+  padding-bottom:18px!important;
+  
+}
+html.launcher-overlay-host .cluster-item {
+  gap:4px!important;
+  
+}
+html.launcher-overlay-host .cluster-label {
+  font-size:15px!important;
+  
+}
+html.launcher-overlay-host .cluster-track {
+  height:10px!important;
+  
+}
+html.launcher-overlay-host .cluster-subtype {
+  font-size:13px!important;
+  
+}
+html.launcher-overlay-host .ett-skill-bars {
+  gap:8px!important;
+  padding:2px 4px 18px 0!important;
+  
+}
+html.launcher-overlay-host .ett-skill-item {
+  gap:4px!important;
+  
+}
+html.launcher-overlay-host .ett-skill-label {
+  font-size:14px!important;
+  
+}
+html.launcher-overlay-host .ett-skill-track {
+  height:15px!important;
+  
+}
+html.launcher-overlay-host .ett-skill-head {
+  font-size:11px!important;
+  padding:1px 6px!important;
+  
+}
+html.launcher-overlay-host .mode-tag {
+  font-size:11px!important;
+  padding:2px 9px!important;
+  
+}
+html.launcher-overlay-host .pause-count {
+  font-size:12px!important;
+  
+}
+html.overlay-layout-default,html.overlay-layout-custom {
+  --overlay-host-width:var(--overlay-preset-width,475px);
+  
+}
+html.overlay-layout-default .dashboard,html.overlay-layout-custom .dashboard {
+  width:var(--overlay-host-width)!important;
+  min-width:var(--overlay-host-width)!important;
+  max-width:var(--overlay-host-width)!important;
+  
+}
+html.overlay-layout-default .main-card,html.overlay-layout-custom .main-card {
+  width:var(--overlay-host-width)!important;
+  min-width:var(--overlay-host-width)!important;
+  max-width:var(--overlay-host-width)!important;
+  
+}
+html.overlay-layout-default .main-card,html.overlay-layout-custom .main-card {
+  height:540px!important;
+  min-height:540px!important;
+  max-height:540px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-pattern,html.overlay-layout-custom .main-card.bars-pattern {
+  height:575px!important;
+  min-height:575px!important;
+  max-height:575px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-graph,html.overlay-layout-custom .main-card.bars-graph {
+  height:396px!important;
+  min-height:396px!important;
+  max-height:396px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-none,html.overlay-layout-custom .main-card.bars-none {
+  height:248px!important;
+  min-height:248px!important;
+  max-height:248px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-etterna,html.overlay-layout-custom .main-card.bars-etterna {
+  height:540px!important;
+  min-height:540px!important;
+  max-height:540px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-etterna.bars-etterna-compact,html.overlay-layout-custom .main-card.bars-etterna.bars-etterna-compact {
+  height:500px!important;
+  min-height:500px!important;
+  max-height:500px!important;
+  
+}
+html.overlay-layout-default .main-card.bars-full,html.overlay-layout-custom .main-card.bars-full {
+  height:auto!important;
+  min-height:540px!important;
+  max-height:none!important;
+  
+}
+html.overlay-layout-default,html.overlay-layout-custom {
+  --overlay-type-small:2.9vw;
+  --overlay-type-body:3.6vw;
+  --overlay-type-heading:4.5vw;
+  --overlay-type-rating:6.4vw;
+  
+}
+html.overlay-layout-horizontal {
+  --overlay-type-small:1.35vw;
+  --overlay-type-body:1.75vw;
+  --overlay-type-heading:2.25vw;
+  --overlay-type-rating:3.1vw;
+  
+}
+html.overlay-layout-companella {
+  --overlay-type-small:1.95vw;
+  --overlay-type-body:2.55vw;
+  --overlay-type-heading:3.15vw;
+  --overlay-type-rating:4.15vw;
+  
+}
+html.launcher-overlay-host .status {
+  font-size:clamp(15px,var(--overlay-type-body),20px)!important;
+  
+}
+html.launcher-overlay-host .star-meta,html.launcher-overlay-host .star-caption {
+  font-size:clamp(12px,var(--overlay-type-small),16px)!important;
+  
+}
+html.launcher-overlay-host .star-subtitle {
+  font-size:clamp(18px,var(--overlay-type-heading),26px)!important;
+  
+}
+html.launcher-overlay-host .star-value.category-mode {
+  font-size:clamp(18px,var(--overlay-type-heading),26px)!important;
+  
+}
+html.launcher-overlay-host .cluster-label,html.launcher-overlay-host .ett-skill-label {
+  font-size:clamp(15px,var(--overlay-type-body),20px)!important;
+  
+}
+html.launcher-overlay-host .cluster-subtype,html.launcher-overlay-host .ett-skill-head,html.launcher-overlay-host .mode-tag,html.launcher-overlay-host .pause-count {
+  font-size:clamp(12px,var(--overlay-type-small),16px)!important;
+  
+}
+html.overlay-layout-companella .overlay-comp-meta,html.overlay-layout-companella .overlay-comp-summary-label,html.overlay-layout-companella .overlay-comp-summary-note,html.overlay-layout-companella .overlay-comp-number,html.overlay-layout-companella .mode-tag {
+  font-size:clamp(12px,var(--overlay-type-small),16px)!important;
+  
+}
+html.overlay-layout-companella .overlay-comp-summary-value,html.overlay-layout-companella .overlay-comp-label {
+  font-size:clamp(15px,var(--overlay-type-body),20px)!important;
+  
+}
+html.overlay-layout-companella .overlay-comp-summary-rating .overlay-comp-summary-value {
+  font-size:clamp(24px,var(--overlay-type-rating),34px)!important;
+  
+}
+
+html.launcher-overlay-host:not(.launcher-transparent-overlay),html.launcher-overlay-host:not(.launcher-transparent-overlay) body {
+  width:100%!important;
+  height:100%!important;
+  min-height:100%!important;
+  background:#0e1016!important;
+  overflow:auto!important;
+}
+
+html.launcher-overlay-host:not(.launcher-transparent-overlay) body {
+  padding:18px!important;
+  margin:0!important;
+}
+
+html.launcher-overlay-host:not(.launcher-transparent-overlay) .dashboard {
+  width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  min-width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  max-width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  margin:0 auto!important;
+}
+
+html.launcher-overlay-host:not(.launcher-transparent-overlay) .main-card {
+  width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  min-width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  max-width:var(--overlay-preview-width,var(--overlay-host-width))!important;
+  margin:0 auto!important;
+  box-shadow:0 16px 38px rgba(0,0,0,.30)!important;
+}

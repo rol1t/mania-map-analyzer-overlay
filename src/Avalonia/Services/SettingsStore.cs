@@ -1,3 +1,4 @@
+﻿using System;
 using System.IO;
 using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
@@ -20,9 +21,9 @@ public sealed class SettingsStore
                 return JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(AppPaths.SettingsPath), Options)
                     ?? new LauncherSettings();
         }
-        catch
+        catch (Exception exception)
         {
-            // A damaged settings file should not prevent startup.
+            AppLogger.Error("Loading launcher settings", exception);
         }
 
         return new LauncherSettings();

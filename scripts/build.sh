@@ -77,8 +77,8 @@ mkdir -p -- "$output_path"
     --runtime "$runtime_identifier" \
     --self-contained true \
     --output "$output_path" \
-    /p:PublishSingleFile=false \
-    /p:PublishTrimmed=false \
+    -p:PublishSingleFile=false \
+    -p:PublishTrimmed=false \
     --nologo
 
 updater_output="$output_path/.updater-build"
@@ -88,8 +88,8 @@ mkdir -p -- "$updater_output"
     --runtime "$runtime_identifier" \
     --self-contained true \
     --output "$updater_output" \
-    /p:PublishSingleFile=true \
-    /p:PublishTrimmed=false \
+    -p:PublishSingleFile=true \
+    -p:PublishTrimmed=false \
     --nologo
 
 updater_binary="$updater_output/Mania Map Analyzer Overlay.Updater"
@@ -98,6 +98,29 @@ cp -- "$updater_binary" "$output_path/"
 rm -rf -- "$updater_output"
 
 cp -- "$repo_root/assets/overlay-custom.css" "$output_path/"
+mkdir -p -- "$output_path/Assets/overlay"
+cp -R -- "$repo_root/assets/overlay/." "$output_path/Assets/overlay/"
+mkdir -p -- "$output_path/Assets/analyzers"
+cp -R -- "$repo_root/assets/analyzers/." "$output_path/Assets/analyzers/"
+mkdir -p -- "$output_path/Assets/localization"
+cp -R -- "$repo_root/assets/localization/." "$output_path/Assets/localization/"
+for asset in \
+    "Assets/overlay/presets/default/manifest.json" \
+    "Assets/overlay/presets/horizontal/manifest.json" \
+    "Assets/overlay/presets/companella/manifest.json"; do
+    [[ -f "$output_path/$asset" ]] || die "Published package is missing overlay resource: $asset"
+done
+for asset in \
+    "Assets/localization/manifest.json" \
+    "Assets/localization/en.json" \
+    "Assets/localization/ru.json"; do
+    [[ -f "$output_path/$asset" ]] || die "Published package is missing localization resource: $asset"
+done
+for asset in \
+    "Assets/analyzers/mania-map-analyser/manifest.json" \
+    "Assets/analyzers/mania-map-analyser/adapter.js"; do
+    [[ -f "$output_path/$asset" ]] || die "Published package is missing analyzer adapter resource: $asset"
+done
 cp -- "$repo_root/README.md" "$output_path/"
 cp -- "$repo_root/LICENSE" "$output_path/"
 cp -R -- "$repo_root/LICENSES" "$output_path/"
@@ -111,5 +134,5 @@ if find "$output_path" -type f \( -name '*.cmd' -o -name '*.ps1' \) -print -quit
     die "Runtime package must not contain .cmd or .ps1 files."
 fi
 
-printf 'Mania Map Analyzer Overlay 2.1.0 built at: %s\n' "$output_path"
+printf 'Mania Map Analyzer Overlay 2.2.0 built at: %s\n' "$output_path"
 printf 'Launch the application executable; component setup runs inside the GUI.\n'

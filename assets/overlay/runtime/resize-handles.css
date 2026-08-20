@@ -1,0 +1,25 @@
+html.launcher-overlay-host .overlay-resize-handle {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-user-drag: none !important;
+  touch-action: none !important;
+}
+html.launcher-overlay-host .overlay-resize-handle[data-direction="n"] { top: 0; left: 20px; right: 20px; height: 20px; cursor: ns-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="s"] { bottom: 0; left: 20px; right: 20px; height: 20px; cursor: ns-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="w"] { left: 0; top: 20px; bottom: 20px; width: 20px; cursor: ew-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="e"] { right: 0; top: 20px; bottom: 20px; width: 20px; cursor: ew-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="nw"] { left: 0; top: 0; width: 20px; height: 20px; cursor: nwse-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="se"] { right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="ne"] { right: 0; top: 0; width: 20px; height: 20px; cursor: nesw-resize !important; }
+html.launcher-overlay-host .overlay-resize-handle[data-direction="sw"] { left: 0; bottom: 0; width: 20px; height: 20px; cursor: nesw-resize !important; }

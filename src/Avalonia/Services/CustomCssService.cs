@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
@@ -9,7 +9,8 @@ public static class CustomCssService
 
     public static void EnsureExists()
     {
-        if (File.Exists(Path)) return;
+        if (File.Exists(Path))
+            return;
 
         // Migrate the editable file from older portable builds on first run. The
         // installation directory may be read-only, so all future writes use the

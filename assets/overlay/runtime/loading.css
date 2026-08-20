@@ -1,0 +1,39 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: #0e1016;
+  color: #f4f6fc;
+  font-family: Inter, 'Segoe UI', sans-serif;
+}
+
+body {
+  display: grid;
+  place-items: center;
+}
+
+.box {
+  max-width: 520px;
+  padding: 42px;
+  text-align: center;
+}
+
+.ring {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto 22px;
+  border: 4px solid #292d3a;
+  border-top-color: var(--overlay-accent);
+  border-radius: 50%;
+  animation: overlay-loading-spin 1s linear infinite;
+}
+
+.error {
+  animation: none;
+  border-color: var(--overlay-accent);
+}
+
+h1 { font-size: 24px; margin: 0 0 12px; }
+p { color: #aeb5c8; line-height: 1.55; margin: 0; }
+
+@keyframes overlay-loading-spin { to { transform: rotate(360deg); } }

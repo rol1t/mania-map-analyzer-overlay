@@ -1,0 +1,12 @@
+{
+  "id": "mania-map-analyser",
+  "name": "ManiaMapAnalyser",
+  "analysisPath": "/ManiaMapAnalyser/?launcher=4",
+  "fullscreenPath": "/ManiaMapAnalyser/?launcher-fullscreen=1",
+  "settingsPath": "/settings?overlay=ManiaMapAnalyser",
+  "hostSelector": ".main-card",
+  "presetAnchorSelector": ".mode-tag-group",
+  "script": "adapter.js",
+  "supportsFullscreen": true,
+  "snapshotSchemaVersion": 1
+}

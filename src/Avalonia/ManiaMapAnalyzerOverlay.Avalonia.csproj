@@ -4,20 +4,24 @@
     <OutputType Condition="'$(OS)' != 'Windows_NT'">Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <Version>2.1.0</Version>
-    <AssemblyVersion>2.1.0.0</AssemblyVersion>
-    <FileVersion>2.1.0.0</FileVersion>
-    <InformationalVersion>2.1.0</InformationalVersion>
+    <Version>2.2.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <InformationalVersion>2.2.0</InformationalVersion>
     <AssemblyName>Mania Map Analyzer Overlay</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
     <Compile Include="..\Services\OverlayStyleBuilder.cs" Link="Shared\OverlayStyleBuilder.cs" />
     <Compile Include="..\Services\UiText.cs" Link="Shared\UiText.cs" />
     <None Include="..\..\assets\overlay-custom.css" Link="Assets\overlay-custom.css" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\assets\overlay\**" LinkBase="Assets\overlay" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\assets\analyzers\**" LinkBase="Assets\analyzers" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\assets\localization\**" LinkBase="Assets\localization" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

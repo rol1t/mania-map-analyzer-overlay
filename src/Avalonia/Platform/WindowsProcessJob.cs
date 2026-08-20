@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -14,9 +14,11 @@ internal sealed class WindowsProcessJob : IDisposable
 
     public WindowsProcessJob()
     {
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows())
+            return;
         handle = CreateJobObject(IntPtr.Zero, null);
-        if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (handle == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
 
         var info = new JobObjectExtendedLimitInformation();
         info.BasicLimitInformation.LimitFlags = KillOnJobClose;
@@ -47,7 +49,8 @@ internal sealed class WindowsProcessJob : IDisposable
 
     public void Dispose()
     {
-        if (handle == IntPtr.Zero) return;
+        if (handle == IntPtr.Zero)
+            return;
         CloseHandle(handle);
         handle = IntPtr.Zero;
     }

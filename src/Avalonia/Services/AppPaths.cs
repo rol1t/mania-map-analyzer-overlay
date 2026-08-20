@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
@@ -35,7 +35,8 @@ public static class AppPaths
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support");
 
         var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-        if (!string.IsNullOrWhiteSpace(xdgDataHome)) return xdgDataHome;
+        if (!string.IsNullOrWhiteSpace(xdgDataHome))
+            return xdgDataHome;
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
     }
 }

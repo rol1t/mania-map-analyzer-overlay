@@ -1,4 +1,4 @@
-using Avalonia.Controls;
+﻿using Avalonia.Controls;
 using Avalonia.Interactivity;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Views;
@@ -12,8 +12,10 @@ public partial class MessageDialog : Window
         Title = title;
         MessageText.Text = message;
         YesButton.Content = yesText;
-        if (string.IsNullOrWhiteSpace(noText)) NoButton.IsVisible = false;
-        else NoButton.Content = noText;
+        if (string.IsNullOrWhiteSpace(noText))
+            NoButton.IsVisible = false;
+        else
+            NoButton.Content = noText;
     }
 
     private void Yes_Click(object? sender, RoutedEventArgs e) => Close(true);
