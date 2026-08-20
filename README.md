@@ -175,13 +175,22 @@ At startup the launcher checks its own latest GitHub Release and offers a one-cl
 
 ## Building from source
 
-Requirements for source builds: .NET 8 SDK and PowerShell. The released Windows installer is self-contained and does not require a separately installed .NET runtime.
+Requirements for source builds: the pinned .NET 8 SDK from `global.json`. Windows uses PowerShell; Linux uses Bash. Released packages are self-contained and do not require a separately installed .NET runtime.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
 The build script publishes the Avalonia launcher and hidden self-update helper as a self-contained `win-x64` application package in `artifacts\payload`. Runtime component setup is implemented in C#; the PowerShell files under `scripts/` are developer/CI utilities only and are not shipped to users.
+
+On Linux, run the native Bash scripts:
+
+```bash
+./scripts/build.sh --runtime linux-x64 --output artifacts/payload
+./scripts/package.sh --version 2.1.0 --runtime linux-x64
+```
+
+The Linux package is written to `artifacts/Mania-Map-Analyzer-Overlay-2.1.0-linux-x64.tar.gz` and preserves executable permissions.
 
 ## Project structure
 
@@ -197,7 +206,7 @@ assets/                    editable CSS template
 scripts/                   build and component updater scripts
 LICENSES/                  bundled third-party license texts
 docs/                      release notes and copy-ready CSS examples
-.github/workflows/         Windows CI build
+.github/workflows/         Windows and Linux CI builds
 ```
 
 ## Credits and source disclosure

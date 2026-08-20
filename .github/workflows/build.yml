@@ -21,13 +21,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
-      - name: Build application payload
-        shell: powershell
+          dotnet-version: '8.0.419'
+          dotnet-quality: ga
+      - name: Build application payload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: .\scripts\build.ps1 -RuntimeIdentifier ${{ matrix.rid }} -OutputDirectory artifacts/payload
-      - name: Package application
-        shell: powershell
+      - name: Build application payload (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/build.sh --runtime "${{ matrix.rid }}" --output artifacts/payload
+      - name: Package application (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: .\scripts\package-installer.ps1 -Version 2.1.0 -RuntimeIdentifier ${{ matrix.rid }}
+      - name: Package application (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/package.sh --version 2.1.0 --runtime "${{ matrix.rid }}"
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
