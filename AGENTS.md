@@ -53,6 +53,8 @@
 
 - Preserve unrelated user changes in the working tree.
 - Do not commit, push, merge, tag, or publish a release without explicit user authorization.
+- Before committing, always ask the user for confirmation and show the diff summary; wait for an explicit `commit`/`approve` reply even if the task is complete.
+- The user wants to review every change before it is committed — never commit automatically after finishing a task.
 - Stage only files belonging to the current task.
 - Do not restore legacy project names, WinForms code, deleted documentation, or removed files unless explicitly requested.
 - Never include downloaded tosu binaries, credentials, tokens, local settings, or generated user data in Git.
