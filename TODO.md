@@ -16,8 +16,14 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 - [x] Implement versioned deterministic matcher for rice (`ReplayJudge.JudgeRice` + `ReplayJudgementWindows` + `ReplayJudgeOptions` `mania:1.0.0-rice` — unmatched input vs miss, ambiguous→diagnostic, strict `offset=input-object`, LN reject).
 - [x] Validate exact judgement counts and combo, accuracy tolerance per fixture (`ReplayScoreCalculator` + `ReplayScorePolicy.StableClassic`, fidelity gate mandatory; `ReplayScoreCalculatorTests`).
 - [x] Add regression tests for chords, jacks, dense stream, lead-in, duplicate frames, early-press, ambiguous, LN-reject, rate variants (`ReplayJudgeTests` — 9 cases, all deterministic).
+- [x] Implement timing stats `mean/median/SD/UR=SD×10/early-late` with inclusion rules (misses excluded, empty→null suppressed; `ReplayTimingStats`).
+- [x] Implement per-column stats for arbitrary key counts (`ReplayColumnStats` — configurable hand grouping, per-column `judgementCounts` + `timing`).
+- [x] Add rolling windows `50 notes` and `10 seconds` with `sampleCount` labels (`ReplayRollingWindow.ByNoteCount/ByDuration`).
+- [x] Add deterministic fixed-duration sections with `noteCount/accuracy/bias/UR/misses` and evidence slice (`ReplaySection.Build`).
+- [x] Add conservative insights with sample-size/confidence thresholds (e.g. column UR vs median eligible, `MinimumSampleCount=30`, `MinimumConfidence=0.6`; `ReplayInsights` — suppressed when insufficient).
+- [x] Cover `ReplayAnalyticsTests` — 7 cases for timing/columns/rolling/sections/insights/provenance (38 replay tests total).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 3–7 (Phase 3: timing/columns/sections/insights; Phase 4: `ReplayAnalysisEngine : IAnalyzerEngine` + widget composition; Phases 5–7: LN/rate/lazer/live/pattern).
+Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 4–7 (Phase 4: `ReplayAnalysisEngine : IAnalyzerEngine` + widget composition; Phases 5–7: LN/rate/lazer/live/pattern).
 
 ## Analyzer runtime integration
 
