@@ -122,11 +122,32 @@
     });
   }
 
+  function renderMainCard(snapshot) {
+    var difficulty = snapshot.difficulty || {};
+    var starText = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
+    var unit = difficulty.unit || "SR";
+    var starValue = starText === "—" ? starText : starText + " " + unit;
+    text("rework-star", starValue, "—");
+    var lnValue = difficulty.lnPercent == null ? Number.NaN : Number(difficulty.lnPercent);
+    var lnLabel = Number.isFinite(lnValue) ? formatNumber(lnValue, 1) + "%" : "—";
+    var keyCount = difficulty.keys == null ? Number.NaN : Number(difficulty.keys);
+    var keys = Number.isFinite(keyCount) ? String(difficulty.keys) : "—";
+    text("rework-meta", "LN%: " + lnLabel + " · Keys: " + keys, "LN — · Keys —");
+    var rc = rank(snapshot, "rc-dan") || {};
+    var ln = rank(snapshot, "ln-dan") || {};
+    text("rework-diff", (rc.value || "—") + " || " + (ln.value || "—"), "—");
+    var card = document.querySelector(".main-card");
+    if (card) {
+      card.classList.remove("card-hidden-by-play");
+      if (card.getAttribute("aria-hidden") === "true") card.removeAttribute("aria-hidden");
+    }
+  }
+
   function render(snapshot) {
     window.__overlayLatestAnalysisSnapshot = snapshot;
-    if (!document.documentElement.classList.contains("overlay-layout-companella")) return;
     renderSummary(snapshot);
     renderSkills(snapshot);
+    renderMainCard(snapshot);
   }
 
   window.__overlayRenderAnalysisSnapshot = render;

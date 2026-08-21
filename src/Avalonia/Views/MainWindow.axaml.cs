@@ -765,6 +765,21 @@ public partial class MainWindow : Window
                             }
                         });
 
+                        // Push the domain-level snapshot to the WebView so the renderer can consume it without querying DOM selectors.
+                        try
+                        {
+                            var firstWidget = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
+                            if (firstWidget is not null)
+                            {
+                                var headlessSnapshot = HeadlessSnapshotConverter.FromComposed(snapshot, null, firstWidget);
+                                await PushHeadlessSnapshotAsync(headlessSnapshot, cancellationToken);
+                            }
+                        }
+                        catch (Exception pushException)
+                        {
+                            AppLogger.Warning("Headless snapshot push", $"Failed to push scene snapshot: {pushException.Message}", pushException);
+                        }
+
                         return;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -821,6 +836,16 @@ public partial class MainWindow : Window
                     model?.SetStatus(L("status.headless_failed") + diagnosticsSummary + " (DOM fallback)");
                 }
             });
+
+            try
+            {
+                var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
+                await PushHeadlessSnapshotAsync(headlessSnapshot, cancellationToken);
+            }
+            catch (Exception pushException)
+            {
+                AppLogger.Warning("Headless snapshot push", $"Failed to push single snapshot: {pushException.Message}", pushException);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -832,6 +857,26 @@ public partial class MainWindow : Window
         finally
         {
             Interlocked.Exchange(ref headlessBeatmapPollInFlight, 0);
+        }
+    }
+
+    private async Task PushHeadlessSnapshotAsync(AnalysisSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var script = $"window.dispatchEvent(new CustomEvent('analysis:snapshot', {{detail: {json}}})); if (typeof window.__overlayRenderAnalysisSnapshot === 'function') window.__overlayRenderAnalysisSnapshot({json});";
+            await Browser.InvokeScript(script);
+            AppLogger.Info("Headless snapshot push", $"Pushed headless snapshot for beatmap {snapshot.Beatmap.Title} [{snapshot.Beatmap.Version}] to WebView.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Warning("Pushing headless snapshot", $"Could not push headless snapshot to WebView: {exception.Message}", exception);
         }
     }
 

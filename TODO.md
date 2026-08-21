@@ -20,11 +20,11 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 ## Rendering and presets
 
-- [ ] Make the existing overlay renderer consume only the domain-level analysis contract.
-- [ ] Remove the remaining primary-path dependencies on Tosu/MMA DOM selectors.
-- [ ] Finish the external preset template/resource pipeline for HTML, CSS, and optional JavaScript.
-- [ ] Add a WYSIWYG preview for composed widgets, including live resize and scale changes.
-- [ ] Keep preset errors visible and actionable; never silently fall back to an unrelated layout.
+- [x] Make the existing overlay renderer consume only the domain-level analysis contract (`assets/overlay/runtime/renderer.js` renders `AnalysisSnapshot` from `HeadlessSnapshotConverter` via `analysis:snapshot`).
+- [x] Remove the remaining primary-path dependencies on Tosu/MMA DOM selectors (primary headless path uses `TosuBeatmapSource` + `AnalyzerExecutionCoordinator`, renderer no longer early-returns for non-companella, `renderMainCard` updates domain snapshot).
+- [x] Finish the external preset template/resource pipeline for HTML, CSS, and optional JavaScript (`OverlayPresetCatalog`/`OverlayPresentationService` handles `template.html`/`style.css` with `data-overlay-preset-node`; `script` remains reserved/disabled per `README` security).
+- [x] Add a WYSIWYG preview for composed widgets, including live resize and scale changes (`AppearanceDialog` live preview + headless `PushHeadlessSnapshotAsync` updates preview, `overlay-resize`/`Ctrl+wheel` handling).
+- [x] Keep preset errors visible and actionable; never silently fall back to an unrelated layout (`OverlayPresentationService` throws, `MainWindow.ApplyPresentationAsync` shows `status` + `ShowMessagePage` + `application.log`).
 
 ## Compatibility and correctness
 
