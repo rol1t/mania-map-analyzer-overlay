@@ -4,7 +4,7 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
 
-## Replay analysis — Phases 1-5 done
+## Replay analysis — Phases 1-6 done
 
 - [x] Build the pure replay-analysis domain `ManiaMapAnalyzerOverlay.ReplayAnalysis` (`src/ReplayAnalysis/*`: `ReplayArtifact`+`Handle`+`IReplayArtifactStore`, `ReplayInputEvent`, `JudgedHitEvent`, `ReplayProvenance`, `ReplayAnalysisSnapshot`, `IReplaySource`/`IReplayBeatmapProvider`, `ReplayKeyMask`/`ReplayInputOrdering`).
 - [x] Keep binary replay bytes opaque across engine boundaries (`ReplayArtifactHandle` + `InMemoryReplayArtifactStore`; no base64 in settings/logs/WebView; validated by `ReplayArtifactTests`).
@@ -31,8 +31,10 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 - [x] Analyse head and release offsets separately, report dropped holds as distinct event (`replay.ln_dropped` diagnostic, `LnHead`/`LnTail` phases).
 - [x] Add rate/mod normalisation and dual `MapTimeMs`+`AudioTimeMs` preservation (`ReplayInputEvent.AudioTimeMs/Rate`, `ReplayModPolicy.RequiresRateNormalization`, `ReplayLongNoteTests.RateModPreserves`).
 - [x] Implement lazer replay ingestion stub with `replay.lazer_not_supported` and client/version gating (`LazerReplayDecoder` + `ReplayModPolicy.ValidateMods` for `RD/MR/AP/SO` unsupported).
+- [x] Add provisional live mode `TosuLiveReplaySource` (`ProvisionalLive`, `beatmap.time.live` progress, aggregate score/UR, recent offsets; bounded `1024` ring buffer, backpressure, off-UI-thread; `replay.live.provisional` diagnostic, `FinalizeWithReplayFile` replaces provisional with exact; `TosuLiveReplaySourceTests` 4 cases).
+- [x] Use bounded memory for live buffers and finalize provisional with replay-file analysis after play (`FinalizeWithReplayFile`).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 6–7 (provisional live `TosuLiveReplaySource` + pattern correlation).
+Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phase 7 (pattern correlation: `ManiaMapAnalyser` annotations, multi-membership weights, NPS/pattern/strain evidence-first statements, opt-in comparison).
 
 ## Analyzer runtime integration
 
