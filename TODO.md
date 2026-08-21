@@ -4,11 +4,11 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 ## Analyzer runtime integration
 
-- [ ] Connect `AnalyzerEngineScriptBridge` to the Avalonia main window and the active Tosu/WebView host.
-- [ ] Add an analyzer-engine supervisor that starts, probes, monitors, and restarts selected engines.
-- [ ] Route Tosu beatmap snapshots, rate, and mods through the typed analysis coordinator.
-- [ ] Keep the legacy DOM adapter as an explicit, clearly reported fallback when the headless engine is unavailable.
-- [ ] Surface engine compatibility, partial results, failures, and diagnostics in the application UI and logs.
+- [x] Connect `AnalyzerEngineScriptBridge` to the Avalonia main window and the active Tosu/WebView host (`WebViewAnalyzerScriptHost.cs`, `MainWindow.axaml.cs:725`).
+- [x] Add an analyzer-engine supervisor that starts, probes, monitors, and restarts selected engines (`AnalyzerEngineSupervisor.cs`).
+- [x] Route Tosu beatmap snapshots, rate, and mods through the typed analysis coordinator (`TosuBeatmapSource.cs` -> `AnalyzerEngineSupervisor.AnalyzeAsync` -> `AnalyzerExecutionCoordinator`).
+- [x] Keep the legacy DOM adapter as an explicit, clearly reported fallback when the headless engine is unavailable (`FallbackCode engine.fallback_to_dom_adapter`, `IsFallbackActive`, `Status.headless_fallback`).
+- [x] Surface engine compatibility, partial results, failures, and diagnostics in the application UI and logs (`StateChanged` + `PollHeadlessBeatmapAsync`, `AppLogger`, `application.log`).
 
 ## Multi-analyzer and multi-widget configuration
 

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -41,7 +42,26 @@ public partial class App : Application
 
     private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
-        AppLogger.Error("Unobserved background task", e.Exception);
+        var flattened = e.Exception.Flatten();
+        var isTransport = flattened.InnerExceptions.Any(exception =>
+            exception.Message.Contains("Unable to read data from the transport connection", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("forcibly closed", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("An existing connection was forcibly closed", StringComparison.OrdinalIgnoreCase) ||
+            exception is System.Net.Http.HttpRequestException ||
+            exception is System.IO.IOException);
+
+        if (isTransport)
+        {
+            AppLogger.Warning(
+                "Unobserved background task (transport closed)",
+                "A background HTTP request was aborted when tosu/osu closed the connection.",
+                e.Exception);
+        }
+        else
+        {
+            AppLogger.Error("Unobserved background task", e.Exception);
+        }
+
         e.SetObserved();
     }
 

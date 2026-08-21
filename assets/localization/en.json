@@ -76,5 +76,14 @@
   "appearance.layout_default": "Default",
   "appearance.layout_horizontal": "Horizontal",
   "appearance.layout_companella": "Companella",
-  "appearance.layout_custom": "Custom CSS"
+  "appearance.layout_custom": "Custom CSS",
+  "status.headless_ready": "Headless engine ready: {0}",
+  "status.headless_fallback": "DOM fallback: {0}",
+  "status.headless_probe_failed": "Headless probe failed: {0}",
+  "status.headless_error": "Headless error: {0}",
+  "status.headless_success": "Headless success:",
+  "status.headless_partial": "Headless partial:",
+  "status.headless_failed": "Headless failed:",
+  "status.headless_osu_not_running": "osu! client is not running",
+  "status.headless_no_beatmap": "No beatmap selected"
 }

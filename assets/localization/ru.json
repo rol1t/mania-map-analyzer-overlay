@@ -76,5 +76,14 @@
   "appearance.layout_default": "По умолчанию",
   "appearance.layout_horizontal": "Горизонтальный",
   "appearance.layout_companella": "Companella",
-  "appearance.layout_custom": "Пользовательский CSS"
+  "appearance.layout_custom": "Пользовательский CSS",
+  "status.headless_ready": "Headless-движок готов: {0}",
+  "status.headless_fallback": "Резерв DOM: {0}",
+  "status.headless_probe_failed": "Проверка headless: {0}",
+  "status.headless_error": "Ошибка headless: {0}",
+  "status.headless_success": "Headless успешно:",
+  "status.headless_partial": "Headless частично:",
+  "status.headless_failed": "Headless ошибка:",
+  "status.headless_osu_not_running": "Клиент osu! не запущен",
+  "status.headless_no_beatmap": "Карта не выбрана"
 }

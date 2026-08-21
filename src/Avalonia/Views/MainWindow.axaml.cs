@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,7 @@ using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
+using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Avalonia.Platform;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
@@ -36,11 +38,23 @@ public partial class MainWindow : Window
     private readonly WindowsOverlayController windowsOverlay;
     private readonly DispatcherTimer overlayResizeDebounceTimer;
     private readonly DispatcherTimer overlayGameplayPollTimer;
+    private readonly DispatcherTimer headlessBeatmapPollTimer;
     private readonly SemaphoreSlim presentationGate = new(1, 1);
+    private readonly AnalyzerEngineCatalog analyzerEngineCatalog = new();
+    private readonly AnalyzerEnginePackageDeployer analyzerEngineDeployer = new();
     private MainViewModel? model;
     private CancellationTokenSource? previewPresentationCancellation;
     private CancellationTokenSource? overlayGameplayPollCancellation;
     private AnalyzerCoordinator? analyzerCoordinator;
+    private WebViewAnalyzerScriptHost? analyzerScriptHost;
+    private AnalyzerEngineSupervisor? analyzerSupervisor;
+    private TosuBeatmapSource? tosuBeatmapSource;
+    private HttpClient? tosuBeatmapHttpClient;
+    private CancellationTokenSource? headlessBeatmapPollCancellation;
+    private int headlessBeatmapPollInFlight;
+    private string? lastHeadlessBeatmapKey;
+    private AnalyzerEngineSupervisorState? lastSupervisorState;
+    private DateTime lastOsuNotRunningLogUtc = DateTime.MinValue;
     private bool initialized;
     private bool overlayMode;
     private bool overlayWidgetSized;
@@ -96,6 +110,8 @@ public partial class MainWindow : Window
         overlayResizeDebounceTimer.Tick += OverlayResizeDebounceTimer_Tick;
         overlayGameplayPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         overlayGameplayPollTimer.Tick += OverlayGameplayPollTimer_Tick;
+        headlessBeatmapPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+        headlessBeatmapPollTimer.Tick += HeadlessBeatmapPollTimer_Tick;
         SizeChanged += MainWindow_SizeChanged;
         Opened += async (_, _) =>
         {
@@ -114,13 +130,26 @@ public partial class MainWindow : Window
     {
         AppLogger.ErrorRaised -= AppLogger_ErrorRaised;
         overlayResizeDebounceTimer.Stop();
+        headlessBeatmapPollTimer.Stop();
         StopOverlayGameplayPolling();
+        StopHeadlessBeatmapPolling();
         previewPresentationCancellation?.Cancel();
         previewPresentationCancellation?.Dispose();
         windowsOverlay.Dispose();
         updates.Dispose();
+        tosuBeatmapHttpClient?.Dispose();
         if (analyzerCoordinator is not null)
+        {
             analyzerCoordinator.SnapshotChanged -= AnalyzerSnapshotChanged;
+        }
+
+        if (analyzerSupervisor is not null)
+        {
+            analyzerSupervisor.StateChanged -= AnalyzerSupervisor_StateChanged;
+            _ = analyzerSupervisor.DisposeAsync().AsTask();
+        }
+
+        analyzerScriptHost?.DisposeAsync().AsTask().ConfigureAwait(false);
         model?.Dispose();
         base.OnClosed(e);
     }
@@ -200,6 +229,8 @@ public partial class MainWindow : Window
             SetControlsEnabled(false, keepRestart: true);
             ShowMessagePage(L("status.tosu_not_running"), model.Status, true);
         }
+
+        await InitializeHeadlessEngineAsync();
     }
 
     private void Tosu_StateChanged(object? sender, TosuStateChangedEventArgs e)
@@ -208,14 +239,22 @@ public partial class MainWindow : Window
         {
             StatusDot.Fill = new SolidColorBrush(Color.Parse(e.IsRunning ? "#3DCF8E" : "#FF5F7E"));
             if (e.IsRunning)
+            {
                 SetControlsEnabled(true);
+                if (analyzerSupervisor is not null)
+                {
+                    _ = analyzerSupervisor.NotifyTosuRestartAsync();
+                }
+            }
             else if (initialized && overlayMode)
             {
                 ReturnToLauncherAfterGameExit(
                     "status.osu_stopped");
             }
             else if (initialized)
+            {
                 SetControlsEnabled(false, keepRestart: true);
+            }
         });
     }
 
@@ -232,6 +271,358 @@ public partial class MainWindow : Window
         {
             AppLogger.Error("Returning to launcher after game exit", exception);
         }
+    }
+
+    private async Task InitializeHeadlessEngineAsync()
+    {
+        try
+        {
+            if (analyzerSupervisor is not null)
+            {
+                analyzerSupervisor.StateChanged -= AnalyzerSupervisor_StateChanged;
+                await analyzerSupervisor.DisposeAsync();
+                analyzerSupervisor = null;
+            }
+
+            analyzerScriptHost?.DisposeAsync().AsTask().ConfigureAwait(false);
+            analyzerScriptHost = new WebViewAnalyzerScriptHost(Browser);
+            analyzerSupervisor = new AnalyzerEngineSupervisor(
+                analyzerEngineCatalog,
+                analyzerEngineDeployer,
+                analyzerScriptHost);
+            analyzerSupervisor.StateChanged += AnalyzerSupervisor_StateChanged;
+
+            tosuBeatmapHttpClient?.Dispose();
+            tosuBeatmapHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            tosuBeatmapSource = new TosuBeatmapSource(tosuBeatmapHttpClient, TosuBaseUri);
+
+            // Ensure the WebView has finished loading the analysis page before
+            // bootstrapping the headless runtime. Injecting the runtime too early
+            // makes globalThis.location.href point at the previous document and
+            // the subsequent navigation resets the bridge, producing engine.runtime_reset.
+            await WaitForAnalysisWebViewReadyAsync();
+
+            var preferredEngineId = analyzerEngineCatalog.Available().FirstOrDefault()?.Id;
+            var state = await analyzerSupervisor.StartAsync(preferredEngineId);
+            lastSupervisorState = state;
+            if (state.IsFallback)
+            {
+                AppLogger.Warning(
+                    "Analyzer engine supervisor",
+                    $"Headless engine fallback active: {state.Message} Diagnostics: {string.Join("; ", state.Diagnostics.Select(diagnostic => diagnostic.Code))}");
+            }
+            else if (state.IsReady)
+            {
+                StartHeadlessBeatmapPolling();
+            }
+
+            UpdateHeadlessStatusUi(state);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Initializing headless analyzer engine", exception);
+            var fallbackState = new AnalyzerEngineSupervisorState(
+                AnalyzerEngineSupervisorStatus.Fallback,
+                null,
+                null,
+                $"Headless engine initialization failed: {exception.Message}. Legacy DOM adapter remains the explicit fallback.",
+                [],
+                IsFallback: true,
+                IsReady: false);
+            UpdateHeadlessStatusUi(fallbackState);
+        }
+    }
+
+    private async Task WaitForAnalysisWebViewReadyAsync()
+    {
+        try
+        {
+            if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            {
+                await Task.Delay(500);
+                return;
+            }
+
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Handler(object? sender, WebViewNavigationCompletedEventArgs e)
+            {
+                if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+                {
+                    completion.TrySetResult(true);
+                }
+            }
+
+            Browser.NavigationCompleted += Handler;
+            try
+            {
+                // Ensure navigation is attempted.
+                if (!ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+                {
+                    Navigate(AnalysisUrl);
+                }
+
+                var completed = await Task.WhenAny(completion.Task, Task.Delay(3000));
+                if (completed == completion.Task)
+                {
+                    try
+                    {
+                        await completion.Task;
+                    }
+                    catch (Exception navigationException)
+                    {
+                        AppLogger.Warning("Waiting for analysis WebView", "WebView navigation task faulted before headless bootstrap.", navigationException);
+                    }
+                }
+
+                // Give the DOM a moment to settle before injecting the runtime.
+                await Task.Delay(400);
+            }
+            finally
+            {
+                Browser.NavigationCompleted -= Handler;
+            }
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Warning("Waiting for analysis WebView", $"Could not confirm WebView readiness before bootstrapping headless engine: {exception.Message}", exception);
+            await Task.Delay(800);
+        }
+    }
+
+    private void AnalyzerSupervisor_StateChanged(object? sender, AnalyzerEngineSupervisorState state)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            lastSupervisorState = state;
+            UpdateHeadlessStatusUi(state);
+            if (state.IsReady && headlessBeatmapPollTimer.IsEnabled == false)
+            {
+                StartHeadlessBeatmapPolling();
+            }
+            else if (state.IsFallback)
+            {
+                StopHeadlessBeatmapPolling();
+            }
+        });
+    }
+
+    private void UpdateHeadlessStatusUi(AnalyzerEngineSupervisorState state)
+    {
+        if (model is null)
+        {
+            return;
+        }
+
+        var prefix = state.IsReady ? "[Headless Ready] " :
+                     state.IsFallback ? "[DOM Fallback] " :
+                     "[Headless] ";
+        var diagnosticsSummary = state.Diagnostics.Count == 0
+            ? string.Empty
+            : $" Diagnostics: {string.Join(", ", state.Diagnostics.Take(3).Select(diagnostic => diagnostic.Code))}";
+        var statusMessage = state.Status switch
+        {
+            AnalyzerEngineSupervisorStatus.Ready => UiText.Format("status.headless_ready", state.EngineId ?? "unknown") + diagnosticsSummary,
+            AnalyzerEngineSupervisorStatus.Fallback => UiText.Format("status.headless_fallback", state.Message) + diagnosticsSummary,
+            AnalyzerEngineSupervisorStatus.ProbeFailed => UiText.Format("status.headless_probe_failed", state.Message),
+            AnalyzerEngineSupervisorStatus.Error => UiText.Format("status.headless_error", state.Message),
+            _ => prefix + state.Message + diagnosticsSummary
+        };
+
+        AppLogger.Info("Analyzer engine supervisor state", $"{state.Status} engine={state.EngineId ?? "none"} fallback={state.IsFallback} message={state.Message}");
+
+        if (state.IsReady || state.IsFallback)
+        {
+            model.SetStatus(statusMessage);
+        }
+    }
+
+    private void StartHeadlessBeatmapPolling()
+    {
+        if (tosuBeatmapSource is null)
+        {
+            return;
+        }
+
+        StopHeadlessBeatmapPolling();
+        headlessBeatmapPollCancellation = new CancellationTokenSource();
+        headlessBeatmapPollTimer.Start();
+        _ = PollHeadlessBeatmapAsync();
+    }
+
+    private void StopHeadlessBeatmapPolling()
+    {
+        headlessBeatmapPollTimer.Stop();
+        headlessBeatmapPollCancellation?.Cancel();
+        headlessBeatmapPollCancellation?.Dispose();
+        headlessBeatmapPollCancellation = null;
+    }
+
+    private async void HeadlessBeatmapPollTimer_Tick(object? sender, EventArgs e) =>
+        await PollHeadlessBeatmapAsync();
+
+    private async Task PollHeadlessBeatmapAsync()
+    {
+        if (tosuBeatmapSource is null || analyzerSupervisor is null || Interlocked.Exchange(ref headlessBeatmapPollInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        var cancellationToken = headlessBeatmapPollCancellation?.Token ?? CancellationToken.None;
+
+        try
+        {
+            TosuBeatmapSnapshot snapshot;
+            try
+            {
+                snapshot = await tosuBeatmapSource.GetCurrentAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (TosuBeatmapSourceException exception)
+            {
+                if (IsOsuNotRunningBeatmapException(exception))
+                {
+                    var now = DateTime.UtcNow;
+                    if (now - lastOsuNotRunningLogUtc > TimeSpan.FromSeconds(5))
+                    {
+                        lastOsuNotRunningLogUtc = now;
+                        AppLogger.Info("Headless beatmap poll", "osu! client is not running — headless beatmap fetch skipped (tosu HTTP 500).");
+                    }
+
+                    lastHeadlessBeatmapKey = null;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        // Show a friendly non-error status instead of an exception dialog.
+                        // Keep the legacy DOM adapter as fallback while the game is closed.
+                        if (model is not null && !string.Equals(model.Status, L("status.headless_osu_not_running"), StringComparison.Ordinal))
+                        {
+                            model.SetStatus(L("status.headless_osu_not_running"));
+                        }
+                    });
+
+                    return;
+                }
+
+                if (IsNoBeatmapBeatmapException(exception))
+                {
+                    var now = DateTime.UtcNow;
+                    if (now - lastOsuNotRunningLogUtc > TimeSpan.FromSeconds(5))
+                    {
+                        lastOsuNotRunningLogUtc = now;
+                        AppLogger.Info("Headless beatmap poll", "No current beatmap is available — osu! is running but no map is selected.");
+                    }
+
+                    // Do not treat as error: keep polling and do not overwrite a useful status
+                    // with a stale map. Clearing the key forces a re-analysis once a map appears.
+                    lastHeadlessBeatmapKey = null;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (model is not null && string.IsNullOrWhiteSpace(model.Status))
+                        {
+                            model.SetStatus(L("status.headless_no_beatmap"));
+                        }
+                    });
+
+                    return;
+                }
+
+                AppLogger.Warning("Headless beatmap poll", exception.Message, exception);
+                return;
+            }
+
+            var key = snapshot.Identity.StableKey + "|" + snapshot.Rate.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", snapshot.Mods) + "|" + snapshot.RawBeatmap.Length;
+            if (string.Equals(key, lastHeadlessBeatmapKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            lastHeadlessBeatmapKey = key;
+            AppLogger.Info(
+                "Headless beatmap poll",
+                $"New beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} rate={snapshot.Rate} mods=[{string.Join(",", snapshot.Mods)}]");
+
+            var result = await analyzerSupervisor.AnalyzeAsync(snapshot, cancellationToken: cancellationToken);
+            if (result is null)
+            {
+                AppLogger.Info("Headless analysis", $"Headless analysis returned no result for {snapshot.Identity.StableKey}. DOM adapter remains the explicit fallback for this beatmap.");
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                var outcomeText = result.Outcome switch
+                {
+                    AnalysisOutcome.Success => "Success",
+                    AnalysisOutcome.Partial => "Partial (inspect diagnostics)",
+                    AnalysisOutcome.Failed => "Failed (fallback to DOM)",
+                    AnalysisOutcome.Cancelled => "Cancelled",
+                    _ => result.Outcome.ToString()
+                };
+                var metricsSummary = string.Join(", ", result.Metrics.Take(4).Select(metric => metric.Key + "=" + metric.Value.Value.ToString()));
+                var diagnosticsSummary = result.Diagnostics.Length == 0
+                    ? string.Empty
+                    : $" Diagnostics: {string.Join("; ", result.Diagnostics.Take(3).Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message))}";
+                AppLogger.Info(
+                    "Headless analysis result",
+                    $"Beatmap {snapshot.Identity.StableKey} outcome={outcomeText} metrics=[{metricsSummary}]{diagnosticsSummary}");
+
+                if (result.Outcome == AnalysisOutcome.Partial)
+                {
+                    model?.SetStatus(L("status.headless_partial") + $" {result.ActualAlgorithm ?? snapshot.Metadata.Version} partial" + diagnosticsSummary);
+                }
+                else if (result.Outcome == AnalysisOutcome.Success)
+                {
+                    model?.SetStatus(L("status.headless_success") + $" {snapshot.Metadata.Title} [{snapshot.Metadata.Version}] {result.ActualAlgorithm} star={result.Metrics.GetValueOrDefault("difficulty.star")?.Value.ToString() ?? "n/a"}");
+                }
+                else if (result.Outcome == AnalysisOutcome.Failed)
+                {
+                    model?.SetStatus(L("status.headless_failed") + diagnosticsSummary + " (DOM fallback)");
+                }
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Polling headless beatmap", exception, userVisible: false);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref headlessBeatmapPollInFlight, 0);
+        }
+    }
+
+    private static bool IsOsuNotRunningBeatmapException(TosuBeatmapSourceException exception)
+    {
+        var message = exception.Message ?? string.Empty;
+        if (message.Contains("500", StringComparison.Ordinal) &&
+            message.Contains("osu", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var inner = exception.InnerException?.Message ?? string.Empty;
+        return inner.Contains("500", StringComparison.Ordinal) &&
+               inner.Contains("osu", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNoBeatmapBeatmapException(TosuBeatmapSourceException exception)
+    {
+        var message = exception.Message ?? string.Empty;
+        if (message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var inner = exception.InnerException?.Message ?? string.Empty;
+        return inner.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
+               inner.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
+               inner.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<bool> CheckUpdatesAsync()
@@ -457,9 +848,21 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!e.IsSuccess || !ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
-                return;
-            await ApplyPresentationAsync();
+            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            {
+                await ApplyPresentationAsync();
+            }
+
+            if (analyzerSupervisor is not null)
+            {
+                var status = analyzerSupervisor.CurrentState.Status;
+                if (status == AnalyzerEngineSupervisorStatus.Ready ||
+                    status == AnalyzerEngineSupervisorStatus.Fallback ||
+                    status == AnalyzerEngineSupervisorStatus.Error)
+                {
+                    await analyzerSupervisor.NotifyNavigationAsync();
+                }
+            }
         }
         catch (Exception exception)
         {
@@ -483,6 +886,19 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(e.Body))
             return;
         var message = e.Body;
+
+        if (message.StartsWith(AnalyzerEngineScriptBridge.NativeMessagePrefix, StringComparison.Ordinal))
+        {
+            // WebViewAnalyzerScriptHost already subscribes to Browser.WebMessageReceived and forwards
+            // this message to the bridge. Logging here is sufficient and avoids duplicate delivery.
+            if (analyzerSupervisor is not null && !analyzerSupervisor.IsReady)
+            {
+                AppLogger.Info("Analyzer engine bridge", $"Received bridge message while supervisor state={analyzerSupervisor.CurrentState.Status}.");
+            }
+
+            return;
+        }
+
         if (message.StartsWith("overlay:error:", StringComparison.Ordinal))
         {
             AppLogger.Error("Overlay runtime", Uri.UnescapeDataString(message[14..]));
@@ -914,7 +1330,15 @@ public partial class MainWindow : Window
         }
         SetControlsEnabled(running, keepRestart: !running);
         if (running)
+        {
             Navigate(AnalysisUrl);
+            await InitializeHeadlessEngineAsync();
+        }
+
+        if (!running && analyzerSupervisor is not null)
+        {
+            await analyzerSupervisor.NotifyTosuRestartAsync();
+        }
     }
 
     private void LanguageSelector_SelectionChanged(object? sender, SelectionChangedEventArgs e)

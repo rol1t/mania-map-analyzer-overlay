@@ -94,6 +94,16 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             {
                 throw;
             }
+            catch (TosuBeatmapSourceException exception) when (IsOsuNotRunningException(exception))
+            {
+                ReportOsuNotRunning(exception);
+                throw;
+            }
+            catch (TosuBeatmapSourceException exception) when (IsNoBeatmapException(exception))
+            {
+                ReportNoBeatmap(exception);
+                throw;
+            }
             catch (TosuBeatmapSourceException exception)
             {
                 ReportError("Reading current beatmap from tosu", exception);
@@ -104,7 +114,19 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
                 var wrapped = new TosuBeatmapSourceException(
                     "tosu did not provide a usable beatmap snapshot.",
                     exception);
-                ReportError("Reading current beatmap from tosu", wrapped);
+                if (IsOsuNotRunningException(wrapped))
+                {
+                    ReportOsuNotRunning(wrapped);
+                }
+                else if (IsNoBeatmapException(wrapped) || IsNoBeatmapException(exception))
+                {
+                    ReportNoBeatmap(wrapped);
+                }
+                else
+                {
+                    ReportError("Reading current beatmap from tosu", wrapped);
+                }
+
                 throw wrapped;
             }
         }
@@ -156,7 +178,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.IO.IOException)
         {
             throw new TosuBeatmapSourceException($"The tosu endpoint '{route}' could not be reached.", exception);
         }
@@ -555,6 +577,39 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             code,
             message,
             properties: properties));
+    }
+
+    private static bool IsOsuNotRunningException(Exception exception)
+    {
+        var message = exception.Message ?? string.Empty;
+        return message.Contains("500", StringComparison.Ordinal) &&
+               message.Contains("osu", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNoBeatmapException(Exception exception)
+    {
+        var message = exception.Message ?? string.Empty;
+        return message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ReportNoBeatmap(TosuBeatmapSourceException exception)
+    {
+        _diagnostics.Report(new AnalysisDiagnostic(
+            AnalysisDiagnosticSeverity.Information,
+            "tosu.no_beatmap",
+            "No current beatmap is available (osu! is running but no map is selected).",
+            properties: [new KeyValuePair<string, string>("reason", exception.Message)]));
+    }
+
+    private void ReportOsuNotRunning(TosuBeatmapSourceException exception)
+    {
+        _diagnostics.Report(new AnalysisDiagnostic(
+            AnalysisDiagnosticSeverity.Information,
+            "tosu.osu_not_running",
+            "osu! client is not running (tosu returned HTTP 500).",
+            properties: [new KeyValuePair<string, string>("reason", exception.Message)]));
     }
 
     private void ReportError(string operation, TosuBeatmapSourceException exception)

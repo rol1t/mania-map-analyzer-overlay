@@ -82,7 +82,7 @@ public sealed class TosuService : IDisposable
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidOperationException)
         {
             AppLogger.Warning("Reading tosu gameplay state", "The gameplay state could not be read.", exception);
         }
@@ -197,6 +197,10 @@ public sealed class TosuService : IDisposable
                     return true;
             }
             catch (HttpRequestException exception)
+            {
+                AppLogger.Warning("Waiting for tosu server", exception.Message, exception);
+            }
+            catch (IOException exception)
             {
                 AppLogger.Warning("Waiting for tosu server", exception.Message, exception);
             }
