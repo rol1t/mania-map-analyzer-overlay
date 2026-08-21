@@ -984,6 +984,7 @@ public partial class MainWindow : Window
         AnalysisButton.Content = L("button.map_analysis");
         AppearanceButton.Content = L("button.appearance");
         MappingButton.Content = L("button.mapping");
+        HelpButton.Content = L("button.help");
         OverlayButton.Content = L("button.overlay");
         DashboardButton.Content = L("button.tosu_panel");
         SetComponentPreparationState(componentPreparationFailed);
@@ -1042,6 +1043,7 @@ public partial class MainWindow : Window
         AnalysisButton.IsEnabled = enabled;
         AppearanceButton.IsEnabled = enabled;
         MappingButton.IsEnabled = enabled;
+        HelpButton.IsEnabled = enabled;
         PreviewScaleDownButton.IsEnabled = enabled;
         PreviewScaleUpButton.IsEnabled = enabled;
         OverlayButton.IsEnabled = enabled;
@@ -1577,6 +1579,19 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             AppLogger.Error("Opening analysis mapping dialog", exception);
+        }
+    }
+
+    private async void Help_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new DocumentationDialog("overview");
+            await dialog.ShowDialog(this);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Opening documentation", exception);
         }
     }
 

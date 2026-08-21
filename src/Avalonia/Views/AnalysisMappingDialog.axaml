@@ -1,18 +1,24 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:ManiaMapAnalyzerOverlay.Avalonia.Controls"
         x:Class="ManiaMapAnalyzerOverlay.Avalonia.Views.AnalysisMappingDialog"
         Width="720" Height="540" CanResize="True" WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="22">
+  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="22">
     <TextBlock x:Name="HeadingText" FontSize="20" FontWeight="SemiBold" />
-    <TextBlock x:Name="HintText" Grid.Row="0" Margin="0,36,0,0" TextWrapping="Wrap" Opacity="0.7" FontSize="12" />
-    <Border Grid.Row="1" Margin="0,16,0,0" BorderBrush="#2A2E3A" BorderThickness="1" CornerRadius="6">
+    <controls:MarkdownTextBlock x:Name="HintText" Grid.Row="1" Margin="0,10,0,0" Opacity="0.85" FontSize="12" />
+    <Border Grid.Row="2" Margin="0,12,0,0" Background="#1A1E2A" BorderBrush="#2A2E3A" BorderThickness="1" CornerRadius="6" Padding="10">
+      <ScrollViewer MaxHeight="140">
+        <TextBlock x:Name="OptionsText" TextWrapping="Wrap" FontFamily="Consolas,Menlo,monospace" FontSize="11" Opacity="0.85" />
+      </ScrollViewer>
+    </Border>
+    <Border Grid.Row="3" Margin="0,14,0,0" BorderBrush="#2A2E3A" BorderThickness="1" CornerRadius="6">
       <ScrollViewer>
         <TextBox x:Name="JsonBox" AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas,Menlo,monospace" FontSize="12" />
       </ScrollViewer>
     </Border>
-    <TextBlock x:Name="ErrorText" Grid.Row="2" Margin="0,10,0,0" Foreground="#FF5F7E" TextWrapping="Wrap" IsVisible="False" />
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
+    <TextBlock x:Name="ErrorText" Grid.Row="4" Margin="0,10,0,0" Foreground="#FF5F7E" TextWrapping="Wrap" IsVisible="False" />
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
       <Button x:Name="OpenFileButton" Click="OpenFile_Click" />
       <Button x:Name="CancelButton" Click="Cancel_Click" />
       <Button x:Name="SaveButton" Click="Save_Click" />

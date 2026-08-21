@@ -17,6 +17,7 @@
             <Button x:Name="AnalysisButton" Click="Analysis_Click" Margin="0,0,8,8" />
             <Button x:Name="AppearanceButton" Click="Appearance_Click" Margin="0,0,8,8" />
             <Button x:Name="MappingButton" Click="Mapping_Click" Margin="0,0,8,8" />
+            <Button x:Name="HelpButton" Click="Help_Click" Margin="0,0,8,8" />
             <Button x:Name="PreviewScaleDownButton" Content="−" Click="PreviewScaleDown_Click" Margin="0,0,4,8" Padding="11,4" />
             <Button x:Name="PreviewScaleText" Content="100%" IsHitTestVisible="False" Margin="0,0,4,8" Padding="8,4" />
             <Button x:Name="PreviewScaleUpButton" Content="+" Click="PreviewScaleUp_Click" Margin="0,0,8,8" Padding="11,4" />

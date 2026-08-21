@@ -1,0 +1,8 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ManiaMapAnalyzerOverlay.Avalonia.Controls.DocumentationLink">
+  <Button x:Name="LinkButton" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"
+          Click="LinkButton_Click">
+    <TextBlock x:Name="LinkText" TextDecorations="Underline" Foreground="#6EA8FF" />
+  </Button>
+</UserControl>

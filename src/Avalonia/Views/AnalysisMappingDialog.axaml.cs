@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -25,10 +29,74 @@ public partial class AnalysisMappingDialog : Window
     {
         Title = L("mapping.title");
         HeadingText.Text = Title;
-        HintText.Text = L("mapping.hint");
+        HintText.Markdown = L("mapping.hint") + " " + L("mapping.hint_link");
         OpenFileButton.Content = L("mapping.open_file");
         CancelButton.Content = L("appearance.cancel");
         SaveButton.Content = L("appearance.apply");
+        UpdateOptionsText();
+    }
+
+    private void UpdateOptionsText()
+    {
+        try
+        {
+            var catalog = new AnalyzerEngineCatalog();
+            var engines = catalog.List();
+            var builder = new StringBuilder();
+            builder.AppendLine(L("mapping.available_title"));
+            if (engines.Count == 0)
+            {
+                builder.AppendLine(L("mapping.no_engines"));
+            }
+            else
+            {
+                foreach (var package in engines)
+                {
+                    var available = package.IsAvailable ? L("mapping.available") : L("mapping.unavailable");
+                    builder.AppendLine($"• {package.Id ?? "?"} v{package.Version ?? "?"} [{available}]");
+                    if (package.Manifest?.Capabilities is not null)
+                    {
+                        var caps = package.Manifest.Capabilities;
+                        if (caps.Algorithms is not null && caps.Algorithms.Count > 0)
+                        {
+                            builder.AppendLine($"  {L("mapping.algorithms")}: {string.Join(", ", caps.Algorithms)}");
+                        }
+
+                        if (caps.SemanticMetricIds is not null && caps.SemanticMetricIds.Count > 0)
+                        {
+                            var preview = caps.SemanticMetricIds.Count > 8
+                                ? string.Join(", ", caps.SemanticMetricIds.Take(8)) + ", …"
+                                : string.Join(", ", caps.SemanticMetricIds);
+                            builder.AppendLine($"  {L("mapping.metrics")}: {preview}");
+                        }
+                    }
+                }
+            }
+
+            builder.AppendLine();
+            builder.AppendLine(L("mapping.config_fields"));
+            builder.AppendLine(L("mapping.config_fields_details"));
+            builder.AppendLine(L("mapping.hint_click_help"));
+            OptionsText.Text = builder.ToString();
+        }
+        catch (Exception exception)
+        {
+            OptionsText.Text = L("mapping.options_error") + ": " + exception.Message;
+        }
+    }
+
+    private async void Help_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new DocumentationDialog("mapping");
+            await dialog.ShowDialog(this);
+        }
+        catch (Exception exception)
+        {
+            ErrorText.Text = exception.Message;
+            ErrorText.IsVisible = true;
+        }
     }
 
     private void LoadConfiguration()
