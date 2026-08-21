@@ -126,32 +126,37 @@
   function renderReplay(snapshot) {
     const replay = snapshot.replay;
     const hasReplayNodes = byId("overlay-replay") || byId("overlay-replay-ur") || byId("overlay-replay-insights");
-    if (!replay || (!replay.hasData && !hasReplayNodes)) {
+    const isReplayPreset = document.documentElement.classList.contains("overlay-layout-companella-replay");
+    if (!replay && !hasReplayNodes && !isReplayPreset) {
       const container = byId("overlay-replay");
       if (container) container.hidden = true;
       return;
     }
     const container = byId("overlay-replay");
     if (container) container.hidden = false;
+    // For companella-replay without data, fabricate empty replay so block stays visible as demo
+    const effectiveReplay = replay || (isReplayPreset ? { hasData: false, ur: null, meanMs: null, medianMs: null, sampleCount: null, earlyCount: null, lateCount: null, fidelity: "", reason: "", columns: [], insights: [{ code: "demo", message: "No .osr yet — play a map to see UR/bias per column" }], hasData: false } : null);
+    if (!effectiveReplay) return;
+    const r = effectiveReplay;
 
     function fmt(value, digits) {
       return formatNumber(value, digits) || "—";
     }
 
-    text("overlay-replay-ur", replay.ur == null ? "—" : fmt(replay.ur, 1), "—");
-    text("overlay-replay-mean", replay.meanMs == null ? "—" : fmt(replay.meanMs, 1) + " ms", "—");
-    text("overlay-replay-median", replay.medianMs == null ? "—" : fmt(replay.medianMs, 1) + " ms", "—");
-    text("overlay-replay-sample", replay.sampleCount == null ? "—" : String(replay.sampleCount), "—");
-    text("overlay-replay-fidelity", replay.fidelity ? replay.fidelity.replace("replay.fidelity.", "") : (replay.hasData ? "exact" : ""), "");
+    text("overlay-replay-ur", r.ur == null ? "—" : fmt(r.ur, 1), "—");
+    text("overlay-replay-mean", r.meanMs == null ? "—" : fmt(r.meanMs, 1) + " ms", "—");
+    text("overlay-replay-median", r.medianMs == null ? "—" : fmt(r.medianMs, 1) + " ms", "—");
+    text("overlay-replay-sample", r.sampleCount == null ? "—" : String(r.sampleCount), "—");
+    text("overlay-replay-fidelity", r.fidelity ? r.fidelity.replace("replay.fidelity.", "") : (r.hasData ? "exact" : ""), "");
 
-    const early = replay.earlyCount, late = replay.lateCount;
+    const early = r.earlyCount, late = r.lateCount;
     const earlyLate = early != null || late != null ? `${early ?? 0} / ${late ?? 0}` : "—";
     text("overlay-replay-earlylate", earlyLate, "—");
 
     const colChart = byId("overlay-replay-columns");
     if (colChart) {
       colChart.textContent = "";
-      const cols = Array.isArray(replay.columns) ? replay.columns : [];
+      const cols = Array.isArray(r.columns) ? r.columns : [];
       colChart.hidden = cols.length === 0;
       cols.forEach(function (col) {
         const item = document.createElement("div");
@@ -173,7 +178,7 @@
 
     const insightsEl = byId("overlay-replay-insights");
     if (insightsEl) {
-      const insights = Array.isArray(replay.insights) ? replay.insights : [];
+      const insights = Array.isArray(r.insights) ? r.insights : [];
       insightsEl.textContent = "";
       insightsEl.hidden = insights.length === 0;
       insights.forEach(function (insight) {
@@ -183,10 +188,10 @@
         line.title = insight.message || "";
         insightsEl.appendChild(line);
       });
-      if (insights.length === 0 && replay.reason) {
+      if (insights.length === 0 && r.reason) {
         const line = document.createElement("div");
         line.className = "overlay-replay-insight overlay-replay-reason";
-        line.textContent = replay.reason;
+        line.textContent = r.reason;
         insightsEl.appendChild(line);
         insightsEl.hidden = false;
       }
