@@ -4,7 +4,7 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
 
-## Replay analysis — Phases 1-2 done
+## Replay analysis — Phases 1-4 done (core engine)
 
 - [x] Build the pure replay-analysis domain `ManiaMapAnalyzerOverlay.ReplayAnalysis` (`src/ReplayAnalysis/*`: `ReplayArtifact`+`Handle`+`IReplayArtifactStore`, `ReplayInputEvent`, `JudgedHitEvent`, `ReplayProvenance`, `ReplayAnalysisSnapshot`, `IReplaySource`/`IReplayBeatmapProvider`, `ReplayKeyMask`/`ReplayInputOrdering`).
 - [x] Keep binary replay bytes opaque across engine boundaries (`ReplayArtifactHandle` + `InMemoryReplayArtifactStore`; no base64 in settings/logs/WebView; validated by `ReplayArtifactTests`).
@@ -22,8 +22,13 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 - [x] Add deterministic fixed-duration sections with `noteCount/accuracy/bias/UR/misses` and evidence slice (`ReplaySection.Build`).
 - [x] Add conservative insights with sample-size/confidence thresholds (e.g. column UR vs median eligible, `MinimumSampleCount=30`, `MinimumConfidence=0.6`; `ReplayInsights` — suppressed when insufficient).
 - [x] Cover `ReplayAnalyticsTests` — 7 cases for timing/columns/rolling/sections/insights/provenance (38 replay tests total).
+- [x] Implement `ReplayAnalysisEngine : IAnalyzerEngine` using typed core contracts (off-UI-thread, `replayArtifactId` opaque, failures as diagnostics; `ReplayAnalysisEngineTests` 3 cases).
+- [x] Expose replay metrics via semantic ids `replay.timing.ur/mean/median/sd`, `replay.column.{n}.biasMs/ur/miss`, `replay.section.{i}.accuracy/ur`, `replay.insights.count` (`ReplayMetrics.BuildMetrics`).
+- [x] Add post-play config separate from presets (`ReplayConfiguration` — `SelectedSource/ExplicitReplayPath/AllowPostPlayDiscovery/JudgeOptions`, `replay-configuration.json`).
+- [x] Allow widget bindings to combine replay + MMA metrics (`ReplayWidgetBinding.SuggestBindings` — `localMsdVsUr` etc. via shared `SemanticMetric` contract).
+- [x] Log and surface parser/judge/version failures instead of defaults (`replay.not_found/corrupt/beatmap_mismatch/ln_not_supported/unexpected` + `replay.fidelity.*`).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 4–7 (Phase 4: `ReplayAnalysisEngine : IAnalyzerEngine` + widget composition; Phases 5–7: LN/rate/lazer/live/pattern).
+Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 5–7 (LN/rate/lazer/live/pattern + results view polish).
 
 ## Analyzer runtime integration
 
