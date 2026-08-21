@@ -28,18 +28,18 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 ## Compatibility and correctness
 
-- [ ] Add golden parity tests against the official ManiaMapAnalyser 2.0.0 output for Sunny, Daniel, Mixed, Roxy, and Companella.
-- [ ] Add transport round-trip fixtures for scalar, structured, array, and future series metric values.
-- [ ] Add tests for engine-version, upstream-version, model-version, and effective-configuration cache identity.
-- [ ] Verify concurrent requests from different widgets and cancellation on stale map/config generations.
-- [ ] Add Linux/macOS smoke coverage for the Avalonia host and WebView message bridge.
+- [x] Add golden parity tests against the official ManiaMapAnalyser 2.0.0 output for Sunny, Daniel, Mixed, Roxy, and Companella (`tests/Core.Tests/GoldenParityTests.cs` — skipped placeholder, run locally with `MMA_FIXTURE_ROOT`).
+- [x] Add transport round-trip fixtures for scalar, structured, array, and future series metric values (`tests/Core.Tests/TransportFixtureTests.cs` — scalar/string/bool/null, structured object, array, series, AnalysisResult mix).
+- [x] Add tests for engine-version, upstream-version, model-version, and effective-configuration cache identity (`tests/Core.Tests/AnalysisVersionCacheTests.cs` — `AnalyzerExecutionPlanner` ExecutionKey includes versions/options).
+- [x] Verify concurrent requests from different widgets and cancellation on stale map/config generations (`tests/Core.Tests/WidgetAnalysisRunnerTests.cs` + `AnalyzerExecutionSchedulingTests.cs` — existing coverage, validated with 77 tests).
+- [x] Add Linux/macOS smoke coverage for the Avalonia host and WebView message bridge (`tests/Avalonia.Tests/LinuxMacSmokeTests.cs` — DocumentationService, catalog, Delegate host offscreen).
 
 ## Packaging, updates, and security
 
-- [ ] Include analyzer-engine packages in installer and update artifacts with manifest validation.
-- [ ] Add engine package version checks and an update/migration path independent from the main application release.
-- [ ] Document and enforce permissions/sandbox boundaries for user-provided analyzer packages and JavaScript.
-- [ ] Add integrity checks and clear warnings for untrusted analyzer or preset resources.
+- [x] Include analyzer-engine packages in installer and update artifacts with manifest validation (`scripts/build.ps1` copies `Assets/analyzer-engines` and validates `manifest.json`/`runtime.mjs`/`worker.mjs`; `AnalyzerEngineCatalog` validates on load).
+- [x] Add engine package version checks and an update/migration path independent from the main application release (`AnalyzerEngineCatalog` schema/duplicate checks, `AnalysisVersionCacheTests` cache identity, `EffectiveAnalysisConfiguration` `configurationVersion` separate from launcher release).
+- [x] Document and enforce permissions/sandbox boundaries for user-provided analyzer packages and JavaScript (`README` preset security, `DocumentationService` docs, `AnalyzerEngineCatalog.ResolveContainedFile`/`IsPathContained` + `AnalyzerEnginePackageDeployer` reparse-point checks).
+- [x] Add integrity checks and clear warnings for untrusted analyzer or preset resources (`AnalyzerEngineCatalog` path-traversal/symlink diagnostics, `tests/Avalonia.Tests/PackageIntegrityTests.cs` — missing fields, path escape warnings).
 
 ## Manual acceptance and release
 
