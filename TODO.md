@@ -4,7 +4,7 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
 
-## Replay analysis — Phases 1-4 done (core engine)
+## Replay analysis — Phases 1-5 done
 
 - [x] Build the pure replay-analysis domain `ManiaMapAnalyzerOverlay.ReplayAnalysis` (`src/ReplayAnalysis/*`: `ReplayArtifact`+`Handle`+`IReplayArtifactStore`, `ReplayInputEvent`, `JudgedHitEvent`, `ReplayProvenance`, `ReplayAnalysisSnapshot`, `IReplaySource`/`IReplayBeatmapProvider`, `ReplayKeyMask`/`ReplayInputOrdering`).
 - [x] Keep binary replay bytes opaque across engine boundaries (`ReplayArtifactHandle` + `InMemoryReplayArtifactStore`; no base64 in settings/logs/WebView; validated by `ReplayArtifactTests`).
@@ -27,8 +27,12 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 - [x] Add post-play config separate from presets (`ReplayConfiguration` — `SelectedSource/ExplicitReplayPath/AllowPostPlayDiscovery/JudgeOptions`, `replay-configuration.json`).
 - [x] Allow widget bindings to combine replay + MMA metrics (`ReplayWidgetBinding.SuggestBindings` — `localMsdVsUr` etc. via shared `SemanticMetric` contract).
 - [x] Log and surface parser/judge/version failures instead of defaults (`replay.not_found/corrupt/beatmap_mismatch/ln_not_supported/unexpected` + `replay.fidelity.*`).
+- [x] Add LN head/tail state tracking with `LnScoringPolicy.Legacy/ScoreV2` test matrix (`ReplayJudge.Judge` + `JudgeWithLongNotes` — `LnHead`/`LnTail` separate offsets; `ReplayLongNoteTests`).
+- [x] Analyse head and release offsets separately, report dropped holds as distinct event (`replay.ln_dropped` diagnostic, `LnHead`/`LnTail` phases).
+- [x] Add rate/mod normalisation and dual `MapTimeMs`+`AudioTimeMs` preservation (`ReplayInputEvent.AudioTimeMs/Rate`, `ReplayModPolicy.RequiresRateNormalization`, `ReplayLongNoteTests.RateModPreserves`).
+- [x] Implement lazer replay ingestion stub with `replay.lazer_not_supported` and client/version gating (`LazerReplayDecoder` + `ReplayModPolicy.ValidateMods` for `RD/MR/AP/SO` unsupported).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 5–7 (LN/rate/lazer/live/pattern + results view polish).
+Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 6–7 (provisional live `TosuLiveReplaySource` + pattern correlation).
 
 ## Analyzer runtime integration
 
