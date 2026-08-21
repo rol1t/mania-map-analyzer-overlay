@@ -38,7 +38,8 @@
 
     const star = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
     const unit = difficulty.unit || "SR";
-    text("overlay-summary-star", star === "—" ? star : `${star} ${unit}`, "—");
+    const starWithUnit = star === "—" ? star : (star.trim().toLowerCase().endsWith(unit.toLowerCase()) ? star : `${star} ${unit}`);
+    text("overlay-summary-star", starWithUnit, "—");
 
     const lnValue = difficulty.lnPercent == null ? Number.NaN : Number(difficulty.lnPercent);
     const lnLabel = Number.isFinite(lnValue) ? `${formatNumber(lnValue, 1)}%` : "—";
@@ -196,7 +197,7 @@
     var difficulty = snapshot.difficulty || {};
     var starText = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
     var unit = difficulty.unit || "SR";
-    var starValue = starText === "—" ? starText : starText + " " + unit;
+    var starValue = starText === "—" ? starText : (starText.trim().toLowerCase().endsWith(unit.toLowerCase()) ? starText : starText + " " + unit);
     text("rework-star", starValue, "—");
     var lnValue = difficulty.lnPercent == null ? Number.NaN : Number(difficulty.lnPercent);
     var lnLabel = Number.isFinite(lnValue) ? formatNumber(lnValue, 1) + "%" : "—";

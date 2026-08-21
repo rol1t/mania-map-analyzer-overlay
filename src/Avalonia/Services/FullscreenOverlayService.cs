@@ -137,6 +137,7 @@ public sealed class FullscreenOverlayService
         {
             "horizontal" => (960, 650),
             "companella" => (760, 470),
+            "companella-replay" => (760, 470),
             "custom" => (620, 700),
             _ => (520, 640)
         };

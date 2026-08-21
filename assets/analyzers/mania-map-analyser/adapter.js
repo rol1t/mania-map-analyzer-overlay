@@ -192,7 +192,8 @@
 
     const root = document.documentElement;
     const needsDetailsHost = root.classList.contains("overlay-layout-horizontal")
-      || root.classList.contains("overlay-layout-companella");
+      || root.classList.contains("overlay-layout-companella")
+      || root.classList.contains("overlay-layout-companella-replay");
     let details = document.getElementById("overlay-host-details");
 
     if (needsDetailsHost) {

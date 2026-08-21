@@ -1750,8 +1750,8 @@ public partial class MainWindow : Window
 
         var layout = OverlayPresentationService.NormalizeLayout(model.Settings.OverlayLayoutMode);
         var scale = Math.Clamp(model.Settings.OverlayScalePercent, 50, 180) / 100d;
-        var width = (layout == "horizontal" ? 920 : layout == "companella" ? 760 : 475) * scale;
-        var height = (layout == "horizontal" ? 360 : layout == "companella" ? 340 : 540) * scale;
+        var width = (layout == "horizontal" ? 920 : layout is "companella" or "companella-replay" ? 760 : 475) * scale;
+        var height = (layout == "horizontal" ? 360 : layout is "companella" or "companella-replay" ? 340 : 540) * scale;
         ClientSize = new Size(width, height);
         var working = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
         var savedVisible = model.Settings.OverlayX > -30000 && model.Settings.OverlayY > -30000;
@@ -1944,6 +1944,7 @@ public partial class MainWindow : Window
         {
             "horizontal" => 920,
             "companella" => 760,
+            "companella-replay" => 760,
             _ => 475
         };
 

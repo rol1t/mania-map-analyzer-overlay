@@ -67,13 +67,14 @@ public sealed class OverlayPresentationService
     public static string NormalizeLayout(string? layout)
     {
         var value = (layout ?? "default").Trim().ToLowerInvariant();
-        return value is "default" or "horizontal" or "companella" ? value : "custom";
+        return value is "default" or "horizontal" or "companella" or "companella-replay" ? value : "custom";
     }
 
     private static string GetPresetWidth(string layout) => layout switch
     {
         "horizontal" => ManiaMapAnalyzerOverlay.OverlayStyleBuilder.Pixels(920, 1d),
         "companella" => ManiaMapAnalyzerOverlay.OverlayStyleBuilder.Pixels(760, 1d),
+        "companella-replay" => ManiaMapAnalyzerOverlay.OverlayStyleBuilder.Pixels(760, 1d),
         _ => ManiaMapAnalyzerOverlay.OverlayStyleBuilder.Pixels(475, 1d)
     };
 
@@ -106,6 +107,7 @@ public sealed class OverlayPresentationService
             "document.documentElement.classList.toggle('overlay-layout-default'," + Bool(layout == "default") + ");" +
             "document.documentElement.classList.toggle('overlay-layout-horizontal'," + Bool(layout == "horizontal") + ");" +
             "document.documentElement.classList.toggle('overlay-layout-companella'," + Bool(layout == "companella") + ");" +
+            "document.documentElement.classList.toggle('overlay-layout-companella-replay'," + Bool(layout == "companella-replay") + ");" +
             "document.documentElement.classList.toggle('overlay-layout-custom'," + Bool(layout == "custom") + ");" +
             "if(!" + Bool(transparent) + "){var fitPreview=function(){var root=document.documentElement,hostScale=parseFloat(root.style.getPropertyValue('--overlay-host-scale'))||1,base=parseFloat(root.style.getPropertyValue('--overlay-preset-width'))||760,available=Math.max(240,(window.innerWidth-36)/hostScale);root.style.setProperty('--overlay-preview-width',Math.min(base,available)+'px');};if(window.__overlayPreviewFit)window.removeEventListener('resize',window.__overlayPreviewFit);window.__overlayPreviewFit=fitPreview;window.addEventListener('resize',fitPreview);fitPreview();}else{if(window.__overlayPreviewFit)window.removeEventListener('resize',window.__overlayPreviewFit);window.__overlayPreviewFit=null;document.documentElement.style.removeProperty('--overlay-preview-width');}" +
             "document.querySelectorAll('[data-overlay-host-root]').forEach(function(node){node.removeAttribute('data-overlay-host-root');});var card=document.querySelector(" + Js(hostSelector) + ");if(card){card.setAttribute('data-overlay-host-root','');card.querySelectorAll('[data-overlay-preset-node]').forEach(function(node){node.remove();});var markup=" + Js(template) + ";if(markup){var parsed=document.createElement('template');parsed.innerHTML=markup;var anchorSelector=" + Js(presetAnchorSelector ?? string.Empty) + ",anchor=anchorSelector?card.querySelector(anchorSelector):null;Array.from(parsed.content.children).filter(function(node){return node.hasAttribute('data-overlay-preset-node');}).forEach(function(node){card.insertBefore(node,anchor);});}}" +
