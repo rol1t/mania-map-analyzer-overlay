@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
@@ -33,6 +34,14 @@ public sealed partial class AnalyzerEngineScriptBridge
         var runtime = JsonSerializer.Serialize(runtimeUrl, JsonOptions);
         var worker = JsonSerializer.Serialize(workerUrl, JsonOptions);
         var config = JsonSerializer.Serialize(configuration, JsonOptions);
+        var runtimeSource = JsonSerializer.Serialize(_package.ReadRuntimeScript(), JsonOptions);
+        var protocolSource = JsonSerializer.Serialize(
+            ReadProtocolScript(manifest.Runtime),
+            JsonOptions);
+        var normalizerSource = JsonSerializer.Serialize(
+            ReadSiblingScript(manifest.Worker, "normalizer.mjs"),
+            JsonOptions);
+        var workerSource = JsonSerializer.Serialize(_package.ReadWorkerScript(), JsonOptions);
         var prefix = JsonSerializer.Serialize(NativeMessagePrefix, JsonOptions);
         var protocol = JsonSerializer.Serialize(_protocol, JsonOptions);
         var protocolVersion = _protocolVersion.ToString();
@@ -42,7 +51,14 @@ public sealed partial class AnalyzerEngineScriptBridge
     const registry = globalThis.__maniaMapAnalyzerOverlayEngines || (globalThis.__maniaMapAnalyzerOverlayEngines = Object.create(null));
     const key = __KEY__;
     const sessionId = __SESSION_ID__;
-    const configuration = __CONFIG__;
+         const configuration = __CONFIG__;
+         const runtimeSource = __RUNTIME_SOURCE__;
+         const protocolSource = __PROTOCOL_SOURCE__;
+         const normalizerSource = __NORMALIZER_SOURCE__;
+         const workerSource = __WORKER_SOURCE__;
+         const documentUrl = /^https?:/i.test(globalThis.location.href)
+             ? globalThis.location.href
+             : "http://127.0.0.1:24050/";
     const previous = registry[key];
     if (previous?.runtime) {
         try { previous.runtime.dispose(); } catch (exception) { console.error("Disposing previous analyzer runtime failed", exception); }
@@ -62,11 +78,60 @@ public sealed partial class AnalyzerEngineScriptBridge
         }
         throw new Error("The native WebView message bridge is unavailable.");
     };
-    try {
-        const module = await import(__RUNTIME__);
-        const runtime = new module.HeadlessAnalyzerRuntime({
-            workerUrl: new URL(__WORKER__, globalThis.location.href),
-            configuration: { ...configuration, baseUrl: new URL(configuration.baseUrl, globalThis.location.href).href },
+     try {
+         const runtimeUrl = new URL(__RUNTIME__, documentUrl).href;
+         const loadModuleScript = (sourceUrl) => new Promise((resolve, reject) => {
+             const script = document.createElement("script");
+             script.type = "module";
+             script.src = sourceUrl;
+             script.onload = () => resolve(true);
+             script.onerror = () => reject(new Error(`Failed to load analyzer runtime module: ${sourceUrl}`));
+             (document.head || document.documentElement).appendChild(script);
+         });
+         const runtimeModule = await (async () => {
+             const existing = globalThis.__maniaMapAnalyzerOverlayHeadlessRuntimeModule;
+             if (existing?.HeadlessAnalyzerRuntime) {
+                 return existing;
+             }
+
+             if (!runtimeSource || !protocolSource) {
+                 await loadModuleScript(runtimeUrl);
+             } else {
+                 const protocolBlobUrl = "data:text/javascript;charset=utf-8," + encodeURIComponent(protocolSource);
+                 const normalizerBlobUrl = normalizerSource
+                     ? "data:text/javascript;charset=utf-8," + encodeURIComponent(normalizerSource.replace(
+                         'from "./protocol.mjs"',
+                         `from ${JSON.stringify(protocolBlobUrl)}`))
+                     : "";
+                 const workerBlobUrl = workerSource
+                     ? URL.createObjectURL(new Blob([
+                         workerSource
+                             .replace('from "./protocol.mjs"', `from ${JSON.stringify(protocolBlobUrl)}`)
+                             .replace('from "./normalizer.mjs"', `from ${JSON.stringify(normalizerBlobUrl)}`),
+                     ], { type: "text/javascript" }))
+                     : __WORKER__;
+                 const patchedSource = runtimeSource.replace(
+                     'from "./protocol.mjs"',
+                     `from ${JSON.stringify(protocolBlobUrl)}`);
+                 const runtimeBlobUrl = URL.createObjectURL(new Blob([patchedSource], { type: "text/javascript" }));
+                 try {
+                     await loadModuleScript(runtimeBlobUrl);
+                 } finally {
+                     URL.revokeObjectURL(runtimeBlobUrl);
+                 }
+                 state.workerUrl = workerBlobUrl;
+             }
+
+             const loaded = globalThis.__maniaMapAnalyzerOverlayHeadlessRuntimeModule;
+             if (!loaded?.HeadlessAnalyzerRuntime) {
+                 throw new Error("The headless analyzer module loaded without exporting HeadlessAnalyzerRuntime.");
+             }
+
+             return loaded;
+         })();
+         const runtime = new runtimeModule.HeadlessAnalyzerRuntime({
+             workerUrl: state.workerUrl || new URL(__WORKER__, documentUrl),
+             configuration: { ...configuration, baseUrl: new URL(configuration.baseUrl, documentUrl).href },
             supersedePending: false,
         });
         state.runtime = runtime;
@@ -82,7 +147,12 @@ public sealed partial class AnalyzerEngineScriptBridge
             }),
         );
         state.cancel = (correlationId, reason) => runtime.cancel(correlationId, reason);
-        state.dispose = () => runtime.dispose();
+         state.dispose = () => {
+             runtime.dispose();
+             if (state.workerUrl?.startsWith("blob:")) {
+                 URL.revokeObjectURL(state.workerUrl);
+             }
+         };
         const ready = await runtime.initialize();
         post(ready);
     } catch (exception) {
@@ -103,6 +173,10 @@ public sealed partial class AnalyzerEngineScriptBridge
             .Replace("__RUNTIME__", runtime, StringComparison.Ordinal)
             .Replace("__WORKER__", worker, StringComparison.Ordinal)
             .Replace("__CONFIG__", config, StringComparison.Ordinal)
+            .Replace("__RUNTIME_SOURCE__", runtimeSource, StringComparison.Ordinal)
+            .Replace("__PROTOCOL_SOURCE__", protocolSource, StringComparison.Ordinal)
+            .Replace("__NORMALIZER_SOURCE__", normalizerSource, StringComparison.Ordinal)
+            .Replace("__WORKER_SOURCE__", workerSource, StringComparison.Ordinal)
             .Replace("__PROTOCOL__", protocol, StringComparison.Ordinal)
             .Replace("__PROTOCOL_VERSION__", protocolVersion, StringComparison.Ordinal);
     }
@@ -176,6 +250,30 @@ public sealed partial class AnalyzerEngineScriptBridge
             .Split('/', StringSplitOptions.RemoveEmptyEntries)
             .Select(Uri.EscapeDataString);
         return _staticRoot + Uri.EscapeDataString(_registryKey) + "/" + string.Join('/', segments);
+    }
+
+    private string ReadProtocolScript(string runtimePath)
+    {
+        var directory = Path.GetDirectoryName(runtimePath)?.Replace('\\', '/') ?? string.Empty;
+        var protocolPath = string.IsNullOrWhiteSpace(directory)
+            ? "protocol.mjs"
+            : directory + "/protocol.mjs";
+        var candidatePath = Path.Combine(_package.PackageDirectory, protocolPath);
+        return File.Exists(candidatePath)
+            ? File.ReadAllText(_package.ResolveContainedFile(protocolPath)!)
+            : string.Empty;
+    }
+
+    private string ReadSiblingScript(string modulePath, string siblingName)
+    {
+        var directory = Path.GetDirectoryName(modulePath)?.Replace('\\', '/') ?? string.Empty;
+        var siblingPath = string.IsNullOrWhiteSpace(directory)
+            ? siblingName
+            : directory + "/" + siblingName;
+        var candidatePath = Path.Combine(_package.PackageDirectory, siblingPath);
+        return File.Exists(candidatePath)
+            ? File.ReadAllText(_package.ResolveContainedFile(siblingPath)!)
+            : string.Empty;
     }
 
     private static string BuildAbsoluteRoot(string path) => path;

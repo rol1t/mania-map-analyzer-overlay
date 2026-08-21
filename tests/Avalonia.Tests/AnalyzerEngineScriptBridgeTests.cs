@@ -44,7 +44,15 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
         var analysisTask = _bridge.AnalyzeAsync(CreateRequest());
         var bootstrap = await _host.WaitForScriptAsync();
 
-        Assert.Contains("await import(\"/ManiaMapAnalyzerOverlay/engines/test-headless/runtime.mjs\")", bootstrap);
+        Assert.Contains("const documentUrl =", bootstrap);
+        Assert.Contains("const runtimeUrl = new URL(\"/ManiaMapAnalyzerOverlay/engines/test-headless/runtime.mjs\", documentUrl).href", bootstrap);
+        Assert.Contains("script.type = \"module\"", bootstrap);
+        Assert.Contains("const runtimeSource =", bootstrap);
+        Assert.Contains("const protocolSource =", bootstrap);
+        Assert.Contains("const workerSource =", bootstrap);
+        Assert.Contains("new Blob", bootstrap);
+        Assert.Contains("URL.createObjectURL", bootstrap);
+        Assert.Contains("__maniaMapAnalyzerOverlayHeadlessRuntimeModule", bootstrap);
         Assert.Contains("ManiaMapAnalyser", bootstrap);
         Assert.Contains("globalThis.location.href", bootstrap);
         _host.Publish(ReadyMessage());

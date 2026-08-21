@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
@@ -55,6 +56,10 @@ public sealed record EffectiveAnalysisConfiguration
             widgets = ImmutableArray.Create(CreateDefaultWidget(engineId, algorithm, version, options));
         }
 
+        widgets = widgets
+            .Select(MigrateLegacyDefaultWidget)
+            .ToImmutableArray();
+
         return this with
         {
             SchemaVersion = CurrentSchemaVersion,
@@ -81,10 +86,48 @@ public sealed record EffectiveAnalysisConfiguration
         var binding = new EffectiveWidgetBinding(
             "difficulty.star",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.star")));
+        var difficultyLabelBinding = new EffectiveWidgetBinding(
+            "difficulty.label",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.label")));
+        var rcLabelBinding = new EffectiveWidgetBinding(
+            "dan.rc.label",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.rc.label")));
+        var rcNumericBinding = new EffectiveWidgetBinding(
+            "dan.rc.numeric",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.rc.numeric")));
         return new EffectiveWidgetSpec(
             "headless-overlay",
             ImmutableArray.Create(source),
-            ImmutableArray.Create(binding));
+            ImmutableArray.Create(binding, difficultyLabelBinding, rcLabelBinding, rcNumericBinding));
+    }
+
+    private static EffectiveWidgetSpec MigrateLegacyDefaultWidget(EffectiveWidgetSpec widget)
+    {
+        // Configurations written before DAN became a normalized headless metric
+        // contain only difficulty.star. Extend only that exact generated default;
+        // leave user-authored mappings untouched.
+        if (!string.Equals(widget.WidgetId, "headless-overlay", StringComparison.OrdinalIgnoreCase)
+            || widget.Sources.Length != 1
+            || !string.Equals(widget.Sources[0].SourceId, "headless-primary", StringComparison.OrdinalIgnoreCase)
+            || widget.Bindings.Length != 1
+            || !string.Equals(widget.Bindings[0].TargetMetricId, "difficulty.star", StringComparison.OrdinalIgnoreCase))
+        {
+            return widget;
+        }
+
+        var sourceId = widget.Sources[0].SourceId;
+        var bindings = widget.Bindings
+            .Append(new EffectiveWidgetBinding(
+                "dan.rc.label",
+                [new SourceMetricCandidate(sourceId, "dan.rc.label")]))
+            .Append(new EffectiveWidgetBinding(
+                "dan.rc.numeric",
+                [new SourceMetricCandidate(sourceId, "dan.rc.numeric")]))
+            .Append(new EffectiveWidgetBinding(
+                "difficulty.label",
+                [new SourceMetricCandidate(sourceId, "difficulty.label")]))
+            .ToImmutableArray();
+        return new EffectiveWidgetSpec(widget.WidgetId, widget.Sources, bindings);
     }
 }
 

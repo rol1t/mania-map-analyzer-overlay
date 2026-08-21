@@ -42,6 +42,7 @@ public partial class AppearanceDialog : Window
         AddLayoutOption("default", "appearance.layout_default");
         AddLayoutOption("horizontal", "appearance.layout_horizontal");
         AddLayoutOption("companella", "appearance.layout_companella");
+        AddLayoutOption("companella-replay", "appearance.layout_companella_replay");
         AddLayoutOption("custom", "appearance.layout_custom");
         var definitions = presets.List();
         resourcesAvailable = definitions.Count > 0;

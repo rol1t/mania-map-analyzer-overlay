@@ -13,6 +13,7 @@ public sealed class ReplayAnalysisEngine : IAnalyzerEngine
 {
     private readonly IReplayArtifactStore _artifactStore;
     private readonly Func<ReplayArtifact, IReadOnlyList<ReplayInputEvent>> _inputResolver;
+    private readonly Func<ReplayArtifact, StableOsrReplay>? _stableReplayResolver;
     private readonly ReplayJudgeOptions _judgeOptions;
 
     public ReplayAnalysisEngine(
@@ -24,6 +25,28 @@ public sealed class ReplayAnalysisEngine : IAnalyzerEngine
         ArgumentNullException.ThrowIfNull(inputResolver);
         _artifactStore = artifactStore;
         _inputResolver = inputResolver;
+        _judgeOptions = judgeOptions ?? new ReplayJudgeOptions();
+        Descriptor = new AnalyzerEngineDescriptor(
+            id: "replay.analysis",
+            name: "Replay Analysis",
+            version: "1.0.0-rice",
+            capabilities: new AnalyzerEngineCapabilities(
+                supportedAlgorithms: ["replay.rice"],
+                supportedMetricIds: [
+                    ReplayMetrics.TimingUr, ReplayMetrics.TimingMean, ReplayMetrics.TimingMedian,
+                    "replay.column.*", "replay.section.*", "replay.insights.count"
+                ]),
+            upstreamVersion: "stable.osr.1");
+    }
+
+    public ReplayAnalysisEngine(
+        IReplayArtifactStore artifactStore,
+        ReplayJudgeOptions? judgeOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(artifactStore);
+        _artifactStore = artifactStore;
+        _stableReplayResolver = artifact => StableOsrReplayReader.Read(_artifactStore.GetBytes(artifact.Handle));
+        _inputResolver = artifact => _stableReplayResolver(artifact).InputEvents;
         _judgeOptions = judgeOptions ?? new ReplayJudgeOptions();
         Descriptor = new AnalyzerEngineDescriptor(
             id: "replay.analysis",
@@ -55,7 +78,10 @@ public sealed class ReplayAnalysisEngine : IAnalyzerEngine
             OsuManiaBeatmap beatmap;
             try
             {
-                beatmap = OsuBeatmapParser.Parse(request.BeatmapContent, request.BeatmapContentHash);
+                string beatmapHash = string.IsNullOrWhiteSpace(request.Beatmap.Hash)
+                    ? request.BeatmapContentHash
+                    : request.Beatmap.Hash;
+                beatmap = OsuBeatmapParser.Parse(request.BeatmapContent, beatmapHash);
             }
             catch (ReplayAnalysisException exception)
             {
@@ -77,7 +103,23 @@ public sealed class ReplayAnalysisEngine : IAnalyzerEngine
             IReadOnlyList<ReplayInputEvent> inputs;
             try
             {
-                inputs = _inputResolver(artifact);
+                if (_stableReplayResolver is not null)
+                {
+                    StableOsrReplay replay = _stableReplayResolver(artifact);
+                    if (!string.IsNullOrWhiteSpace(request.Beatmap.Hash)
+                        && !string.IsNullOrWhiteSpace(replay.Metadata.BeatmapHash))
+                    {
+                        ReplayBeatmapValidation.ValidateBeatmapMatch(
+                            request.Beatmap.Hash,
+                            replay.Metadata.BeatmapHash);
+                    }
+
+                    inputs = replay.InputEvents;
+                }
+                else
+                {
+                    inputs = _inputResolver(artifact);
+                }
             }
             catch (ReplayAnalysisException exception)
             {

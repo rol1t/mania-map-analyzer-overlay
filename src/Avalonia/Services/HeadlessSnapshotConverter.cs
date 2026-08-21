@@ -35,6 +35,51 @@ public static class HeadlessSnapshotConverter
         return FromComposed(beatmap, gameplay, composed);
     }
 
+    public static AnalysisSnapshot WithReplayAnalysis(
+        AnalysisSnapshot current,
+        AnalysisResult result)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(result);
+
+        var composed = new ComposedWidgetSnapshot(
+            "replay-post-play",
+            result.Outcome,
+            result.Metrics.Select(metric => new ResolvedSemanticMetric(
+                metric.Key,
+                metric.Value,
+                new AnalysisMetricProvenance(
+                    "replay-post-play",
+                    metric.Key,
+                    result.EngineId,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    result.RequestedAlgorithm,
+                    result.ActualAlgorithm,
+                    result.Outcome))),
+            result.Diagnostics);
+
+        var replay = BuildReplay(composed);
+        if (replay is not null && current.Replay is not null)
+        {
+            // Preserve live context that is not part of exact timing metrics
+            // while replacing provisional timing data.
+            replay = replay with
+            {
+                MapProgressMs = current.Replay.MapProgressMs,
+                Score = current.Replay.Score,
+                Accuracy = current.Replay.Accuracy,
+                RecentOffsets = current.Replay.RecentOffsets
+            };
+        }
+
+        return current with
+        {
+            Replay = replay
+        };
+    }
+
     public static AnalysisSnapshot FromComposed(
         TosuBeatmapSnapshot beatmap,
         TosuGameplayState? gameplay,
@@ -82,7 +127,11 @@ public static class HeadlessSnapshotConverter
         double? star = TryGetDouble(composed, "difficulty.star");
         double? lnPercent = TryGetDouble(composed, "difficulty.lnPercent");
         int? keys = TryGetInt(composed, "difficulty.keys");
-        var label = TryGetString(composed, "difficulty.label") ?? string.Empty;
+        var rawLabel = TryGetString(composed, "difficulty.label") ?? string.Empty;
+        // MMA's difficulty.label can contain a DAN category such as
+        // "Reform ...", not a star-rating label. Keep that value available
+        // to BuildRanks, but never render a category inside Star Rating.
+        var label = IsNumericStarLabel(rawLabel) ? rawLabel : string.Empty;
         var unit = TryGetString(composed, "difficulty.unit") ?? "SR";
 
         if (star is null && composed.Metrics.TryGetValue("difficulty.star", out var metric))
@@ -106,6 +155,14 @@ public static class HeadlessSnapshotConverter
         var rcLabel = TryGetString(composed, "dan.rc.label");
         var rcNumeric = TryGetDouble(composed, "dan.rc.numeric");
         var lnLabel = TryGetString(composed, "dan.ln.label");
+
+        if (string.IsNullOrWhiteSpace(rcLabel))
+        {
+            var difficultyLabel = TryGetString(composed, "difficulty.label");
+            var labels = difficultyLabel?.Split("||", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            rcLabel = labels?.FirstOrDefault();
+            lnLabel ??= labels?.Length > 1 ? string.Join(" || ", labels.Skip(1)) : null;
+        }
 
         if (!string.IsNullOrWhiteSpace(rcLabel) || rcNumeric.HasValue)
         {
@@ -235,6 +292,19 @@ public static class HeadlessSnapshotConverter
     {
         var value = TryGetDouble(composed, metricId);
         return value.HasValue ? (int)Math.Round(value.Value) : null;
+    }
+
+    private static bool IsNumericStarLabel(string value)
+    {
+        var firstToken = value
+            .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        return firstToken is not null
+            && double.TryParse(
+                firstToken,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out _);
     }
 
     private static ReplayOverlaySnapshot? BuildReplay(ComposedWidgetSnapshot composed)

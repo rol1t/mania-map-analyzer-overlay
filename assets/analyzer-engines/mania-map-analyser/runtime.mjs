@@ -386,3 +386,11 @@ function hasCorrelationId(message) {
     return typeof message?.correlationId === "string"
         && message.correlationId.trim().length > 0;
 }
+
+// EvaluateScriptAsync runs in a classic/eval context on some WebView engines,
+// where dynamic import specifiers have no document base URL. The host loads
+// this file as a module script and resolves the public constructor through this
+// explicit bridge, while the module's internal relative imports remain valid.
+globalThis.__maniaMapAnalyzerOverlayHeadlessRuntimeModule = Object.freeze({
+    HeadlessAnalyzerRuntime,
+});

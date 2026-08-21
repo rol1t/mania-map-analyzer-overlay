@@ -653,7 +653,7 @@ html.overlay-layout-companella-replay .overlay-replay-fidelity {
 
 html.overlay-layout-companella-replay .overlay-replay-stats {
   display:grid!important;
-  grid-template-columns:repeat(5,minmax(0,1fr))!important;
+  grid-template-columns:repeat(8,minmax(0,1fr))!important;
   gap:4px!important;
 }
 

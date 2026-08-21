@@ -30,6 +30,61 @@
     });
   }
 
+  function beatmapKey(snapshot) {
+    const beatmap = snapshot && snapshot.beatmap || {};
+    const values = [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version]
+      .map(function (value) { return String(value || "").trim().toLowerCase(); })
+    return values.some(Boolean) ? values.join("|") : "";
+  }
+
+  function rankHasValue(entry) {
+    const value = String(entry && entry.value || "").trim();
+    return value !== "" && value !== "—" && value !== "-";
+  }
+
+  function mergeSnapshot(snapshot) {
+    const previous = window.__overlayLatestAnalysisSnapshot;
+    const previousKey = beatmapKey(previous);
+    const currentKey = beatmapKey(snapshot);
+    if (!previous || !previousKey || !currentKey || previousKey !== currentKey) {
+      return snapshot;
+    }
+
+    const previousRanks = Array.isArray(previous.ranks) ? previous.ranks : [];
+    const currentRanks = Array.isArray(snapshot.ranks) ? snapshot.ranks : [];
+    if (previousRanks.length === 0 && currentRanks.length === 0) {
+      return snapshot;
+    }
+
+    const ranks = new Map();
+    previousRanks.forEach(function (entry) {
+      const id = String(entry && entry.systemId || "").toLowerCase();
+      if (id) ranks.set(id, entry);
+    });
+    currentRanks.forEach(function (entry) {
+      const id = String(entry && entry.systemId || "").toLowerCase();
+      if (id && (!ranks.has(id) || rankHasValue(entry))) ranks.set(id, entry);
+    });
+
+    const merged = Object.assign({}, snapshot, { ranks: Array.from(ranks.values()) });
+    // The adapter may publish provisional tosu telemetry before the headless
+    // snapshot arrives. MMA does not know replay data, so preserve the live
+    // block for the same beatmap instead of flashing it off.
+    const previousReplayIsExact = previous.replay
+      && previous.replay.hasData
+      && previous.replay.isProvisional !== true
+      && String(previous.replay.fidelity || "").toLowerCase() !== "provisional";
+    const incomingReplayIsProvisional = snapshot.replay && snapshot.replay.isProvisional === true;
+    if (previousReplayIsExact && incomingReplayIsProvisional) {
+      // Live polling continues after an explicit .osr import. Keep the exact
+      // post-play result until another exact replay is imported.
+      merged.replay = previous.replay;
+    } else if ((!snapshot.replay || !snapshot.replay.hasData) && previous.replay && previous.replay.hasData) {
+      merged.replay = previous.replay;
+    }
+    return merged;
+  }
+
   function renderSummary(snapshot) {
     const difficulty = snapshot.difficulty || {};
     const beatmap = snapshot.beatmap || {};
@@ -144,6 +199,9 @@
     }
 
     text("overlay-replay-ur", r.ur == null ? "—" : fmt(r.ur, 1), "—");
+    text("overlay-replay-score", r.score == null ? "—" : String(r.score), "—");
+    text("overlay-replay-map-time", r.mapProgressMs == null ? "—" : fmt(r.mapProgressMs, 0) + " ms", "—");
+    text("overlay-replay-accuracy", r.accuracy == null ? "—" : fmt(r.accuracy, 2) + "%", "—");
     text("overlay-replay-mean", r.meanMs == null ? "—" : fmt(r.meanMs, 1) + " ms", "—");
     text("overlay-replay-median", r.medianMs == null ? "—" : fmt(r.medianMs, 1) + " ms", "—");
     text("overlay-replay-sample", r.sampleCount == null ? "—" : String(r.sampleCount), "—");
@@ -211,7 +269,10 @@
     text("rework-meta", "LN%: " + lnLabel + " · Keys: " + keys, "LN — · Keys —");
     var rc = rank(snapshot, "rc-dan") || {};
     var ln = rank(snapshot, "ln-dan") || {};
-    text("rework-diff", (rc.value || "—") + " || " + (ln.value || "—"), "—");
+    const hasRankData = [rc, ln].some(rankHasValue);
+    if (hasRankData) {
+      text("rework-diff", (rc.value || "—") + " || " + (ln.value || "—"), "—");
+    }
     var card = document.querySelector(".main-card");
     if (card) {
       card.classList.remove("card-hidden-by-play");
@@ -220,11 +281,12 @@
   }
 
   function render(snapshot) {
-    window.__overlayLatestAnalysisSnapshot = snapshot;
-    renderSummary(snapshot);
-    renderSkills(snapshot);
-    renderReplay(snapshot);
-    renderMainCard(snapshot);
+    const effectiveSnapshot = mergeSnapshot(snapshot);
+    window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
+    renderSummary(effectiveSnapshot);
+    renderSkills(effectiveSnapshot);
+    renderReplay(effectiveSnapshot);
+    renderMainCard(effectiveSnapshot);
   }
 
   window.__overlayRenderAnalysisSnapshot = render;

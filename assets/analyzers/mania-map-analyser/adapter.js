@@ -19,6 +19,7 @@
   let lastSignature = "";
   let beatmap = emptyBeatmap();
   let gameplay = emptyGameplay();
+  let replay = emptyReplay();
 
   function emptyBeatmap() {
     return {
@@ -44,6 +45,29 @@
     };
   }
 
+  function emptyReplay() {
+    return {
+      mapProgressMs: null,
+      score: null,
+      accuracy: null,
+      ur: null,
+      meanMs: null,
+      medianMs: null,
+      sdMs: null,
+      earlyCount: null,
+      lateCount: null,
+      sampleCount: null,
+      recentOffsets: [],
+      columns: [],
+      sections: [],
+      insights: [],
+      fidelity: "provisional",
+      reason: "Live tosu telemetry is provisional; exact column and LN data requires an .osr file.",
+      isProvisional: true,
+      hasData: false,
+    };
+  }
+
   function clean(value) {
     return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
   }
@@ -57,6 +81,57 @@
   function firstNumber(value) {
     const match = String(value || "").match(/[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)/);
     return match ? finiteNumber(match[0]) : null;
+  }
+
+  function median(values) {
+    if (!values.length) return null;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  function readLiveReplay(payload) {
+    const sourceBeatmap = payload && payload.beatmap && typeof payload.beatmap === "object"
+      ? payload.beatmap
+      : {};
+    const sourcePlay = payload && payload.play && typeof payload.play === "object"
+      ? payload.play
+      : {};
+    const sourceTime = sourceBeatmap.time && typeof sourceBeatmap.time === "object"
+      ? sourceBeatmap.time
+      : {};
+    const mapProgressMs = finiteNumber(sourceTime.live);
+    const score = finiteNumber(sourcePlay.score);
+    const accuracy = finiteNumber(sourcePlay.accuracy);
+    const aggregateUr = finiteNumber(sourcePlay.unstableRate);
+    const offsets = Array.isArray(sourcePlay.hitErrorArray)
+      ? sourcePlay.hitErrorArray.map(finiteNumber).filter(value => value !== null)
+      : [];
+    const meanMs = offsets.length ? offsets.reduce((sum, value) => sum + value, 0) / offsets.length : null;
+    const medianMs = median(offsets);
+    const variance = offsets.length
+      ? offsets.reduce((sum, value) => sum + Math.pow(value - meanMs, 2), 0) / offsets.length
+      : null;
+    const sdMs = variance === null ? null : Math.sqrt(variance);
+    const ur = aggregateUr !== null && (aggregateUr !== 0 || offsets.length > 0)
+      ? aggregateUr
+      : (sdMs === null ? null : sdMs * 10);
+
+    return {
+      ...replay,
+      mapProgressMs,
+      score,
+      accuracy,
+      ur,
+      meanMs,
+      medianMs,
+      sdMs,
+      earlyCount: offsets.filter(value => value < 0).length,
+      lateCount: offsets.filter(value => value > 0).length,
+      sampleCount: offsets.length,
+      recentOffsets: offsets.slice(-20),
+      hasData: mapProgressMs !== null || score !== null || offsets.length > 0,
+    };
   }
 
   function text(id) {
@@ -246,6 +321,7 @@
       difficulty: readDifficulty(),
       ranks: splitRanks(text("rework-diff")),
       skills: readSkills(),
+      replay,
     };
   }
 
@@ -349,6 +425,9 @@
       const stats = sourceBeatmap.stats || {};
       const id = String(sourceBeatmap.id || sourceBeatmap.beatmapId || "");
       const setId = String(sourceBeatmap.set || sourceBeatmap.setId || sourceBeatmap.beatmapSetId || "");
+      if (id && beatmap.id && id !== beatmap.id) {
+        replay = emptyReplay();
+      }
       const identity = id || setId || `${metadata.artist || sourceBeatmap.artist || ""}-${metadata.title || sourceBeatmap.title || ""}-${sourceBeatmap.version || metadata.difficulty || metadata.version || ""}`;
       beatmap = {
         id,
@@ -365,6 +444,8 @@
           : "",
       };
     }
+
+    replay = readLiveReplay(payload);
 
     const rawState = payload && payload.state;
     const state = rawState && typeof rawState === "object" ? rawState : null;

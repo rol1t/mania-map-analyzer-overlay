@@ -10,4 +10,8 @@
     <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.48.0" />
+  </ItemGroup>
+
 </Project>

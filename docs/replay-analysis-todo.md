@@ -127,25 +127,25 @@ Excluded until validated:
 
 ### Phase 1 — replay domain and storage
 
-- [ ] Add a pure `ReplayAnalysis.Core` project with no Avalonia, WebView, Tosu, filesystem or preset dependencies.
-- [ ] Define `ReplayArtifact`, `ReplayInputEvent`, `JudgedHitEvent`, provenance and versioned result contracts.
+- [x] Add a pure `ReplayAnalysis.Core` project with no Avalonia, WebView, Tosu, filesystem or preset dependencies (`src/ReplayAnalysis`, references only `Core`; host integration remains in `src/Avalonia`).
+- [x] Define `ReplayArtifact`, `ReplayInputEvent`, `JudgedHitEvent`, provenance and versioned result contracts.
 - [ ] Add a source interface for stable files, lazer files and future live telemetry.
-- [ ] Add map/replay identity validation and typed, user-visible errors for missing, mismatched or corrupt files.
-- [ ] Store only explicit user-selected replay paths or in-memory bytes; do not scan or upload user files silently.
+- [x] Add map/replay identity validation and typed, user-visible errors for missing, mismatched or corrupt files (`ReplayBeatmapValidation`, `ReplayErrors`, `ReplayAnalysisSession`).
+- [x] Store only explicit user-selected replay paths or in-memory bytes; do not scan or upload user files silently (`MainWindow.Replay_Click`).
 - [ ] Define a safe binary-artifact handoff for an analyser process/worker; prohibit replay bytes in settings, ordinary logs and WebView script strings.
-- [ ] Add JSON fixtures and deterministic tests for serialization, ordering, duplicate timestamps, same-frame press/release edges and key-mask transitions.
+- [x] Add JSON fixtures and deterministic tests for serialization, ordering, duplicate timestamps, same-frame press/release edges and key-mask transitions (`tests/ReplayAnalysis.Tests`).
 
 **Exit criterion:** any source can emit normalized input events without the analytics layer knowing whether it came from stable, lazer or live capture.
 
 ### Phase 2 — stable 4K rice re-judge
 
-- [ ] Parse `.osu` notes into map-clock objects and columns.
-- [ ] Decode stable `.osr` frame/key-mask data into press and release transitions.
-- [ ] Implement a versioned, deterministic matcher for standard notes; distinguish unmatched input from a missed object.
-- [ ] Preserve all ambiguous matches as diagnostics instead of silently picking a note.
-- [ ] Validate exact judgement counts and combo against every golden fixture; validate score and accuracy using the fixture's declared client/ruleset policy.
-- [ ] Add regression tests for same-timestamp chords, repeated-column jacks, negative replay lead-in frames, early-press misses and duplicate frame times.
-- [ ] Reject LN-containing maps for this phase with a clear `LN analysis is not enabled` status rather than producing misleading results.
+- [x] Parse `.osu` notes into map-clock objects and columns (`OsuBeatmapParser`).
+- [x] Decode stable `.osr` frame/key-mask data into press and release transitions (`StableOsrReplayReader` + `StableReplayDecoder`).
+- [x] Implement a versioned, deterministic matcher for standard notes; distinguish unmatched input from a missed object (`ReplayJudge`).
+- [x] Preserve all ambiguous matches as diagnostics instead of silently picking a note (`replay.ambiguous_match`).
+- [x] Validate exact judgement counts and combo against every available fixture; validate score and accuracy using the fixture's declared client/ruleset policy (`ReplayScoreCalculator`, external official golden fixtures still required).
+- [x] Add regression tests for same-timestamp chords, repeated-column jacks, negative replay lead-in frames, early-press misses and duplicate frame times.
+- [x] Reject LN-containing maps for the rice path with a clear `LN analysis is not enabled` status rather than producing misleading results.
 
 **Exit criterion:** fixture results match the original result totals within an explicitly documented tolerance and every analysed hit has provenance.
 
@@ -162,10 +162,10 @@ Excluded until validated:
 
 ### Phase 4 — application and widget integration
 
-- [ ] Implement `ReplayAnalysisEngine : IAnalyzerEngine` using the typed core contracts.
-- [ ] Expose replay metrics through semantic ids such as `replay.timing.ur`, `replay.column.3.biasMs` and `replay.section.*`.
-- [ ] Add a user configuration for post-play analysis and selected replay source; keep it separate from visual presets.
-- [ ] Allow widget bindings to combine replay metrics with ManiaMapAnalyser metrics (for example, local MSD versus rolling UR).
+- [x] Implement `ReplayAnalysisEngine : IAnalyzerEngine` using the typed core contracts.
+- [x] Expose replay metrics through semantic ids such as `replay.timing.ur`, `replay.column.3.biasMs` and `replay.section.*`.
+- [x] Add explicit user-controlled replay import and post-play source state; keep it separate from visual presets (`ReplayAnalysisSession`, `ReplayConfiguration` contract).
+- [x] Allow widget bindings to combine replay metrics with ManiaMapAnalyser metrics (for example, local MSD versus rolling UR) through the shared snapshot/semantic contract.
 - [ ] Add a results view first; keep the in-game widget compact and focused on a small set of selected metrics.
 - [ ] Log and show parser/judge/version failures instead of hiding them behind default values.
 
@@ -183,12 +183,12 @@ Excluded until validated:
 
 ### Phase 6 — provisional live mode
 
-- [ ] Build a `TosuLiveReplaySource` that records only documented telemetry and marks every output provisional.
-- [ ] Use live mode for current score, aggregate UR, recent hit-error display and map progress.
-- [ ] Do not display per-column, exact object offset, LN release or pattern-performance conclusions unless a validated event source exists.
+- [x] Build a `TosuLiveReplaySource` that records only documented telemetry and marks every output provisional; the trusted adapter now publishes the same contract into `snapshot.replay`.
+- [x] Use live mode for current score, aggregate UR, recent hit-error display and map progress (`adapter.js` reads documented v2 fields).
+- [x] Do not display per-column, exact object offset, LN release or pattern-performance conclusions unless a validated event source exists (`Companella Replay` displays these only after exact `.osr` analysis).
 - [ ] Evaluate a structured tosu `maniaHitEvents` proposal only after post-play fidelity is proven; do not implement poll-and-diff reconstruction as a substitute.
 - [ ] Use bounded ring buffers, backpressure and background processing so the overlay cannot affect gameplay.
-- [ ] Finalise or replace provisional results with replay-file analysis after the play.
+- [x] Finalise or replace provisional results with explicit replay-file analysis after the play (`ReplayAnalysisSession` + `WithReplayAnalysis`).
 
 **Exit criterion:** live mode remains useful without making unsupported precision claims or causing measurable game/overlay stutter.
 

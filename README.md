@@ -11,7 +11,7 @@
 
 - Automatic tosu and [ManiaMapAnalyser](https://github.com/LeoBlackMT/osumania_map_analyser) setup, compatibility checks, hash verification, and lifecycle management.
 - Works with osu!stable and osu!lazer; lazer compatibility offsets are checked during setup.
-- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, and difficulty graphs.
+- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Companella Replay card.
 - Lightweight transparent overlay for windowed or borderless osu!, with automatic hiding while a map is being played.
 - Default, Horizontal, Companella, and Custom CSS layouts with live preview in the launcher.
 - Resizable overlay with DPI-aware rendering; resize by dragging an edge/corner or with `Ctrl` + mouse wheel.
@@ -260,8 +260,11 @@ overlay-comp-chart
 The shipped `companella-replay` preset is a first-party duplicate of `companella` that adds replay integration as a reference implementation. Its additional live IDs are:
 
 ```text
-overlay-replay              (container, hidden when no replay data)
+overlay-replay              (container, visible in Companella Replay; shows provisional placeholders before data)
 overlay-replay-ur           (replay.timing.ur)
+overlay-replay-score        (live play.score)
+overlay-replay-map-time     (live beatmap.time.live)
+overlay-replay-accuracy     (live play.accuracy)
 overlay-replay-mean         (replay.timing.meanMs)
 overlay-replay-median       (replay.timing.medianMs)
 overlay-replay-sample       (replay.timing.sampleCount)
@@ -276,9 +279,11 @@ The replay block is `null` when no post-play `.osr` is available; the renderer k
 Therefore:
 
 1. To create a Companella variant with live summary cards and charts, override the user preset with id `companella` and edit its template/CSS.
-2. To add replay analysis, duplicate `companella` as `companella-replay` (or copy its `overlay-replay` markup/CSS into your own preset) and keep the `overlay-replay-*` IDs listed above. The renderer will populate them from `snapshot.replay` when `replay.*` metrics are present.
+2. To add replay analysis, duplicate `companella` as `companella-replay` (or copy its `overlay-replay` markup/CSS into your own preset) and keep the `overlay-replay-*` IDs listed above. The renderer populates them from `snapshot.replay` when `replay.*` metrics are present. With tosu running, the shipped preset shows provisional live score, map time, aggregate UR and recent timing data immediately; exact per-column/pattern/LN values require a post-play `.osr` import.
 3. To create a new id such as `my-preset` without replay, use CSS to rearrange and style the existing analyser card, or provide static additional markup. The current renderer does not populate arbitrary new IDs with snapshot values.
 4. A general user-defined renderer/plugin API is not part of this release. Do not assume that adding JavaScript to a manifest will create new live data fields.
+
+Live replay fields are intentionally provisional. The adapter reads only documented tosu v2 fields: `beatmap.time.live`, `play.score`, `play.accuracy`, `play.unstableRate`, and `play.hitErrorArray`. It does not infer columns or LN events from polling. The header badge displays `provisional` until an exact replay-file result is available.
 
 This boundary is intentional: the domain model stays independent from a particular tosu widget, while the shipped analyser adapter translates source data into the normalized snapshot.
 

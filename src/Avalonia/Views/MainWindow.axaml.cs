@@ -13,6 +13,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
@@ -21,6 +22,7 @@ using ManiaMapAnalyzerOverlay.Avalonia.Platform;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
 using ManiaMapAnalyzerOverlay.Avalonia.ViewModels;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
+using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Views;
 
@@ -43,6 +45,7 @@ public partial class MainWindow : Window
     private readonly AnalyzerEngineCatalog analyzerEngineCatalog = new();
     private readonly AnalyzerEnginePackageDeployer analyzerEngineDeployer = new();
     private readonly EffectiveAnalysisConfigurationStore effectiveAnalysisStore = new();
+    private readonly ReplayAnalysisSession replayAnalysisSession = new();
     private EffectiveAnalysisConfiguration effectiveAnalysisConfiguration = EffectiveAnalysisConfigurationStore.CreateDefault();
     private MainViewModel? model;
     private CancellationTokenSource? previewPresentationCancellation;
@@ -61,6 +64,7 @@ public partial class MainWindow : Window
     private WidgetAnalysisSceneRunner? headlessSceneRunner;
     private AnalysisRunScope? headlessSceneScope;
     private string? lastHeadlessSceneKey;
+    private AnalysisSnapshot? lastAnalyzerSnapshot;
     private bool initialized;
     private bool overlayMode;
     private bool overlayWidgetSized;
@@ -1028,6 +1032,7 @@ public partial class MainWindow : Window
         BrandText.Text = L("app.brand");
         AnalysisButton.Content = L("button.map_analysis");
         AppearanceButton.Content = L("button.appearance");
+        ReplayButton.Content = L("button.replay");
         MappingButton.Content = L("button.mapping");
         HelpButton.Content = L("button.help");
         OverlayButton.Content = L("button.overlay");
@@ -1087,6 +1092,7 @@ public partial class MainWindow : Window
     {
         AnalysisButton.IsEnabled = enabled;
         AppearanceButton.IsEnabled = enabled;
+        ReplayButton.IsEnabled = enabled;
         MappingButton.IsEnabled = enabled;
         HelpButton.IsEnabled = enabled;
         PreviewScaleDownButton.IsEnabled = enabled;
@@ -1360,6 +1366,7 @@ public partial class MainWindow : Window
 
     private void AnalyzerSnapshotChanged(AnalysisSnapshot snapshot)
     {
+        lastAnalyzerSnapshot = snapshot;
         if (!overlayMode || overlayNativePlayStateKnown || snapshot.Gameplay.IsPlaying is not bool isPlaying)
             return;
 
@@ -1494,6 +1501,87 @@ public partial class MainWindow : Window
         Navigate(AnalysisUrl);
         await Task.CompletedTask;
     }
+
+    private async void Replay_Click(object? sender, RoutedEventArgs e)
+    {
+        if (model is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = L("replay.import.title"),
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType(L("replay.import.file_type"))
+                    {
+                        Patterns = ["*.osr"]
+                    }
+                ]
+            });
+            var file = files.FirstOrDefault();
+            if (file is null)
+            {
+                return;
+            }
+
+            await using var input = await file.OpenReadAsync();
+            using var buffer = new MemoryStream();
+            await input.CopyToAsync(buffer);
+            replayAnalysisSession.Import(buffer.ToArray(), file.Name);
+            model.SetStatus(UiText.Format("replay.import.selected", file.Name));
+
+            if (tosuBeatmapSource is null)
+            {
+                model.SetStatus(L("replay.import.no_beatmap_source"));
+                return;
+            }
+
+            var beatmap = await tosuBeatmapSource.GetCurrentAsync();
+            var result = await replayAnalysisSession.AnalyzeAsync(beatmap);
+            var baseSnapshot = lastAnalyzerSnapshot;
+            if (baseSnapshot is null)
+            {
+                baseSnapshot = HeadlessSnapshotConverter.FromComposed(
+                    beatmap,
+                    null,
+                    new ComposedWidgetSnapshot("replay-base", AnalysisOutcome.Success, [], []));
+            }
+
+            var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
+            await PushHeadlessSnapshotAsync(replaySnapshot, CancellationToken.None);
+            var diagnostic = result.Diagnostics.FirstOrDefault();
+            if (result.Outcome == AnalysisOutcome.Success)
+            {
+                model.SetStatus(UiText.Format("replay.import.success", file.Name));
+            }
+            else
+            {
+                model.SetStatus(
+                    UiText.Format(
+                        "replay.import.failed",
+                        diagnostic?.Message ?? result.Outcome.ToString()));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ReplayAnalysisException exception)
+        {
+            AppLogger.Warning("Importing replay", exception.Message, exception);
+            model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Importing replay", exception);
+            model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
+        }
+    }
+
     private void Dashboard_Click(object? sender, RoutedEventArgs e) => Navigate(BaseUrl + "/");
 
     private async void Appearance_Click(object? sender, RoutedEventArgs e)

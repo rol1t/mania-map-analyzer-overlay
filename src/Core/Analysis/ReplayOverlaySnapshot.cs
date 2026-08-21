@@ -2,6 +2,18 @@
 
 public sealed record ReplayOverlaySnapshot
 {
+    public int? MapProgressMs
+    {
+        get; init;
+    }
+    public int? Score
+    {
+        get; init;
+    }
+    public double? Accuracy
+    {
+        get; init;
+    }
     public double? Ur
     {
         get; init;
@@ -30,12 +42,17 @@ public sealed record ReplayOverlaySnapshot
     {
         get; init;
     }
+    public IReadOnlyList<int> RecentOffsets { get; init; } = Array.Empty<int>();
+    public bool IsProvisional
+    {
+        get; init;
+    }
     public string Fidelity { get; init; } = string.Empty;
     public string Reason { get; init; } = string.Empty;
     public IReadOnlyList<ReplayColumnSnapshot> Columns { get; init; } = Array.Empty<ReplayColumnSnapshot>();
     public IReadOnlyList<ReplaySectionSnapshot> Sections { get; init; } = Array.Empty<ReplaySectionSnapshot>();
     public IReadOnlyList<ReplayInsightSnapshot> Insights { get; init; } = Array.Empty<ReplayInsightSnapshot>();
-    public bool HasData => SampleCount.HasValue || Columns.Count > 0;
+    public bool HasData => MapProgressMs.HasValue || Score.HasValue || SampleCount.HasValue || Columns.Count > 0;
 }
 
 public sealed record ReplayColumnSnapshot
