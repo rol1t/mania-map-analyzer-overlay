@@ -67,3 +67,261 @@
   and `dotnet test ManiaMapAnalyzerOverlay.sln --configuration Release --no-build --nologo`.
 - Manual runtime and visual testing remain the user's responsibility; do not
   claim those checks were performed by an automated build.
+
+# OpenCode Multi-Agent Instructions (OpenCode Go subscription)
+
+## Goal
+
+Optimize for the best balance of:
+
+- implementation quality;
+- autonomous agent performance;
+- speed;
+- token efficiency;
+- OpenCode Go quota efficiency.
+
+Do not use the most expensive model simply because it is available.
+Prefer the cheapest model that is likely to complete the task reliably.
+
+---
+
+## Agent Roles
+
+### 1. Planner — GPT-5.6 Luna High
+
+Primary responsibilities:
+
+- understand the user's request;
+- inspect the relevant parts of the repository;
+- identify affected components;
+- identify architectural constraints;
+- identify risks and edge cases;
+- produce an implementation plan;
+- review completed work when necessary.
+
+The Planner should normally **not implement the feature itself**.
+
+Use the Planner when:
+
+- the task touches several modules;
+- architecture decisions are required;
+- the task is ambiguous;
+- implementation may affect public APIs;
+- database/schema changes are involved;
+- concurrency, caching, security, networking, or performance are involved;
+- the Builder has already failed;
+- a substantial refactor is requested.
+
+Do NOT use the Planner for trivial tasks such as:
+
+- renaming variables;
+- fixing obvious syntax errors;
+- adding a simple DTO;
+- changing one configuration value;
+- small isolated UI changes.
+
+#### Planner output
+
+The Planner should produce a concise handoff containing:
+
+1. Goal
+2. Relevant files/modules
+3. Proposed approach
+4. Implementation steps
+5. Important constraints
+6. Validation strategy
+7. Known risks
+
+Avoid writing a long essay. The plan exists to help the Builder execute the task efficiently.
+
+---
+
+### 2. Primary Builder — Muse Spark 1.2
+
+Muse Spark is the default implementation agent. Use Muse for approximately **70–80% of coding work**.
+
+Typical tasks:
+
+- implementing features;
+- modifying multiple files;
+- fixing bugs;
+- repository exploration;
+- refactoring;
+- writing tests;
+- running tests;
+- debugging test failures;
+- implementing an existing plan;
+- performing long autonomous coding sessions.
+
+Default reasoning: **High**. Use **XHigh** only when the feature touches many systems, the bug is difficult to reproduce, the repository is unfamiliar, the task requires significant reasoning, several attempts failed, or a major refactor is required. Do not use XHigh automatically.
+
+#### Muse execution rules
+
+Before editing: inspect existing code; identify existing patterns; reuse existing abstractions; avoid unnecessary dependencies.
+During implementation: make the smallest coherent change; preserve architecture; avoid speculative refactoring; run tests/build; inspect failures; retry autonomously when cause is clear.
+After implementation: run relevant tests; run build when practical; inspect changed files; ensure no unrelated changes.
+
+Provide a short completion report: what changed, tests executed, remaining concerns.
+
+---
+
+### 3. Fast Alternative Builder — DeepSeek V4 Flash
+
+Preferred secondary worker. Use when Muse produced an incorrect solution, appears stuck, a second approach would be useful, task is relatively straightforward, quick diagnosis is useful, or large mechanical code is needed.
+
+Good tasks: boilerplate, tests, CRUD, DTOs, mappings, straightforward fixes, repetitive refactors, config changes, code search/diagnosis, alternative proposals.
+
+Do not escalate to an expensive frontier model before trying DeepSeek if the problem appears implementation-related.
+
+---
+
+### 4. Heavy Coding Escalation — GLM-5.3
+
+Escalation model, **not a default agent**. Use when Muse failed twice, Muse and DeepSeek disagree, bug spans several subsystems, complex repo-wide refactor required, difficult build/toolchain behavior, long-horizon task repeatedly fails, or unusually strong reasoning is needed.
+
+Before invoking GLM-5.3, provide: original task, relevant context, Planner handoff if available, what Muse attempted, what failed, error messages, failing tests. Do not make GLM rediscover prior learnings.
+
+---
+
+### 5. Expert Escalation — Kimi K3
+
+Reserved for the hardest problems. Use only when cheaper models repeatedly failed, root cause remains unclear, deep reasoning across many components is required, architectural alternatives need evaluation, or independent expert opinion is worth the quota cost.
+
+Typical flow: `Muse → DeepSeek → GLM-5.3 → Kimi K3`. Do not jump directly from Muse to Kimi unless exceptionally difficult. Kimi should diagnose/propose the critical solution; hand implementation back to Muse when possible.
+
+---
+
+### 6. Independent Reviewer — Qwen3.8 Max
+
+Primarily acts as an independent reviewer. Use when change is large, architecture changed, solution handles money/permissions/auth/concurrency/persistent data, Luna and Builder disagree, second high-quality opinion is desirable, or confidence is low.
+
+Inspect: correctness, regressions, edge cases, architecture, complexity, API compatibility, race conditions, error handling, test coverage. Do not rewrite entire implementation unless major flaw exists. Return findings ranked Critical/High/Medium/Low; explicitly say if no meaningful issues.
+
+---
+
+## Default Workflow
+
+### Small task (small bug, simple endpoint, DTO, test, minor UI, config)
+
+`Muse Spark 1.2 High → tests/build → done` — No Planner required.
+
+### Medium task (new feature, several files, new service, moderate refactor, non-trivial bug)
+
+`GPT-5.6 Luna High → plan → Muse Spark 1.2 High → tests/build → Luna review if needed`
+
+### Large task (architecture change, new subsystem, repo-wide refactor, complex migration, difficult integration)
+
+`GPT-5.6 Luna High → detailed plan → Muse Spark 1.2 XHigh → tests/build → GPT-5.6 Luna review → fix with Muse`
+
+If Muse cannot complete: `DeepSeek V4 Flash → alternative diagnosis` → if still unresolved: `GLM-5.3` → if exceptionally difficult: `Kimi K3`.
+
+---
+
+## Failure Escalation Policy
+
+Do not endlessly retry the same approach.
+
+- Attempt 1: Muse investigates/implements; if failure and cause is obvious, Muse fixes.
+- Attempt 2: Muse tries a substantially different approach; do not repeat superficial patch.
+- Attempt 3: Ask DeepSeek V4 Flash for independent diagnosis/alternative/explanation.
+- Attempt 4: Use GLM-5.3 with all accumulated context.
+- Attempt 5: Use Kimi K3 only if still unresolved or requires expert reasoning.
+
+---
+
+## Review Policy
+
+- No additional review: one-file changes, trivial fixes, tests, boilerplate, config.
+- Luna review: features, multi-file refactors, public API changes, database changes, moderately important code.
+- Qwen3.8 Max review: critical code, complex architecture, concurrency, auth, persistent state, financial logic, high regression risk.
+
+---
+
+## Context Efficiency
+
+Avoid repeatedly reading the entire repository. Before delegating, create a compact handoff: Task, Relevant files (only likely involved), Current understanding (architectural facts), Attempts, Failure (exact reason), Validation (tests/build commands). Reuse downstream; do not force re-exploration.
+
+---
+
+## Token and Quota Efficiency
+
+Preferred priority (cost vs expected usefulness, not quality ranking):
+
+1. Muse Spark 1.2
+2. DeepSeek V4 Flash
+3. GPT-5.6 Luna
+4. GLM-5.3
+5. Qwen3.8 Max
+6. Kimi K3
+
+Use expensive models for reasoning bottlenecks, cheap models for implementation volume.
+
+---
+
+## Important Rule
+
+**Planning and difficult reasoning should be separated from routine implementation.**
+
+Example: GPT-5.6 Luna determines architecture/approach, then Muse implements, runs tests, fixes failures, verifies result. If a difficult architectural question appears during implementation, return it to Luna instead of consuming large context exploring alternatives.
+
+---
+
+## Autonomous Behavior
+
+Behave autonomously when next action is obvious. Do not ask for confirmation before reading files, searching repo, running tests/builds, fixing obvious failures, formatting, resolving straightforward compiler errors.
+
+Ask the user only when product requirements are ambiguous, several materially different behaviors are possible, destructive operations are required, credentials/external access required, or decision cannot be derived from repository.
+
+---
+
+## Avoid Overengineering
+
+Prefer `existing pattern → simple change → tests` over `new abstraction → new framework → new dependency → speculative architecture`. Do not introduce abstraction solely for possible future use; do not rewrite unrelated working code; do not expand scope unless necessary.
+
+---
+
+## Testing
+
+After changing code: run narrowest relevant tests first; fix failures; run broader tests when appropriate; run build; report anything not verified. Do not claim success if tests were not run; explain why if they cannot be executed.
+
+---
+
+## Final Response
+
+Be concise. Preferred format:
+
+- Completed — short description
+- Changed — important files/components
+- Validation — tests/build commands and result
+- Notes — unresolved risks or follow-ups
+
+Avoid dumping internal reasoning or lengthy narration.
+
+---
+
+## Routing Summary
+
+```text
+TRIVIAL TASK       → Muse High → Done
+NORMAL FEATURE     → Luna High — Plan → Muse High — Build → Tests → Done
+COMPLEX FEATURE    → Luna High — Plan → Muse XHigh — Build → Luna — Review → Muse — Fix → Done
+BUILDER STUCK      → DeepSeek V4 Flash → alternative → Muse retries
+HARD PROBLEM       → GLM-5.3 → Muse implements
+EXTREMELY HARD     → Kimi K3 → diagnosis/solution → Muse implements
+HIGH-RISK CHANGE   → Qwen3.8 Max → independent review
+```
+
+---
+
+## Core Principle
+
+**Use intelligence where intelligence is required. Use cheap execution where execution is required.**
+
+Default to Muse. Use Luna to think before large changes. Use DeepSeek for cheap alternatives. Use GLM when normal builders fail. Use Kimi only for genuinely difficult problems. Use Qwen as independent reviewer. Never spend frontier-model quota on work Muse can reliably perform.
+
+---
+
+## Mapping to this repository (Luna/Terra/Sol ↔ Go subscription)
+
+- Repo `AGENTS.md` top section (Luna Max / Terra High/XHigh / Sol Ultra) remains the **legacy naming** for the same escalation ladder. In Go terms: Luna ≈ Planner (GPT-5.6 Luna High), Terra ≈ DeepSeek/GLM tier for bounded analysis, Sol ≈ Kimi/Qwen tier for architecture/security/release.
+- For day-to-day work prefer the Go routing above; fall back to `Luna/Terra/Sol` labels only when referencing older docs or prompts that still use them.
