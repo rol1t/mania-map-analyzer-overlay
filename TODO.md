@@ -4,15 +4,20 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
 
-## Replay analysis — Phase 1 done
+## Replay analysis — Phases 1-2 done
 
 - [x] Build the pure replay-analysis domain `ManiaMapAnalyzerOverlay.ReplayAnalysis` (`src/ReplayAnalysis/*`: `ReplayArtifact`+`Handle`+`IReplayArtifactStore`, `ReplayInputEvent`, `JudgedHitEvent`, `ReplayProvenance`, `ReplayAnalysisSnapshot`, `IReplaySource`/`IReplayBeatmapProvider`, `ReplayKeyMask`/`ReplayInputOrdering`).
 - [x] Keep binary replay bytes opaque across engine boundaries (`ReplayArtifactHandle` + `InMemoryReplayArtifactStore`; no base64 in settings/logs/WebView; validated by `ReplayArtifactTests`).
 - [x] Add map/replay identity validation with typed errors (`ReplayBeatmapValidation`, `ReplayNotFoundException`/`ReplayCorruptException`/`ReplayBeatmapMismatchException`/`ReplayUnsupportedException`).
 - [x] Enforce non-negotiable contracts: `MapTimeMs` vs `AudioTimeMs`/`Rate` separate, `offset = inputTime - objectTime`, preserve source order for same-timestamp edges (`ReplayInputOrdering.Order` by `MapTimeMs`+`SourceSequence`), carry `SourceSequence`+`BeatmapObjectId`+`Phase`.
 - [x] Add JSON fixtures and deterministic tests (`tests/ReplayAnalysis.Tests`: 16 tests — artifact opacity, key-mask/chord/jack, duplicate timestamps, same-frame edges, UR/offset inclusion, mismatch diagnostics, snapshot fidelity).
+- [x] Parse `.osu` notes into map-clock objects and columns (`OsuBeatmapParser` + `OsuManiaBeatmap`/`OsuManiaHitObject` — `CircleSize`→`KeyCount`, `x→column` mapping, LN detection; `OsuBeatmapParserTests`).
+- [x] Decode stable `.osr` frame/key-mask data into press/release transitions (`StableReplayDecoder` — decompressed string `w|x|y|keys` + frame-list path; handles negative lead-in, duplicate timestamps; `StableReplayDecoderTests`).
+- [x] Implement versioned deterministic matcher for rice (`ReplayJudge.JudgeRice` + `ReplayJudgementWindows` + `ReplayJudgeOptions` `mania:1.0.0-rice` — unmatched input vs miss, ambiguous→diagnostic, strict `offset=input-object`, LN reject).
+- [x] Validate exact judgement counts and combo, accuracy tolerance per fixture (`ReplayScoreCalculator` + `ReplayScorePolicy.StableClassic`, fidelity gate mandatory; `ReplayScoreCalculatorTests`).
+- [x] Add regression tests for chords, jacks, dense stream, lead-in, duplicate frames, early-press, ambiguous, LN-reject, rate variants (`ReplayJudgeTests` — 9 cases, all deterministic).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 2–7 (Phase 2: stable 4K rice re-judge parsing `.osu`/`.osr` + deterministic matcher; Phase 3: timing/columns/sections/insights; Phase 4: `ReplayAnalysisEngine : IAnalyzerEngine` + widget composition; Phases 5–7: LN/rate/lazer/live/pattern).
+Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phases 3–7 (Phase 3: timing/columns/sections/insights; Phase 4: `ReplayAnalysisEngine : IAnalyzerEngine` + widget composition; Phases 5–7: LN/rate/lazer/live/pattern).
 
 ## Analyzer runtime integration
 
