@@ -2,6 +2,12 @@
 
 This file tracks the remaining work after introducing the analyzer-engine foundation. The current overlay behavior is intentionally preserved until the new runtime path reaches feature parity.
 
+For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
+
+## Replay analysis
+
+- [ ] Build the first-party osu!mania replay-analysis domain, starting with the validated post-play stable `.osr` MVP described in [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
+
 ## Analyzer runtime integration
 
 - [ ] Connect `AnalyzerEngineScriptBridge` to the Avalonia main window and the active Tosu/WebView host.
