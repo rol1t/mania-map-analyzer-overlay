@@ -4,7 +4,7 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 For the research-backed replay-analysis implementation plan, see [docs/replay-analysis-todo.md](docs/replay-analysis-todo.md).
 
-## Replay analysis — Phases 1-6 done
+## Replay analysis — Phases 1-7 done
 
 - [x] Build the pure replay-analysis domain `ManiaMapAnalyzerOverlay.ReplayAnalysis` (`src/ReplayAnalysis/*`: `ReplayArtifact`+`Handle`+`IReplayArtifactStore`, `ReplayInputEvent`, `JudgedHitEvent`, `ReplayProvenance`, `ReplayAnalysisSnapshot`, `IReplaySource`/`IReplayBeatmapProvider`, `ReplayKeyMask`/`ReplayInputOrdering`).
 - [x] Keep binary replay bytes opaque across engine boundaries (`ReplayArtifactHandle` + `InMemoryReplayArtifactStore`; no base64 in settings/logs/WebView; validated by `ReplayArtifactTests`).
@@ -33,8 +33,12 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 - [x] Implement lazer replay ingestion stub with `replay.lazer_not_supported` and client/version gating (`LazerReplayDecoder` + `ReplayModPolicy.ValidateMods` for `RD/MR/AP/SO` unsupported).
 - [x] Add provisional live mode `TosuLiveReplaySource` (`ProvisionalLive`, `beatmap.time.live` progress, aggregate score/UR, recent offsets; bounded `1024` ring buffer, backpressure, off-UI-thread; `replay.live.provisional` diagnostic, `FinalizeWithReplayFile` replaces provisional with exact; `TosuLiveReplaySourceTests` 4 cases).
 - [x] Use bounded memory for live buffers and finalize provisional with replay-file analysis after play (`FinalizeWithReplayFile`).
+- [x] Add map-side pattern/strain annotations via classifier with weighted multi-membership (`ReplayPatternClassifier` — `Single/Jack/Minijack/Chord/Stream/Jump`, sum≤1, no forced single label; `ReplayPatternTests`).
+- [x] Correlate event metrics with NPS/pattern/column/difficulty only when thresholds met (`ReplayPatternCorrelation.Correlate` — `MinimumEligibleNotes=20`, external difficulty optional; `54` replay tests total).
+- [x] Emit evidence-first statements `minijacks contain 54% of misses from 220 eligible notes` (`ReplayPatternCorrelation.ToInsights` — `MinimumMissShareForClaim=0.4`, confidence gated).
+- [x] Add opt-in comparison across own stored analyses only after consent (`ReplayStoredComparison.CreateOptIn` — `ReplayUnsupportedException` without consent, local only, no cloud).
 
-Remaining replay roadmap: see `docs/replay-analysis-todo.md` Phase 7 (pattern correlation: `ManiaMapAnalyser` annotations, multi-membership weights, NPS/pattern/strain evidence-first statements, opt-in comparison).
+Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extraction to `ReplayAnalysis.Core` package can be evaluated when an external consumer appears.
 
 ## Analyzer runtime integration
 
