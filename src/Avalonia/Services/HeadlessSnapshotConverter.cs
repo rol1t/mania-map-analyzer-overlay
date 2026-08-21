@@ -62,6 +62,8 @@ public static class HeadlessSnapshotConverter
             BackgroundUrl = beatmap.Metadata.BackgroundPath
         };
 
+        var replay = BuildReplay(composed);
+
         return new AnalysisSnapshot
         {
             SchemaVersion = AnalysisSnapshot.CurrentSchemaVersion,
@@ -70,7 +72,8 @@ public static class HeadlessSnapshotConverter
             Gameplay = gameplaySnapshot,
             Difficulty = difficulty,
             Ranks = ranks,
-            Skills = skills
+            Skills = skills,
+            Replay = replay
         };
     }
 
@@ -232,5 +235,113 @@ public static class HeadlessSnapshotConverter
     {
         var value = TryGetDouble(composed, metricId);
         return value.HasValue ? (int)Math.Round(value.Value) : null;
+    }
+
+    private static ReplayOverlaySnapshot? BuildReplay(ComposedWidgetSnapshot composed)
+    {
+        bool hasReplay = composed.Metrics.Keys.Any(key => key.StartsWith("replay.", StringComparison.OrdinalIgnoreCase));
+        if (!hasReplay)
+        {
+            return null;
+        }
+
+        var ur = TryGetDouble(composed, "replay.timing.ur");
+        var mean = TryGetDouble(composed, "replay.timing.meanMs");
+        var median = TryGetDouble(composed, "replay.timing.medianMs");
+        var sd = TryGetDouble(composed, "replay.timing.sdMs");
+        var early = TryGetInt(composed, "replay.timing.earlyCount");
+        var late = TryGetInt(composed, "replay.timing.lateCount");
+        var sample = TryGetInt(composed, "replay.timing.sampleCount");
+
+        // Columns: replay.column.{n}.biasMs / ur / missCount / hitCount
+        var columns = new List<ReplayColumnSnapshot>();
+        for (int column = 0; column < 18; column++)
+        {
+            bool hasColumn = composed.Metrics.ContainsKey($"replay.column.{column}.biasMs")
+                || composed.Metrics.ContainsKey($"replay.column.{column}.ur")
+                || composed.Metrics.ContainsKey($"replay.column.{column}.missCount");
+            if (!hasColumn)
+            {
+                continue;
+            }
+
+            columns.Add(new ReplayColumnSnapshot
+            {
+                Column = column,
+                BiasMs = TryGetDouble(composed, $"replay.column.{column}.biasMs"),
+                Ur = TryGetDouble(composed, $"replay.column.{column}.ur"),
+                MissCount = TryGetInt(composed, $"replay.column.{column}.missCount"),
+                HitCount = TryGetInt(composed, $"replay.column.{column}.hitCount")
+            });
+        }
+
+        // Sections: replay.section.{i}.accuracy / ur — discover by scanning
+        var sections = new List<ReplaySectionSnapshot>();
+        for (int index = 0; index < 32; index++)
+        {
+            bool hasSection = composed.Metrics.ContainsKey($"replay.section.{index}.accuracy");
+            if (!hasSection)
+            {
+                continue;
+            }
+
+            sections.Add(new ReplaySectionSnapshot
+            {
+                Index = index,
+                Accuracy = TryGetDouble(composed, $"replay.section.{index}.accuracy"),
+                Ur = TryGetDouble(composed, $"replay.section.{index}.ur")
+            });
+        }
+
+        // Insights: any replay.insights.* or replay.pattern.* as generic
+        var insights = new List<ReplayInsightSnapshot>();
+        foreach (var entry in composed.Metrics.Where(metric => metric.Key.StartsWith("replay.insights.", StringComparison.OrdinalIgnoreCase) || metric.Key.StartsWith("replay.pattern.", StringComparison.OrdinalIgnoreCase)))
+        {
+            string value = TryGetString(composed, entry.Key) ?? entry.Value.Metric.Value.ToString() ?? string.Empty;
+            insights.Add(new ReplayInsightSnapshot
+            {
+                Code = entry.Key,
+                Message = value,
+                Confidence = null
+            });
+        }
+
+        // Also map aggregated insight count if present
+        if (composed.Metrics.TryGetValue("replay.insights.count", out var countMetric) && countMetric.Metric.Value.TryGetDouble(out double countValue))
+        {
+            // Keep as signal even if no per-insight strings
+        }
+
+        // Fidelity/reason from diagnostics: look for replay.fidelity.*
+        string fidelity = string.Empty;
+        string reason = string.Empty;
+        var fidelityDiagnostic = composed.Diagnostics.FirstOrDefault(diagnostic => diagnostic.Code.StartsWith("replay.fidelity.", StringComparison.OrdinalIgnoreCase) || diagnostic.Code == "replay.fidelity.partial" || diagnostic.Code == "replay.fidelity.exact");
+        if (fidelityDiagnostic is not null)
+        {
+            fidelity = fidelityDiagnostic.Code;
+            reason = fidelityDiagnostic.Message;
+        }
+
+        if (ur is null && mean is null && columns.Count == 0 && sections.Count == 0 && insights.Count == 0)
+        {
+            // Has replay prefix but no concrete values — still return empty container for visibility
+            return new ReplayOverlaySnapshot { Fidelity = fidelity, Reason = reason };
+        }
+
+        return new ReplayOverlaySnapshot
+        {
+            Ur = ur,
+            MeanMs = mean,
+            MedianMs = median,
+            SdMs = sd,
+            EarlyCount = early,
+            LateCount = late,
+            SampleCount = sample,
+            Fidelity = fidelity,
+            Reason = reason,
+            Columns = columns,
+            Sections = sections,
+            Insights = insights
+        };
     }
 }

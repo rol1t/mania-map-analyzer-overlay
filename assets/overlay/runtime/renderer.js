@@ -122,6 +122,76 @@
     });
   }
 
+  function renderReplay(snapshot) {
+    const replay = snapshot.replay;
+    const hasReplayNodes = byId("overlay-replay") || byId("overlay-replay-ur") || byId("overlay-replay-insights");
+    if (!replay || (!replay.hasData && !hasReplayNodes)) {
+      const container = byId("overlay-replay");
+      if (container) container.hidden = true;
+      return;
+    }
+    const container = byId("overlay-replay");
+    if (container) container.hidden = false;
+
+    function fmt(value, digits) {
+      return formatNumber(value, digits) || "—";
+    }
+
+    text("overlay-replay-ur", replay.ur == null ? "—" : fmt(replay.ur, 1), "—");
+    text("overlay-replay-mean", replay.meanMs == null ? "—" : fmt(replay.meanMs, 1) + " ms", "—");
+    text("overlay-replay-median", replay.medianMs == null ? "—" : fmt(replay.medianMs, 1) + " ms", "—");
+    text("overlay-replay-sample", replay.sampleCount == null ? "—" : String(replay.sampleCount), "—");
+    text("overlay-replay-fidelity", replay.fidelity ? replay.fidelity.replace("replay.fidelity.", "") : (replay.hasData ? "exact" : ""), "");
+
+    const early = replay.earlyCount, late = replay.lateCount;
+    const earlyLate = early != null || late != null ? `${early ?? 0} / ${late ?? 0}` : "—";
+    text("overlay-replay-earlylate", earlyLate, "—");
+
+    const colChart = byId("overlay-replay-columns");
+    if (colChart) {
+      colChart.textContent = "";
+      const cols = Array.isArray(replay.columns) ? replay.columns : [];
+      colChart.hidden = cols.length === 0;
+      cols.forEach(function (col) {
+        const item = document.createElement("div");
+        item.className = "overlay-replay-column";
+        const label = document.createElement("span");
+        label.className = "overlay-replay-col-label";
+        label.textContent = `C${col.column + 1}`;
+        const bias = document.createElement("span");
+        bias.className = "overlay-replay-col-bias";
+        bias.textContent = col.biasMs == null ? "—" : fmt(col.biasMs, 1);
+        bias.title = col.biasMs == null ? "" : `bias ${fmt(col.biasMs,1)}ms`;
+        const ur = document.createElement("span");
+        ur.className = "overlay-replay-col-ur";
+        ur.textContent = col.ur == null ? "—" : fmt(col.ur, 0);
+        item.append(label, bias, ur);
+        colChart.appendChild(item);
+      });
+    }
+
+    const insightsEl = byId("overlay-replay-insights");
+    if (insightsEl) {
+      const insights = Array.isArray(replay.insights) ? replay.insights : [];
+      insightsEl.textContent = "";
+      insightsEl.hidden = insights.length === 0;
+      insights.forEach(function (insight) {
+        const line = document.createElement("div");
+        line.className = "overlay-replay-insight";
+        line.textContent = insight.message || String(insight.code || "");
+        line.title = insight.message || "";
+        insightsEl.appendChild(line);
+      });
+      if (insights.length === 0 && replay.reason) {
+        const line = document.createElement("div");
+        line.className = "overlay-replay-insight overlay-replay-reason";
+        line.textContent = replay.reason;
+        insightsEl.appendChild(line);
+        insightsEl.hidden = false;
+      }
+    }
+  }
+
   function renderMainCard(snapshot) {
     var difficulty = snapshot.difficulty || {};
     var starText = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
@@ -147,6 +217,7 @@
     window.__overlayLatestAnalysisSnapshot = snapshot;
     renderSummary(snapshot);
     renderSkills(snapshot);
+    renderReplay(snapshot);
     renderMainCard(snapshot);
   }
 

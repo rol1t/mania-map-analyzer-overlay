@@ -1,0 +1,14 @@
+{
+  "id": "companella-replay",
+  "name": "Companella Replay",
+  "nameRu": "Companella Replay",
+  "description": "Companella duplicate with integrated replay analysis: UR/bias per column, sections and pattern insights. Uses post-play .osr when available, falls back to map-only.",
+  "descriptionRu": "Дубликат Companella с анализом реплея: UR/bias по колонкам, секции и инсайты. Использует post-play .osr когда доступен, иначе только карта.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".overlay-comp-cover-layer",
+  "supportsFullscreen": true,
+  "minWidth": 520,
+  "minHeight": 260
+}

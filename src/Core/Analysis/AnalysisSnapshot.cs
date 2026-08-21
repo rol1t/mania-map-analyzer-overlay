@@ -18,6 +18,10 @@ public sealed record AnalysisSnapshot
     public DifficultySnapshot Difficulty { get; init; } = new();
     public IReadOnlyList<RankEstimate> Ranks { get; init; } = Array.Empty<RankEstimate>();
     public IReadOnlyList<SkillMetric> Skills { get; init; } = Array.Empty<SkillMetric>();
+    public ReplayOverlaySnapshot? Replay
+    {
+        get; init;
+    }
 
     [JsonExtensionData]
     public IDictionary<string, object?> Extensions { get; init; } = new Dictionary<string, object?>();

@@ -60,12 +60,12 @@ For osu!stable exclusive fullscreen, enable **Stable FS**, confirm the tosu rest
 
 ## Appearance and CSS
 
-Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay.
+Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` is the `companella` layout duplicated with an integrated `Replay analysis` card (UR, bias, per-column, pattern insights).
 
 Overlay visibility is configured per preset in `manifest.json`. Set
 `visibilityPolicy` to `always`, `outside-play`, `during-play`, `paused-only`,
 or `never`. The shipped presets use `always` for Default and Horizontal and
-`outside-play` for Companella. User presets can override this value without
+`outside-play` for Companella and Companella Replay. User presets can override this value without
 changing application code.
 
 To add or edit a language, add its JSON file and manifest entry under `Assets/localization`. UI code uses only localization keys, so changing a translation does not require recompiling the application.
@@ -237,9 +237,9 @@ Visibility is evaluated from the analyser-neutral gameplay snapshot (`isPlaying`
 
 ### 6. Live data and the Companella exception
 
-The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, and skill metrics. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
+The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, and an optional `replay` block. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
 
-For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), and `skills` (id, label, display value, normalized value, and detail). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
+For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), and `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
 
 There is one current renderer limitation: the built-in Companella renderer updates a fixed set of IDs only when the selected layout id is exactly `companella`. Those IDs are:
 
@@ -257,11 +257,28 @@ overlay-comp-version
 overlay-comp-chart
 ```
 
+The shipped `companella-replay` preset is a first-party duplicate of `companella` that adds replay integration as a reference implementation. Its additional live IDs are:
+
+```text
+overlay-replay              (container, hidden when no replay data)
+overlay-replay-ur           (replay.timing.ur)
+overlay-replay-mean         (replay.timing.meanMs)
+overlay-replay-median       (replay.timing.medianMs)
+overlay-replay-sample       (replay.timing.sampleCount)
+overlay-replay-earlylate    (early/late)
+overlay-replay-fidelity     (replay.fidelity.*)
+overlay-replay-columns      (per-column bias/UR, replay.column.{n}.*)
+overlay-replay-insights     (pattern insights, replay.pattern.* / replay.insights.*)
+```
+
+The replay block is `null` when no post-play `.osr` is available; the renderer keeps `overlay-replay` hidden in that case and falls back to map-only display. Live provisional telemetry (`TosuLiveReplaySource`) never populates per-column/LN fields.
+
 Therefore:
 
 1. To create a Companella variant with live summary cards and charts, override the user preset with id `companella` and edit its template/CSS.
-2. To create a new id such as `my-preset`, use CSS to rearrange and style the existing analyser card, or provide static additional markup. The current renderer does not populate arbitrary new IDs with snapshot values.
-3. A general user-defined renderer/plugin API is not part of this release. Do not assume that adding JavaScript to a manifest will create new live data fields.
+2. To add replay analysis, duplicate `companella` as `companella-replay` (or copy its `overlay-replay` markup/CSS into your own preset) and keep the `overlay-replay-*` IDs listed above. The renderer will populate them from `snapshot.replay` when `replay.*` metrics are present.
+3. To create a new id such as `my-preset` without replay, use CSS to rearrange and style the existing analyser card, or provide static additional markup. The current renderer does not populate arbitrary new IDs with snapshot values.
+4. A general user-defined renderer/plugin API is not part of this release. Do not assume that adding JavaScript to a manifest will create new live data fields.
 
 This boundary is intentional: the domain model stays independent from a particular tosu widget, while the shipped analyser adapter translates source data into the normalized snapshot.
 
