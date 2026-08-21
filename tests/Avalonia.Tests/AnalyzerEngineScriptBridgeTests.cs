@@ -50,8 +50,10 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
         Assert.Contains("const runtimeSource =", bootstrap);
         Assert.Contains("const protocolSource =", bootstrap);
         Assert.Contains("const workerSource =", bootstrap);
-        Assert.Contains("new Blob", bootstrap);
-        Assert.Contains("URL.createObjectURL", bootstrap);
+        Assert.Contains("const createModuleUrl =", bootstrap);
+        Assert.Contains("const protocolBlobUrl = createModuleUrl(protocolSource)", bootstrap);
+        Assert.Contains("revokeModuleUrls", bootstrap);
+        Assert.DoesNotContain("data:text/javascript", bootstrap);
         Assert.Contains("__maniaMapAnalyzerOverlayHeadlessRuntimeModule", bootstrap);
         Assert.Contains("ManiaMapAnalyser", bootstrap);
         Assert.Contains("globalThis.location.href", bootstrap);

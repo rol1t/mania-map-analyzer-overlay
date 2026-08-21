@@ -316,17 +316,7 @@ function attachMessageHandler(worker, handler) {
         worker.addEventListener("message", (event) => handler(event?.data));
         worker.addEventListener("error", (event) => {
             console.error("Headless analyzer worker crashed", event);
-            handler({
-                protocol: PROTOCOL,
-                protocolVersion: PROTOCOL_VERSION,
-                type: MESSAGE_TYPES.Error,
-                status: ANALYSIS_STATUSES.Error,
-                error: {
-                    code: "WORKER_CRASHED",
-                    message: event?.message || "Headless analyzer worker crashed.",
-                    stage: "worker",
-                },
-            });
+            handler(createWorkerCrashResponse(event));
         });
         return;
     }
@@ -335,17 +325,7 @@ function attachMessageHandler(worker, handler) {
         worker.onmessage = (event) => handler(event?.data);
         worker.onerror = (event) => {
             console.error("Headless analyzer worker crashed", event);
-            handler({
-                protocol: PROTOCOL,
-                protocolVersion: PROTOCOL_VERSION,
-                type: MESSAGE_TYPES.Error,
-                status: ANALYSIS_STATUSES.Error,
-                error: {
-                    code: "WORKER_CRASHED",
-                    message: event?.message || "Headless analyzer worker crashed.",
-                    stage: "worker",
-                },
-            });
+            handler(createWorkerCrashResponse(event));
         };
         return;
     }
@@ -385,6 +365,35 @@ function isWellFormedWorkerResponse(message) {
 function hasCorrelationId(message) {
     return typeof message?.correlationId === "string"
         && message.correlationId.trim().length > 0;
+}
+
+function createWorkerCrashResponse(event) {
+    const filename = String(event?.filename || "").trim();
+    const line = Number.isFinite(Number(event?.lineno)) ? Number(event.lineno) : null;
+    const column = Number.isFinite(Number(event?.colno)) ? Number(event.colno) : null;
+    const cause = String(event?.error?.message || event?.message || "").trim();
+    const location = filename
+        ? `${filename}${line === null ? "" : `:${line}`}${column === null ? "" : `:${column}`}`
+        : "";
+    const message = cause || "Headless analyzer worker crashed.";
+
+    return {
+        protocol: PROTOCOL,
+        protocolVersion: PROTOCOL_VERSION,
+        type: MESSAGE_TYPES.Error,
+        status: ANALYSIS_STATUSES.Error,
+        error: {
+            code: "WORKER_CRASHED",
+            message: location ? `${message} (${location})` : message,
+            stage: "worker",
+            details: {
+                filename,
+                line,
+                column,
+                stack: String(event?.error?.stack || ""),
+            },
+        },
+    };
 }
 
 // EvaluateScriptAsync runs in a classic/eval context on some WebView engines,

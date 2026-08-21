@@ -66,7 +66,7 @@ public sealed class TosuLiveReplaySource : IReplaySource
 
         TosuLiveFrame latest = frames[^1];
         double? aggregateUr = CalculateAggregateUr(frames);
-        int[] recentOffsets = frames
+        double[] recentOffsets = frames
             .Where(item => item.HitOffsetMs is not null)
             .TakeLast(20)
             .Select(item => item.HitOffsetMs!.Value)
@@ -102,7 +102,7 @@ public sealed class TosuLiveReplaySource : IReplaySource
 
     private static double? CalculateAggregateUr(IReadOnlyList<TosuLiveFrame> frames)
     {
-        double[] offsets = frames.Where(item => item.HitOffsetMs is not null).Select(item => (double)item.HitOffsetMs!.Value).ToArray();
+        double[] offsets = frames.Where(item => item.HitOffsetMs is not null).Select(item => item.HitOffsetMs!.Value).ToArray();
         if (offsets.Length < 2)
         {
             return null;
@@ -117,7 +117,7 @@ public sealed class TosuLiveReplaySource : IReplaySource
 public sealed record TosuLiveFrame(
     int MapTimeMs,
     int? Score = null,
-    int? HitOffsetMs = null,
+    double? HitOffsetMs = null,
     string? RawPayloadHash = null)
 {
     public string? RawPayloadHash { get; } = RawPayloadHash;
@@ -128,7 +128,7 @@ public sealed record ReplayLiveSnapshot(
     int? MapProgressMs,
     int? Score,
     double? AggregateUr,
-    IReadOnlyList<int> RecentOffsets,
+    IReadOnlyList<double> RecentOffsets,
     IReadOnlyList<ReplayDiagnostic> Diagnostics);
 
 internal sealed class BoundedReplayBuffer

@@ -200,7 +200,7 @@ html.overlay-layout-companella-replay .overlay-comp-cover-layer {
   pointer-events:none!important;
 }
 
-html.overlay-layout-companella-replay .main-card>.status-row,html.overlay-layout-companella-replay .main-card>.overlay-comp-meta,html.overlay-layout-companella-replay .main-card>.overlay-comp-summary,html.overlay-layout-companella-replay .main-card>.overlay-comp-chart,html.overlay-layout-companella-replay .main-card>.overlay-host-details,html.overlay-layout-companella-replay .main-card>.mode-tag-group,html.overlay-layout-companella-replay .main-card>.pause-count {
+html.overlay-layout-companella-replay .main-card>.status-row,html.overlay-layout-companella-replay .main-card>.overlay-comp-meta,html.overlay-layout-companella-replay .main-card>.overlay-comp-summary,html.overlay-layout-companella-replay .main-card>.overlay-comp-chart,html.overlay-layout-companella-replay .main-card>.overlay-host-details,html.overlay-layout-companella-replay .main-card>.overlay-replay,html.overlay-layout-companella-replay .main-card>.mode-tag-group,html.overlay-layout-companella-replay .main-card>.pause-count {
   position:relative!important;
   z-index:1!important;
 }

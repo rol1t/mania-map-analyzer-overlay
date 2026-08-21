@@ -78,6 +78,17 @@ public sealed partial class AnalyzerEngineScriptBridge
         }
         throw new Error("The native WebView message bridge is unavailable.");
     };
+    const moduleUrls = [];
+    const createModuleUrl = (source) => {
+        const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+        moduleUrls.push(url);
+        return url;
+    };
+    const revokeModuleUrls = () => {
+        while (moduleUrls.length > 0) {
+            URL.revokeObjectURL(moduleUrls.pop());
+        }
+    };
      try {
          const runtimeUrl = new URL(__RUNTIME__, documentUrl).href;
          const loadModuleScript = (sourceUrl) => new Promise((resolve, reject) => {
@@ -97,27 +108,29 @@ public sealed partial class AnalyzerEngineScriptBridge
              if (!runtimeSource || !protocolSource) {
                  await loadModuleScript(runtimeUrl);
              } else {
-                 const protocolBlobUrl = "data:text/javascript;charset=utf-8," + encodeURIComponent(protocolSource);
+                 const protocolBlobUrl = createModuleUrl(protocolSource);
                  const normalizerBlobUrl = normalizerSource
-                     ? "data:text/javascript;charset=utf-8," + encodeURIComponent(normalizerSource.replace(
+                     ? createModuleUrl(normalizerSource.replace(
                          'from "./protocol.mjs"',
                          `from ${JSON.stringify(protocolBlobUrl)}`))
                      : "";
                  const workerBlobUrl = workerSource
-                     ? URL.createObjectURL(new Blob([
-                         workerSource
-                             .replace('from "./protocol.mjs"', `from ${JSON.stringify(protocolBlobUrl)}`)
-                             .replace('from "./normalizer.mjs"', `from ${JSON.stringify(normalizerBlobUrl)}`),
-                     ], { type: "text/javascript" }))
+                     ? createModuleUrl(workerSource
+                         .replace('from "./protocol.mjs"', `from ${JSON.stringify(protocolBlobUrl)}`)
+                         .replace('from "./normalizer.mjs"', `from ${JSON.stringify(normalizerBlobUrl)}`))
                      : __WORKER__;
                  const patchedSource = runtimeSource.replace(
                      'from "./protocol.mjs"',
                      `from ${JSON.stringify(protocolBlobUrl)}`);
-                 const runtimeBlobUrl = URL.createObjectURL(new Blob([patchedSource], { type: "text/javascript" }));
+                 const runtimeBlobUrl = createModuleUrl(patchedSource);
                  try {
                      await loadModuleScript(runtimeBlobUrl);
                  } finally {
                      URL.revokeObjectURL(runtimeBlobUrl);
+                     const runtimeIndex = moduleUrls.indexOf(runtimeBlobUrl);
+                     if (runtimeIndex >= 0) {
+                         moduleUrls.splice(runtimeIndex, 1);
+                     }
                  }
                  state.workerUrl = workerBlobUrl;
              }
@@ -146,16 +159,23 @@ public sealed partial class AnalyzerEngineScriptBridge
                 error: { code: exception?.code || "ANALYSIS_FAILED", message: exception?.message || String(exception), details: exception?.details || null },
             }),
         );
-        state.cancel = (correlationId, reason) => runtime.cancel(correlationId, reason);
+         state.cancel = (correlationId, reason) => runtime.cancel(correlationId, reason);
          state.dispose = () => {
-             runtime.dispose();
-             if (state.workerUrl?.startsWith("blob:")) {
-                 URL.revokeObjectURL(state.workerUrl);
+             try {
+                 runtime.dispose();
+             } finally {
+                 revokeModuleUrls();
              }
          };
         const ready = await runtime.initialize();
         post(ready);
     } catch (exception) {
+        try {
+            state.dispose?.();
+        } catch (disposeException) {
+            console.error("Disposing failed analyzer runtime failed", disposeException);
+        }
+        revokeModuleUrls();
         post({
             protocol: __PROTOCOL__,
             protocolVersion: __PROTOCOL_VERSION__,

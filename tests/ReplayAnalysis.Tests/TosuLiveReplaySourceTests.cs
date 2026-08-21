@@ -8,15 +8,15 @@ public sealed class TosuLiveReplaySourceTests
     public void LiveSnapshotIsProvisionalAndSuppressesPerColumn()
     {
         TosuLiveReplaySource source = new(capacity: 10);
-        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1000, Score: 10000, HitOffsetMs: -5));
-        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1100, Score: 20000, HitOffsetMs: 10));
-        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1200, Score: 30000, HitOffsetMs: -12));
+        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1000, Score: 10000, HitOffsetMs: -5.25));
+        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1100, Score: 20000, HitOffsetMs: 10.5));
+        source.RecordLiveFrame(new TosuLiveFrame(MapTimeMs: 1200, Score: 30000, HitOffsetMs: -12.75));
 
         ReplayLiveSnapshot snapshot = source.GetLiveSnapshot();
         Assert.Equal(ReplayAnalysisFidelity.Provisional, snapshot.Provenance.Fidelity);
         Assert.Equal(1200, snapshot.MapProgressMs);
         Assert.NotNull(snapshot.AggregateUr);
-        Assert.Equal(3, snapshot.RecentOffsets.Count);
+        Assert.Equal([-5.25, 10.5, -12.75], snapshot.RecentOffsets);
         Assert.Contains(snapshot.Diagnostics, item => item.Code == "replay.live.provisional");
         // No per-column metrics are produced live.
         Assert.DoesNotContain(snapshot.Diagnostics, item => item.Code == "replay.column.ur_high");

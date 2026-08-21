@@ -42,7 +42,7 @@ public sealed record ReplayOverlaySnapshot
     {
         get; init;
     }
-    public IReadOnlyList<int> RecentOffsets { get; init; } = Array.Empty<int>();
+    public IReadOnlyList<double> RecentOffsets { get; init; } = Array.Empty<double>();
     public bool IsProvisional
     {
         get; init;
@@ -52,7 +52,20 @@ public sealed record ReplayOverlaySnapshot
     public IReadOnlyList<ReplayColumnSnapshot> Columns { get; init; } = Array.Empty<ReplayColumnSnapshot>();
     public IReadOnlyList<ReplaySectionSnapshot> Sections { get; init; } = Array.Empty<ReplaySectionSnapshot>();
     public IReadOnlyList<ReplayInsightSnapshot> Insights { get; init; } = Array.Empty<ReplayInsightSnapshot>();
-    public bool HasData => MapProgressMs.HasValue || Score.HasValue || SampleCount.HasValue || Columns.Count > 0;
+    public bool HasData => MapProgressMs.HasValue
+        || Score.HasValue
+        || Accuracy.HasValue
+        || Ur.HasValue
+        || MeanMs.HasValue
+        || MedianMs.HasValue
+        || SdMs.HasValue
+        || EarlyCount.HasValue
+        || LateCount.HasValue
+        || SampleCount.HasValue
+        || RecentOffsets.Count > 0
+        || Columns.Count > 0
+        || Sections.Count > 0
+        || Insights.Count > 0;
 }
 
 public sealed record ReplayColumnSnapshot

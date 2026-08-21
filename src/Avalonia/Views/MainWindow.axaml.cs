@@ -1400,6 +1400,17 @@ public partial class MainWindow : Window
             var scripts = presentation.Build(settings, presentationOverlayMode);
             await Browser.InvokeScript(scripts.SetupScript);
             await Browser.InvokeScript(scripts.ObserverScript);
+            var presentationState = await Browser.InvokeScript(
+                "JSON.stringify({layout:document.documentElement.className,replayNode:!!document.getElementById('overlay-replay'),card:!!document.querySelector('.main-card')})");
+            AppLogger.Info(
+                "Overlay presentation state",
+                presentationState ?? "The WebView returned no presentation state.");
+            await Task.Delay(250);
+            var replayLayoutState = await Browser.InvokeScript(
+                "(function(){var n=document.getElementById('overlay-replay');if(!n)return 'replayNode=missing';var r=n.getBoundingClientRect(),s=getComputedStyle(n);return JSON.stringify({hidden:n.hidden,display:s.display,visibility:s.visibility,opacity:s.opacity,top:r.top,height:r.height,bottom:r.bottom,offsetParent:!!n.offsetParent,overflow:getComputedStyle(document.querySelector('.main-card')||document.body).overflow});})()");
+            AppLogger.Info(
+                "Overlay replay layout state",
+                replayLayoutState ?? "The WebView returned no replay layout state.");
             if (updateFullscreen && settings.FullscreenOverlayEnabled)
                 fullscreen.WriteRuntime(
                     settings,
@@ -1554,6 +1565,11 @@ public partial class MainWindow : Window
 
             var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
             await PushHeadlessSnapshotAsync(replaySnapshot, CancellationToken.None);
+            AppLogger.Info(
+                "Replay import",
+                $"file={file.Name}; outcome={result.Outcome}; metrics={result.Metrics.Count}; " +
+                $"replayData={replaySnapshot.Replay?.HasData.ToString() ?? "false"}; " +
+                $"columns={replaySnapshot.Replay?.Columns.Count.ToString() ?? "0"}");
             var diagnostic = result.Diagnostics.FirstOrDefault();
             if (result.Outcome == AnalysisOutcome.Success)
             {
