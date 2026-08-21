@@ -42,6 +42,8 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim presentationGate = new(1, 1);
     private readonly AnalyzerEngineCatalog analyzerEngineCatalog = new();
     private readonly AnalyzerEnginePackageDeployer analyzerEngineDeployer = new();
+    private readonly EffectiveAnalysisConfigurationStore effectiveAnalysisStore = new();
+    private EffectiveAnalysisConfiguration effectiveAnalysisConfiguration = EffectiveAnalysisConfigurationStore.CreateDefault();
     private MainViewModel? model;
     private CancellationTokenSource? previewPresentationCancellation;
     private CancellationTokenSource? overlayGameplayPollCancellation;
@@ -55,6 +57,10 @@ public partial class MainWindow : Window
     private string? lastHeadlessBeatmapKey;
     private AnalyzerEngineSupervisorState? lastSupervisorState;
     private DateTime lastOsuNotRunningLogUtc = DateTime.MinValue;
+    private WidgetAnalysisRunner? headlessWidgetRunner;
+    private WidgetAnalysisSceneRunner? headlessSceneRunner;
+    private AnalysisRunScope? headlessSceneScope;
+    private string? lastHeadlessSceneKey;
     private bool initialized;
     private bool overlayMode;
     private bool overlayWidgetSized;
@@ -149,6 +155,7 @@ public partial class MainWindow : Window
             _ = analyzerSupervisor.DisposeAsync().AsTask();
         }
 
+        DisposeHeadlessRunners();
         analyzerScriptHost?.DisposeAsync().AsTask().ConfigureAwait(false);
         model?.Dispose();
         base.OnClosed(e);
@@ -295,6 +302,10 @@ public partial class MainWindow : Window
             tosuBeatmapHttpClient?.Dispose();
             tosuBeatmapHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
             tosuBeatmapSource = new TosuBeatmapSource(tosuBeatmapHttpClient, TosuBaseUri);
+            effectiveAnalysisConfiguration = effectiveAnalysisStore.Load();
+            AppLogger.Info(
+                "Effective analysis configuration",
+                $"Loaded effective configuration: engine={effectiveAnalysisConfiguration.DefaultEngineId} algorithm={effectiveAnalysisConfiguration.DefaultAlgorithm} widgets={effectiveAnalysisConfiguration.Widgets.Length}");
 
             // Ensure the WebView has finished loading the analysis page before
             // bootstrapping the headless runtime. Injecting the runtime too early
@@ -302,7 +313,9 @@ public partial class MainWindow : Window
             // the subsequent navigation resets the bridge, producing engine.runtime_reset.
             await WaitForAnalysisWebViewReadyAsync();
 
-            var preferredEngineId = analyzerEngineCatalog.Available().FirstOrDefault()?.Id;
+            var preferredEngineId = string.IsNullOrWhiteSpace(effectiveAnalysisConfiguration.DefaultEngineId)
+                ? analyzerEngineCatalog.Available().FirstOrDefault()?.Id
+                : effectiveAnalysisConfiguration.DefaultEngineId;
             var state = await analyzerSupervisor.StartAsync(preferredEngineId);
             lastSupervisorState = state;
             if (state.IsFallback)
@@ -310,9 +323,11 @@ public partial class MainWindow : Window
                 AppLogger.Warning(
                     "Analyzer engine supervisor",
                     $"Headless engine fallback active: {state.Message} Diagnostics: {string.Join("; ", state.Diagnostics.Select(diagnostic => diagnostic.Code))}");
+                DisposeHeadlessRunners();
             }
             else if (state.IsReady)
             {
+                InitializeHeadlessRunners();
                 StartHeadlessBeatmapPolling();
             }
 
@@ -389,18 +404,160 @@ public partial class MainWindow : Window
         }
     }
 
+    private void InitializeHeadlessRunners()
+    {
+        DisposeHeadlessRunners();
+        var coordinator = analyzerSupervisor?.Coordinator;
+        if (coordinator is null)
+        {
+            AppLogger.Warning("Headless runners", "Cannot initialize widget runners: coordinator is not ready.");
+            return;
+        }
+
+        try
+        {
+            headlessWidgetRunner = new WidgetAnalysisRunner(coordinator);
+            headlessSceneRunner = new WidgetAnalysisSceneRunner(coordinator);
+            headlessSceneScope = new AnalysisRunScope("headless-scene");
+            headlessWidgetRunner.SnapshotComposed += HeadlessWidgetSnapshotComposed;
+            headlessSceneRunner.SnapshotComposed += HeadlessSceneSnapshotComposed;
+            AppLogger.Info("Headless runners", $"Initialized widget runners for {effectiveAnalysisConfiguration.Widgets.Length} widget(s).");
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Initializing headless runners", exception);
+        }
+    }
+
+    private void DisposeHeadlessRunners()
+    {
+        if (headlessWidgetRunner is not null)
+        {
+            headlessWidgetRunner.SnapshotComposed -= HeadlessWidgetSnapshotComposed;
+            headlessWidgetRunner.Dispose();
+            headlessWidgetRunner = null;
+        }
+
+        if (headlessSceneRunner is not null)
+        {
+            headlessSceneRunner.SnapshotComposed -= HeadlessSceneSnapshotComposed;
+            headlessSceneRunner.Dispose();
+            headlessSceneRunner = null;
+        }
+
+        headlessSceneScope?.Dispose();
+        headlessSceneScope = null;
+        lastHeadlessSceneKey = null;
+    }
+
+    private void HeadlessWidgetSnapshotComposed(ComposedWidgetSnapshot snapshot)
+    {
+        AppLogger.Info(
+            "Headless widget composition",
+            $"Widget '{snapshot.WidgetId}' composed with outcome {snapshot.Outcome} and {snapshot.Metrics.Count} metrics. Diagnostics: {string.Join(", ", snapshot.Diagnostics.Select(diagnostic => diagnostic.Code))}");
+    }
+
+    private void HeadlessSceneSnapshotComposed(WidgetAnalysisSceneSnapshot snapshot)
+    {
+        AppLogger.Info(
+            "Headless scene composition",
+            $"Scene '{snapshot.SceneId}' generation {snapshot.Generation} composed with {snapshot.OrderedSnapshots.Length} widget(s).");
+    }
+
+    private WidgetAnalysisSceneSpec? BuildHeadlessSceneSpec(TosuBeatmapSnapshot snapshot)
+    {
+        var descriptor = analyzerSupervisor?.ActiveDescriptor;
+        if (descriptor is null)
+        {
+            AppLogger.Warning("Headless composition", "Cannot build scene spec: no active analyzer descriptor.");
+            return null;
+        }
+
+        var widgets = new List<WidgetAnalysisSpec>();
+        foreach (var effectiveWidget in effectiveAnalysisConfiguration.Widgets)
+        {
+            var sources = new List<AnalysisSourceSpec>();
+            foreach (var effectiveSource in effectiveWidget.Sources)
+            {
+                if (!string.Equals(effectiveSource.EngineId, descriptor.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    AppLogger.Warning(
+                        "Headless composition",
+                        $"Source '{effectiveSource.SourceId}' requests engine '{effectiveSource.EngineId}' but active is '{descriptor.Id}'. Skipping source.");
+                    continue;
+                }
+
+                var configuration = new AnalysisConfiguration(
+                    effectiveSource.RequestedAlgorithm,
+                    effectiveSource.ConfigurationVersion,
+                    effectiveSource.Options);
+                var request = new AnalysisRequest(
+                    descriptor.Id,
+                    snapshot.Identity,
+                    snapshot.RawBeatmap,
+                    configuration,
+                    effectiveWidget.WidgetId,
+                    snapshot.Rate,
+                    snapshot.Mods);
+                sources.Add(new AnalysisSourceSpec(effectiveSource.SourceId, request, descriptor));
+            }
+
+            if (sources.Count == 0)
+            {
+                AppLogger.Warning("Headless composition", $"Widget '{effectiveWidget.WidgetId}' has no usable sources for active engine '{descriptor.Id}'.");
+                continue;
+            }
+
+            var bindings = effectiveWidget.Bindings.Select(binding =>
+                new WidgetMetricBinding(binding.TargetMetricId, binding.Candidates, binding.AllowsNull));
+            try
+            {
+                widgets.Add(new WidgetAnalysisSpec(effectiveWidget.WidgetId, sources, bindings));
+            }
+            catch (Exception exception)
+            {
+                AppLogger.Warning("Headless composition", $"Widget '{effectiveWidget.WidgetId}' has invalid bindings: {exception.Message}", exception);
+            }
+        }
+
+        if (widgets.Count == 0)
+        {
+            AppLogger.Warning("Headless composition", "No widgets could be built from effective configuration.");
+            return null;
+        }
+
+        try
+        {
+            return new WidgetAnalysisSceneSpec("headless-scene", widgets);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Warning("Headless composition", $"Could not build scene spec: {exception.Message}", exception);
+            return null;
+        }
+    }
+
     private void AnalyzerSupervisor_StateChanged(object? sender, AnalyzerEngineSupervisorState state)
     {
         Dispatcher.UIThread.Post(() =>
         {
             lastSupervisorState = state;
             UpdateHeadlessStatusUi(state);
-            if (state.IsReady && headlessBeatmapPollTimer.IsEnabled == false)
+            if (state.IsReady)
             {
-                StartHeadlessBeatmapPolling();
+                if (headlessWidgetRunner is null || headlessSceneRunner is null)
+                {
+                    InitializeHeadlessRunners();
+                }
+
+                if (headlessBeatmapPollTimer.IsEnabled == false)
+                {
+                    StartHeadlessBeatmapPolling();
+                }
             }
             else if (state.IsFallback)
             {
+                DisposeHeadlessRunners();
                 StopHeadlessBeatmapPolling();
             }
         });
@@ -533,15 +690,98 @@ public partial class MainWindow : Window
             }
 
             var key = snapshot.Identity.StableKey + "|" + snapshot.Rate.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", snapshot.Mods) + "|" + snapshot.RawBeatmap.Length;
-            if (string.Equals(key, lastHeadlessBeatmapKey, StringComparison.Ordinal))
+            var effectiveKey = effectiveAnalysisConfiguration.ConfigurationVersion + "|" + effectiveAnalysisConfiguration.DefaultEngineId + "|" + effectiveAnalysisConfiguration.DefaultAlgorithm + "|" + effectiveAnalysisConfiguration.Widgets.Length;
+            var combinedKey = key + "|" + effectiveKey;
+            var sceneKey = snapshot.Identity.StableKey + "|" + snapshot.Rate.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", snapshot.Mods) + "|" + effectiveKey;
+            if (string.Equals(combinedKey, lastHeadlessBeatmapKey, StringComparison.Ordinal) &&
+                string.Equals(sceneKey, lastHeadlessSceneKey, StringComparison.Ordinal))
             {
                 return;
             }
 
-            lastHeadlessBeatmapKey = key;
+            // Scene generation is invalidated when map/rate/mods or effective config changes.
+            var isNewSceneGeneration = !string.Equals(sceneKey, lastHeadlessSceneKey, StringComparison.Ordinal);
+            if (isNewSceneGeneration)
+            {
+                AppLogger.Info("Headless scene", $"Effective scene generation invalidated: newKey={sceneKey}");
+            }
+
+            lastHeadlessBeatmapKey = combinedKey;
+            lastHeadlessSceneKey = sceneKey;
             AppLogger.Info(
                 "Headless beatmap poll",
-                $"New beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} rate={snapshot.Rate} mods=[{string.Join(",", snapshot.Mods)}]");
+                $"New beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} rate={snapshot.Rate} mods=[{string.Join(",", snapshot.Mods)}] effective={effectiveKey}");
+
+            // Prefer composed widget/scene execution so shared analyzer results are de-duplicated
+            // and rate/mods are execution dimensions per source, not per beatmap generation.
+            if (headlessSceneRunner is not null && headlessWidgetRunner is not null)
+            {
+                var sceneSpec = BuildHeadlessSceneSpec(snapshot);
+                if (sceneSpec is not null)
+                {
+                    try
+                    {
+                        var sceneSnapshot = await headlessSceneRunner.RunAsync(sceneSpec, cancellationToken);
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            foreach (var widgetSnapshot in sceneSnapshot.OrderedSnapshots)
+                            {
+                                var outcomeText = widgetSnapshot.Outcome switch
+                                {
+                                    AnalysisOutcome.Success => "Success",
+                                    AnalysisOutcome.Partial => "Partial",
+                                    AnalysisOutcome.Failed => "Failed",
+                                    AnalysisOutcome.Cancelled => "Cancelled",
+                                    _ => widgetSnapshot.Outcome.ToString()
+                                };
+                                var metricsSummary = string.Join(", ", widgetSnapshot.Metrics.Take(4).Select(metric => metric.Key + "=" + metric.Value.Metric.Value.ToString()));
+                                var diagnosticsSummary = widgetSnapshot.Diagnostics.Length == 0
+                                    ? string.Empty
+                                    : $" Diagnostics: {string.Join("; ", widgetSnapshot.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message))}";
+                                AppLogger.Info(
+                                    "Headless scene result",
+                                    $"Widget '{widgetSnapshot.WidgetId}' outcome={outcomeText} metrics=[{metricsSummary}]{diagnosticsSummary}");
+                            }
+
+                            var first = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
+                            if (first is not null)
+                            {
+                                if (first.Outcome == AnalysisOutcome.Partial)
+                                {
+                                    var diag = first.Diagnostics.Length == 0 ? string.Empty : $" {string.Join("; ", first.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code))}";
+                                    model?.SetStatus(L("status.headless_partial") + $" {first.Metrics.Values.FirstOrDefault()?.Provenance.ActualAlgorithm ?? snapshot.Metadata.Version} partial" + diag);
+                                }
+                                else if (first.Outcome == AnalysisOutcome.Success)
+                                {
+                                    var star = first.Metrics.TryGetValue("difficulty.star", out var metric) ? metric.Metric.Value.ToString() ?? "n/a" : "n/a";
+                                    var algo = first.Metrics.Values.FirstOrDefault()?.Provenance.ActualAlgorithm ?? snapshot.Metadata.Version;
+                                    model?.SetStatus(L("status.headless_success") + $" {snapshot.Metadata.Title} [{snapshot.Metadata.Version}] {algo} star={star}");
+                                }
+                                else if (first.Outcome == AnalysisOutcome.Failed)
+                                {
+                                    var diag = first.Diagnostics.Length == 0 ? string.Empty : $" {string.Join("; ", first.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code))}";
+                                    model?.SetStatus(L("status.headless_failed") + diag + " (DOM fallback)");
+                                }
+                            }
+                        });
+
+                        return;
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        AppLogger.Info("Headless scene", $"Scene generation for {sceneKey} was superseded by a newer map/config generation.");
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        AppLogger.Warning("Headless scene composition", $"Scene composition failed for {sceneKey}: {exception.Message}", exception);
+                    }
+                }
+            }
 
             var result = await analyzerSupervisor.AnalyzeAsync(snapshot, cancellationToken: cancellationToken);
             if (result is null)
@@ -743,6 +983,7 @@ public partial class MainWindow : Window
         BrandText.Text = L("app.brand");
         AnalysisButton.Content = L("button.map_analysis");
         AppearanceButton.Content = L("button.appearance");
+        MappingButton.Content = L("button.mapping");
         OverlayButton.Content = L("button.overlay");
         DashboardButton.Content = L("button.tosu_panel");
         SetComponentPreparationState(componentPreparationFailed);
@@ -800,6 +1041,7 @@ public partial class MainWindow : Window
     {
         AnalysisButton.IsEnabled = enabled;
         AppearanceButton.IsEnabled = enabled;
+        MappingButton.IsEnabled = enabled;
         PreviewScaleDownButton.IsEnabled = enabled;
         PreviewScaleUpButton.IsEnabled = enabled;
         OverlayButton.IsEnabled = enabled;
@@ -1305,6 +1547,37 @@ public partial class MainWindow : Window
         previewPresentationCancellation?.Cancel();
         previewPresentationCancellation?.Dispose();
         previewPresentationCancellation = null;
+    }
+
+    private async void Mapping_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new AnalysisMappingDialog();
+            var accepted = await dialog.ShowDialog<bool>(this);
+            if (!accepted)
+            {
+                return;
+            }
+
+            effectiveAnalysisConfiguration = effectiveAnalysisStore.Load();
+            AppLogger.Info(
+                "Effective analysis mapping",
+                $"Reloaded mapping: {effectiveAnalysisConfiguration.Widgets.Length} widget(s), engine={effectiveAnalysisConfiguration.DefaultEngineId}, algorithm={effectiveAnalysisConfiguration.DefaultAlgorithm}");
+            InitializeHeadlessRunners();
+            lastHeadlessSceneKey = null;
+            lastHeadlessBeatmapKey = null;
+            if (analyzerSupervisor?.IsReady == true)
+            {
+                _ = PollHeadlessBeatmapAsync();
+            }
+
+            model?.SetStatus(L("mapping.title") + ": " + effectiveAnalysisConfiguration.Widgets.Length + " widget(s)");
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Opening analysis mapping dialog", exception);
+        }
     }
 
     private async void Restart_Click(object? sender, RoutedEventArgs e)

@@ -12,11 +12,11 @@ This file tracks the remaining work after introducing the analyzer-engine founda
 
 ## Multi-analyzer and multi-widget configuration
 
-- [ ] Add settings for selecting more than one analyzer source for a widget.
-- [ ] Add settings for composing multiple widgets from shared analyzer results.
-- [ ] Add a visual mapping editor for connecting semantic metrics to widget fields.
-- [ ] Persist effective analysis configuration separately from visual preset/profile configuration.
-- [ ] Refresh and invalidate scene generations when the map, rate, mods, or selected sources change.
+- [x] Add settings for selecting more than one analyzer source for a widget (`EffectiveAnalysisSource` list per `EffectiveWidgetSpec`).
+- [x] Add settings for composing multiple widgets from shared analyzer results (`EffectiveAnalysisConfiguration.Widgets` → `WidgetAnalysisSceneSpec` via `WidgetAnalysisSceneRunner`).
+- [x] Add a visual mapping editor for connecting semantic metrics to widget fields (`AnalysisMappingDialog.axaml` — JSON editor with file-open, validation, and save to `analysis-configuration.json`).
+- [x] Persist effective analysis configuration separately from visual preset/profile configuration (`EffectiveAnalysisConfigurationStore.cs` → `%LOCALAPPDATA%\ManiaMapAnalyzerOverlay\analysis-configuration.json`).
+- [x] Refresh and invalidate scene generations when the map, rate, mods, or selected sources change (`PollHeadlessBeatmapAsync` sceneKey + `AnalysisRunScope` generation).
 
 ## Rendering and presets
 

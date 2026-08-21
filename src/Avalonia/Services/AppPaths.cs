@@ -20,6 +20,7 @@ public static class AppPaths
     public static string LegacyTosuDirectory => Path.Combine(BaseDirectory, "tosu");
     public static string TosuEnvironmentPath => Path.Combine(TosuDirectory, "tosu.env");
     public static string SettingsPath => Path.Combine(DataDirectory, "launcher-settings.json");
+    public static string EffectiveAnalysisConfigurationPath => Path.Combine(DataDirectory, "analysis-configuration.json");
     public static string InstallStatePath => Path.Combine(DataDirectory, "install-state.json");
     public static string CustomCssPath => Path.Combine(DataDirectory, "overlay-custom.css");
     public static string LegacyCustomCssPath => Path.Combine(BaseDirectory, "overlay-custom.css");

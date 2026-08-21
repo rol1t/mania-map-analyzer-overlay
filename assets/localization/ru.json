@@ -85,5 +85,10 @@
   "status.headless_partial": "Headless частично:",
   "status.headless_failed": "Headless ошибка:",
   "status.headless_osu_not_running": "Клиент osu! не запущен",
-  "status.headless_no_beatmap": "Карта не выбрана"
+  "status.headless_no_beatmap": "Карта не выбрана",
+  "button.mapping": "Привязка анализа",
+  "mapping.title": "Привязка анализа",
+  "mapping.hint": "Свяжите семантические метрики с полями виджета. Настройки сохраняются отдельно от визуальных пресетов в analysis-configuration.json. Для виджета нужен минимум один источник и одна привязка. Используйте sourceId/metricId из capabilities движка.",
+  "mapping.open_file": "Открыть файл",
+  "mapping.save_error": "Не удалось сохранить привязку"
 }

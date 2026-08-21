@@ -126,6 +126,17 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
         }
     }
 
+    public AnalyzerExecutionCoordinator? Coordinator
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _coordinator;
+            }
+        }
+    }
+
     public async Task<AnalyzerEngineSupervisorState> StartAsync(
         string? preferredEngineId = null,
         CancellationToken cancellationToken = default)

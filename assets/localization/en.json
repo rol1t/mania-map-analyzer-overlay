@@ -85,5 +85,10 @@
   "status.headless_partial": "Headless partial:",
   "status.headless_failed": "Headless failed:",
   "status.headless_osu_not_running": "osu! client is not running",
-  "status.headless_no_beatmap": "No beatmap selected"
+  "status.headless_no_beatmap": "No beatmap selected",
+  "button.mapping": "Analysis mapping",
+  "mapping.title": "Analysis mapping",
+  "mapping.hint": "Map semantic metrics to widget fields. Editing is persisted separately from visual presets in analysis-configuration.json. At least one source and one binding per widget is required. Use sourceId/metricId from the analyzer engine capabilities.",
+  "mapping.open_file": "Open file",
+  "mapping.save_error": "Could not save mapping"
 }
