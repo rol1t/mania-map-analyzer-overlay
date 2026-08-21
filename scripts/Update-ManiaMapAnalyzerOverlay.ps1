@@ -15,7 +15,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 if ($Quiet) { $ProgressPreference = 'SilentlyContinue' }
 
-$updaterVersion = '2.2.0'
+$updaterVersion = '2.3.0'
 $githubHeaders = @{
     'User-Agent' = "ManiaMapAnalyzerOverlayUpdater/$updaterVersion"
     'Accept' = 'application/vnd.github+json'

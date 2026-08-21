@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "${script_dir}/.." && pwd -P)"
-version="2.2.0"
+version="2.3.0"
 runtime_identifier="linux-x64"
 payload_directory="artifacts/payload"
 
@@ -14,7 +14,7 @@ usage() {
 Usage: scripts/package.sh [options]
 
 Options:
-  -v, --version <version>  Release version (default: 2.2.0)
+  -v, --version <version>  Release version (default: 2.3.0)
   -r, --runtime <rid>      Linux runtime identifier (default: linux-x64)
   -p, --payload <path>     Payload directory (default: artifacts/payload)
   -h, --help               Show this help

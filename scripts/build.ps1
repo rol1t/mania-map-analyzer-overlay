@@ -129,5 +129,5 @@ Copy-Item (Join-Path $repoRoot "LICENSE") $outputPath -Force
 Copy-Item (Join-Path $repoRoot "LICENSES") $outputPath -Recurse -Force
 Copy-Item (Join-Path $repoRoot "docs") $outputPath -Recurse -Force
 
-Write-Host "Mania Map Analyzer Overlay 2.2.0 built at: $outputPath"
+Write-Host "Mania Map Analyzer Overlay 2.3.0 built at: $outputPath"
 Write-Host "Launch the application executable; component setup runs inside the GUI."

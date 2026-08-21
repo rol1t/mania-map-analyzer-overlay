@@ -12,10 +12,10 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
-            package: Mania-Map-Analyzer-Overlay-2.2.0-win-x64.zip
+            package: Mania-Map-Analyzer-Overlay-2.3.0-win-x64.zip
           - os: ubuntu-latest
             rid: linux-x64
-            package: Mania-Map-Analyzer-Overlay-2.2.0-linux-x64.tar.gz
+            package: Mania-Map-Analyzer-Overlay-2.3.0-linux-x64.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,13 +38,13 @@ jobs:
       - name: Package application (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\scripts\package-installer.ps1 -Version 2.2.0 -RuntimeIdentifier ${{ matrix.rid }}
+        run: .\scripts\package-installer.ps1 -Version 2.3.0 -RuntimeIdentifier ${{ matrix.rid }}
       - name: Package application (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: ./scripts/package.sh --version 2.2.0 --runtime "${{ matrix.rid }}"
+        run: ./scripts/package.sh --version 2.3.0 --runtime "${{ matrix.rid }}"
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: Mania-Map-Analyzer-Overlay-2.2.0-${{ matrix.rid }}
+          name: Mania-Map-Analyzer-Overlay-2.3.0-${{ matrix.rid }}
           path: artifacts/${{ matrix.package }}

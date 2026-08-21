@@ -26,7 +26,7 @@ public sealed class UpdateService : IDisposable
     private const string LauncherRepository = "rol1t/mania-map-analyzer-overlay";
     private const string TosuRepository = "tosuapp/tosu";
     private const string AddonRepository = "LeoBlackMT/osumania_map_analyser";
-    private const string UserAgent = "ManiaMapAnalyzerOverlay/2.2.0";
+    private const string UserAgent = "ManiaMapAnalyzerOverlay/2.3.0";
 
     private readonly HttpClient httpClient;
     private readonly JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web);
@@ -35,7 +35,7 @@ public sealed class UpdateService : IDisposable
     public UpdateService()
     {
         httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
-        httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", "2.2.0"));
+        httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", "2.3.0"));
         httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
     }
 

@@ -2,7 +2,7 @@
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
 ![Avalonia](https://img.shields.io/badge/UI-Avalonia-8b5cf6)
-![Version](https://img.shields.io/badge/version-2.2.0-ff4f9b)
+![Version](https://img.shields.io/badge/version-2.3.0-ff4f9b)
 ![License](https://img.shields.io/badge/license-MIT-4cbe89)
 
 **Mania Map Analyzer Overlay** is a lightweight Avalonia desktop launcher for osu!mania. It starts and supervises [tosu](https://github.com/tosuapp/tosu), displays live beatmap analysis, and provides a customizable overlay without requiring the user to start a console script.
@@ -324,14 +324,14 @@ Build a Windows release package with PowerShell:
 
 ```powershell
 .\scripts\build.ps1
-.\scripts\package-installer.ps1 -Version 2.2.0 -RuntimeIdentifier win-x64
+.\scripts\package-installer.ps1 -Version 2.3.0 -RuntimeIdentifier win-x64
 ```
 
 Build and package Linux with Bash:
 
 ```bash
 ./scripts/build.sh --runtime linux-x64 --output artifacts/payload
-./scripts/package.sh --version 2.2.0 --runtime linux-x64
+./scripts/package.sh --version 2.3.0 --runtime linux-x64
 ```
 
 Runtime setup and updates are implemented in C#. The PowerShell and Bash files under `scripts/` are developer and CI packaging tools, not user launchers.

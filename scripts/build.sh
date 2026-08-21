@@ -142,5 +142,5 @@ if find "$output_path" -type f \( -name '*.cmd' -o -name '*.ps1' \) -print -quit
     die "Runtime package must not contain .cmd or .ps1 files."
 fi
 
-printf 'Mania Map Analyzer Overlay 2.2.0 built at: %s\n' "$output_path"
+printf 'Mania Map Analyzer Overlay 2.3.0 built at: %s\n' "$output_path"
 printf 'Launch the application executable; component setup runs inside the GUI.\n'
