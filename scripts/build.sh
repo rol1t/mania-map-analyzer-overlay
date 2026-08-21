@@ -102,6 +102,8 @@ mkdir -p -- "$output_path/Assets/overlay"
 cp -R -- "$repo_root/assets/overlay/." "$output_path/Assets/overlay/"
 mkdir -p -- "$output_path/Assets/analyzers"
 cp -R -- "$repo_root/assets/analyzers/." "$output_path/Assets/analyzers/"
+mkdir -p -- "$output_path/Assets/analyzer-engines"
+cp -R -- "$repo_root/assets/analyzer-engines/." "$output_path/Assets/analyzer-engines/"
 mkdir -p -- "$output_path/Assets/localization"
 cp -R -- "$repo_root/assets/localization/." "$output_path/Assets/localization/"
 for asset in \
@@ -120,6 +122,12 @@ for asset in \
     "Assets/analyzers/mania-map-analyser/manifest.json" \
     "Assets/analyzers/mania-map-analyser/adapter.js"; do
     [[ -f "$output_path/$asset" ]] || die "Published package is missing analyzer adapter resource: $asset"
+done
+for asset in \
+    "Assets/analyzer-engines/mania-map-analyser/manifest.json" \
+    "Assets/analyzer-engines/mania-map-analyser/runtime.mjs" \
+    "Assets/analyzer-engines/mania-map-analyser/worker.mjs"; do
+    [[ -f "$output_path/$asset" ]] || die "Published package is missing analyzer engine resource: $asset"
 done
 cp -- "$repo_root/README.md" "$output_path/"
 cp -- "$repo_root/LICENSE" "$output_path/"

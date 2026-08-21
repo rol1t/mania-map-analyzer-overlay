@@ -1,0 +1,73 @@
+{
+  "protocol": "mania-map-analyser.headless",
+  "protocolVersion": 1,
+  "type": "analysis.result",
+  "correlationId": "fixture-analysis-001",
+  "status": "ok",
+  "requestedAlgorithm": "Mixed",
+  "actualAlgorithm": "Roxy",
+  "analysis": {
+    "requestedAlgorithm": "Mixed",
+    "actualAlgorithm": "Roxy",
+    "availableMetricIds": [
+      "algorithm.requested",
+      "algorithm.actual",
+      "difficulty.star",
+      "difficulty.lnPercent",
+      "difficulty.keys",
+      "dan.rc.label",
+      "dan.ln.label",
+      "skills.stream"
+    ],
+    "metrics": {
+      "algorithm.requested": {
+        "id": "algorithm.requested",
+        "value": "Mixed",
+        "unit": "algorithm"
+      },
+      "algorithm.actual": {
+        "id": "algorithm.actual",
+        "value": "Roxy",
+        "unit": "algorithm"
+      },
+      "difficulty.star": {
+        "id": "difficulty.star",
+        "value": 5.17,
+        "unit": "SR"
+      },
+      "difficulty.lnPercent": {
+        "id": "difficulty.lnPercent",
+        "value": 51.4,
+        "unit": "%"
+      },
+      "difficulty.keys": {
+        "id": "difficulty.keys",
+        "value": 4,
+        "unit": "keys"
+      },
+      "dan.rc.label": {
+        "id": "dan.rc.label",
+        "value": "Reform 4 mid/high",
+        "unit": "label"
+      },
+      "dan.ln.label": {
+        "id": "dan.ln.label",
+        "value": "LN 6 mid/high",
+        "unit": "label"
+      },
+      "skills.stream": {
+        "id": "skills.stream",
+        "value": 19,
+        "unit": "MSD"
+      }
+    },
+    "summary": {
+      "metadata": {},
+      "lnRatio": 0.514,
+      "columnCount": 4
+    },
+    "diagnostics": []
+  },
+  "diagnostics": [],
+  "error": null
+}

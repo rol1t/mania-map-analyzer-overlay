@@ -21,6 +21,7 @@
     <None Include="..\..\assets\overlay-custom.css" Link="Assets\overlay-custom.css" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\assets\overlay\**" LinkBase="Assets\overlay" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\assets\analyzers\**" LinkBase="Assets\analyzers" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\assets\analyzer-engines\**" LinkBase="Assets\analyzer-engines" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\assets\localization\**" LinkBase="Assets\localization" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 

@@ -1,0 +1,80 @@
+{
+  "manifestSchemaVersion": 1,
+  "kind": "analyzer-engine",
+  "id": "mania-map-analyser-headless",
+  "name": "ManiaMapAnalyser headless runtime",
+  "version": "1.0.0",
+  "protocol": "mania-map-analyser.headless",
+  "protocolVersion": 1,
+  "runtime": "runtime.mjs",
+  "worker": "worker.mjs",
+  "defaultPipelinePath": "js/pipeline/runAnalysisPipeline.js",
+  "defaultCompanellaPath": "js/estimator/companellaEstimator.js",
+  "defaultMixedEstimatorPath": "js/estimator/mixedEstimator.js",
+  "pipelineExport": "runAnalysisPipeline",
+  "companellaExport": "classifyCompanellaDifficulty",
+  "mixedCompanellaExport": "applyCompanellaToMixedResult",
+  "upstream": {
+    "name": "ManiaMapAnalyser",
+    "repository": "https://github.com/LeoBlackMT/osumania_map_analyser",
+    "license": "MIT",
+    "integration": "dynamic-import",
+    "supportedVersions": [
+      "2.0.0"
+    ]
+  },
+  "capabilities": {
+    "algorithms": [
+      "Sunny",
+      "Daniel",
+      "Azusa",
+      "Roxy",
+      "Mixed"
+    ],
+    "optionalAlgorithms": {
+      "Companella": {
+        "requiresRuntimeProbe": true,
+        "requiresExports": [
+          "classifyCompanellaDifficulty",
+          "applyCompanellaToMixedResult"
+        ]
+      }
+    },
+    "semanticMetricIds": [
+      "algorithm.requested",
+      "algorithm.actual",
+      "difficulty.star",
+      "difficulty.numeric",
+      "difficulty.label",
+      "difficulty.lnPercent",
+      "difficulty.keys",
+      "difficulty.sixKConst",
+      "dan.rc.label",
+      "dan.rc.numeric",
+      "dan.rc.variant",
+      "dan.rc.confidence",
+      "dan.ln.label",
+      "skills.overall",
+      "skills.stream",
+      "skills.jumpstream",
+      "skills.handstream",
+      "skills.stamina",
+      "skills.jackspeed",
+      "skills.chordjack",
+      "skills.technical",
+      "interlude.star",
+      "pattern.category",
+      "pattern.lnPercent",
+      "pattern.svAmount",
+      "pattern.modeTag",
+      "pattern.clusters"
+    ]
+  },
+  "notes": [
+    "The official MMA source files are resolved from the configured baseUrl; no MMA source code is bundled in this package.",
+    "Companella ONNX post-processing is loaded separately when its classifier export is available.",
+    "Mixed results routed to Companella are finalized through the upstream applyCompanellaToMixedResult export.",
+    "Requests with different correlation IDs run concurrently unless the host explicitly cancels them or supplies a newer generation for the same scope.",
+    "A result may be partial when an optional post-processing stage is unavailable. Inspect diagnostics before rendering dependent metrics."
+  ]
+}

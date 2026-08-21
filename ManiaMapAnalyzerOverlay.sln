@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.Cor
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.Core.Tests", "tests\Core.Tests\ManiaMapAnalyzerOverlay.Core.Tests.csproj", "{F6460349-0989-433C-A9CF-04B7A6147000}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.Avalonia.Tests", "tests\Avalonia.Tests\ManiaMapAnalyzerOverlay.Avalonia.Tests.csproj", "{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,11 +42,16 @@ Global
 		{F6460349-0989-433C-A9CF-04B7A6147000}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F6460349-0989-433C-A9CF-04B7A6147000}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F6460349-0989-433C-A9CF-04B7A6147000}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2D7D546-7045-44DC-A65D-43B55D720CA0} = {FDF0992B-4AD7-4248-B4C0-C44DB2ADD3E8}
 		{D63787E5-299A-4DA1-9DEA-6608E23F69F5} = {780C9DF2-548B-486C-8517-64069139AEC1}
 		{AAAF1AD3-6A91-4EE7-BC61-B31B6B2D3357} = {780C9DF2-548B-486C-8517-64069139AEC1}
 		{F6460349-0989-433C-A9CF-04B7A6147000} = {780C9DF2-548B-486C-8517-64069139AEC1}
+		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA} = {780C9DF2-548B-486C-8517-64069139AEC1}
 	EndGlobalSection
 EndGlobal

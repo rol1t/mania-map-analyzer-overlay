@@ -12,3 +12,7 @@ packages/
 install-state.json
 tosu/logs/
 tosu/.cache/
+
+# Avalonia build-service diagnostics are generated locally by the desktop
+# tooling and must not be included in source distributions.
+**/AvaloniaUI/BuildServices/

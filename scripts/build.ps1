@@ -73,13 +73,17 @@ $overlayAssetsSource = Join-Path $repoRoot "assets\overlay"
 $overlayAssetsDestination = Join-Path $outputPath "Assets\overlay"
 $analyzerAssetsSource = Join-Path $repoRoot "assets\analyzers"
 $analyzerAssetsDestination = Join-Path $outputPath "Assets\analyzers"
+$analyzerEngineAssetsSource = Join-Path $repoRoot "assets\analyzer-engines"
+$analyzerEngineAssetsDestination = Join-Path $outputPath "Assets\analyzer-engines"
 $localizationAssetsSource = Join-Path $repoRoot "assets\localization"
 $localizationAssetsDestination = Join-Path $outputPath "Assets\localization"
 New-Item -ItemType Directory -Force -Path $overlayAssetsDestination | Out-Null
 New-Item -ItemType Directory -Force -Path $analyzerAssetsDestination | Out-Null
+New-Item -ItemType Directory -Force -Path $analyzerEngineAssetsDestination | Out-Null
 New-Item -ItemType Directory -Force -Path $localizationAssetsDestination | Out-Null
 Copy-Item (Join-Path $overlayAssetsSource "*") $overlayAssetsDestination -Recurse -Force
 Copy-Item (Join-Path $analyzerAssetsSource "*") $analyzerAssetsDestination -Recurse -Force
+Copy-Item (Join-Path $analyzerEngineAssetsSource "*") $analyzerEngineAssetsDestination -Recurse -Force
 Copy-Item (Join-Path $localizationAssetsSource "*") $localizationAssetsDestination -Recurse -Force
 $requiredOverlayAssets = @(
     "Assets\overlay\presets\default\manifest.json",
@@ -98,6 +102,16 @@ $requiredAnalyzerAssets = @(
 foreach ($asset in $requiredAnalyzerAssets) {
     if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
         throw "Published package is missing analyzer adapter resource: $asset"
+    }
+}
+$requiredAnalyzerEngineAssets = @(
+    "Assets\analyzer-engines\mania-map-analyser\manifest.json",
+    "Assets\analyzer-engines\mania-map-analyser\runtime.mjs",
+    "Assets\analyzer-engines\mania-map-analyser\worker.mjs"
+)
+foreach ($asset in $requiredAnalyzerEngineAssets) {
+    if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
+        throw "Published package is missing analyzer engine resource: $asset"
     }
 }
 $requiredLocalizationAssets = @(

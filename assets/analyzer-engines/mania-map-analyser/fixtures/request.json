@@ -1,0 +1,17 @@
+{
+  "protocol": "mania-map-analyser.headless",
+  "protocolVersion": 1,
+  "type": "analysis.request",
+  "correlationId": "fixture-analysis-001",
+  "rawText": "osu file text is supplied by the host",
+  "requestedAlgorithm": "Mixed",
+  "rate": 1,
+  "speedRate": 1,
+  "options": {
+    "speedRate": 1,
+    "withEtterna": true,
+    "withInterlude": true,
+    "withPattern": true
+  },
+  "includeRawResult": false
+}
