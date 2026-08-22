@@ -128,7 +128,7 @@ public sealed class OverlayPresentationService
             hostSelector,
             resizeHandleCss
         });
-        return "window.__overlayHostConfig=" + configuration + ";" + Environment.NewLine +
+        return "window._overlayHostConfig=" + configuration + ";" + Environment.NewLine +
                hostScript + Environment.NewLine +
                rendererScript + Environment.NewLine +
                adapterScript;
