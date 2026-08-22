@@ -86,7 +86,10 @@ public sealed class AnalyzerEngineCatalogTests : IDisposable
     [Fact]
     public void RejectsIntermediateDirectorySymlinkEscapeWhenSupported()
     {
-        var outsideDirectory = Path.Combine(_rootDirectory, "outside");
+        var outsideDirectory = Path.Combine(
+            Path.GetDirectoryName(_rootDirectory)!,
+            Path.GetFileName(_rootDirectory) + "-outside");
+        _additionalCleanupDirectories.Add(outsideDirectory);
         Directory.CreateDirectory(outsideDirectory);
         File.WriteAllText(Path.Combine(outsideDirectory, "runtime.mjs"), "outside runtime");
 

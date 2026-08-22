@@ -8,7 +8,7 @@ public static class ReplayModPolicy
     // Only explicitly unsupported mods force Unsupported fidelity; unknown mods are passed
     // through so a future fixture can add coverage without a code change.
 
-    private static readonly HashSet<string> UnsupportedMods = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> _unsupportedMods = new(StringComparer.OrdinalIgnoreCase)
     {
         "RD", "MR", "AP", "SO"
     };
@@ -26,7 +26,7 @@ public static class ReplayModPolicy
         }
 
         List<string> modList = mods.Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item.Trim().ToUpperInvariant()).ToList();
-        string unsupported = modList.FirstOrDefault(item => UnsupportedMods.Contains(item)) ?? string.Empty;
+        string unsupported = modList.FirstOrDefault(item => _unsupportedMods.Contains(item)) ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(unsupported))
         {
             return new ReplayDiagnostic(

@@ -12,12 +12,12 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Views;
 
 public partial class AppearanceDialog : Window
 {
-    private readonly OverlayPresetCatalog presets = new();
-    private readonly AnalyzerAdapterCatalog analyzers = new();
-    private bool resourcesAvailable;
-    private bool analyzerResourcesAvailable;
-    private bool closing;
-    private LauncherSettings? previewBaseSettings;
+    private readonly OverlayPresetCatalog _presets = new();
+    private readonly AnalyzerAdapterCatalog _analyzers = new();
+    private bool _resourcesAvailable;
+    private bool _analyzerResourcesAvailable;
+    private bool _closing;
+    private LauncherSettings? _previewBaseSettings;
     public bool OpenAnalyzerSettings
     {
         get; private set;
@@ -28,7 +28,7 @@ public partial class AppearanceDialog : Window
 
     public AppearanceDialog(LauncherSettings settings) : this()
     {
-        previewBaseSettings = settings.Clone();
+        _previewBaseSettings = settings.Clone();
         Title = L("appearance.title");
         HeadingText.Text = Title;
         LayoutLabel.Text = L("appearance.layout");
@@ -44,13 +44,16 @@ public partial class AppearanceDialog : Window
         AddLayoutOption("companella", "appearance.layout_companella");
         AddLayoutOption("companella-replay", "appearance.layout_companella_replay");
         AddLayoutOption("custom", "appearance.layout_custom");
-        var definitions = presets.List();
-        resourcesAvailable = definitions.Count > 0;
+        var definitions = _presets.List();
+        _resourcesAvailable = definitions.Count > 0;
         foreach (var preset in definitions)
         {
             if (LayoutBox.Items.Cast<ComboBoxItem>().Any(item =>
                     string.Equals(item.Tag?.ToString(), preset.Id, StringComparison.OrdinalIgnoreCase)))
+            {
                 continue;
+            }
+
             var item = new ComboBoxItem
             {
                 Tag = preset.Id,
@@ -59,7 +62,7 @@ public partial class AppearanceDialog : Window
             LayoutBox.Items.Add(item);
         }
 
-        if (!resourcesAvailable)
+        if (!_resourcesAvailable)
         {
             LayoutBox.Items.Add(new ComboBoxItem
             {
@@ -77,8 +80,8 @@ public partial class AppearanceDialog : Window
         LayoutBox.SelectedItem = selected ?? LayoutBox.Items[0];
 
         AnalyzerBox.Items.Clear();
-        var analyzerPackages = analyzers.List();
-        analyzerResourcesAvailable = analyzerPackages.Count > 0;
+        var analyzerPackages = _analyzers.List();
+        _analyzerResourcesAvailable = analyzerPackages.Count > 0;
         foreach (var package in analyzerPackages)
         {
             AnalyzerBox.Items.Add(new ComboBoxItem
@@ -87,7 +90,7 @@ public partial class AppearanceDialog : Window
                 Content = package.Descriptor.Name
             });
         }
-        if (!analyzerResourcesAvailable)
+        if (!_analyzerResourcesAvailable)
         {
             AnalyzerBox.Items.Add(new ComboBoxItem
             {
@@ -99,7 +102,7 @@ public partial class AppearanceDialog : Window
             string.Equals(x.Tag?.ToString(), settings.AnalyzerProviderId, StringComparison.OrdinalIgnoreCase));
         AnalyzerBox.SelectedItem = selectedAnalyzer ?? AnalyzerBox.Items[0];
 
-        ApplyButton.IsEnabled = resourcesAvailable && analyzerResourcesAvailable;
+        ApplyButton.IsEnabled = _resourcesAvailable && _analyzerResourcesAvailable;
         ScaleSlider.Value = settings.OverlayScalePercent;
         UpdateDescription();
         UpdateAnalyzerSettingsState();
@@ -131,7 +134,10 @@ public partial class AppearanceDialog : Window
     private void ScaleSlider_ValueChanged(object? sender, global::Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (ScaleValueText is not null)
+        {
             ScaleValueText.Text = ((int)e.NewValue) + "%";
+        }
+
         RaisePreviewChanged();
     }
 
@@ -143,9 +149,12 @@ public partial class AppearanceDialog : Window
 
     private void RaisePreviewChanged()
     {
-        if (closing || previewBaseSettings is null || LayoutBox is null || AnalyzerBox is null)
+        if (_closing || _previewBaseSettings is null || LayoutBox is null || AnalyzerBox is null)
+        {
             return;
-        var preview = previewBaseSettings.Clone();
+        }
+
+        var preview = _previewBaseSettings.Clone();
         preview.OverlayLayoutMode = LayoutMode;
         preview.OverlayPresetId = PresetId;
         preview.AnalyzerProviderId = AnalyzerProviderId;
@@ -156,14 +165,17 @@ public partial class AppearanceDialog : Window
     private void UpdateDescription()
     {
         if (DescriptionText is null)
+        {
             return;
-        if (!resourcesAvailable)
+        }
+
+        if (!_resourcesAvailable)
         {
             DescriptionText.Text = L("appearance.resources_missing_description");
             EditCssButton.IsEnabled = false;
             return;
         }
-        var preset = presets.Get(LayoutMode);
+        var preset = _presets.Get(LayoutMode);
         DescriptionText.Text = UiText.IsEnglish ? preset.Description : preset.DescriptionRu ?? preset.Description;
         EditCssButton.IsEnabled = true;
     }
@@ -171,22 +183,25 @@ public partial class AppearanceDialog : Window
     private void UpdateAnalyzerSettingsState()
     {
         if (AnalyzerSettingsButton is null)
+        {
             return;
-        if (!analyzerResourcesAvailable)
+        }
+
+        if (!_analyzerResourcesAvailable)
         {
             AnalyzerSettingsButton.IsEnabled = false;
             return;
         }
 
-        AnalyzerSettingsButton.IsEnabled = analyzers.List().Any(package =>
+        AnalyzerSettingsButton.IsEnabled = _analyzers.List().Any(package =>
             string.Equals(package.Descriptor.Id, AnalyzerProviderId, StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(package.Descriptor.SettingsPath));
     }
 
     private void EditCss_Click(object? sender, RoutedEventArgs e)
     {
-        var preset = presets.Get(LayoutMode);
-        var path = Path.Combine(presets.ResolveDirectory(preset.Id), preset.Stylesheet);
+        var preset = _presets.Get(LayoutMode);
+        var path = Path.Combine(_presets.ResolveDirectory(preset.Id), preset.Stylesheet);
         if (!File.Exists(path))
         {
             CustomCssService.EnsureExists();
@@ -196,18 +211,18 @@ public partial class AppearanceDialog : Window
     }
     private void AnalyzerSettings_Click(object? sender, RoutedEventArgs e)
     {
-        closing = true;
+        _closing = true;
         OpenAnalyzerSettings = true;
         Close(true);
     }
     private void Apply_Click(object? sender, RoutedEventArgs e)
     {
-        closing = true;
+        _closing = true;
         Close(true);
     }
     private void Cancel_Click(object? sender, RoutedEventArgs e)
     {
-        closing = true;
+        _closing = true;
         Close(false);
     }
 }

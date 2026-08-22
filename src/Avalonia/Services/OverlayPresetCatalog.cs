@@ -13,7 +13,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 /// </summary>
 public sealed class OverlayPresetCatalog
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true
@@ -46,15 +46,19 @@ public sealed class OverlayPresetCatalog
         var normalized = string.IsNullOrWhiteSpace(id) ? "default" : id.Trim();
         var preset = List().FirstOrDefault(x => string.Equals(x.Id, normalized, StringComparison.OrdinalIgnoreCase));
         if (preset is null)
+        {
             throw new FileNotFoundException(
                 $"Overlay preset '{normalized}' was not found. Rebuild the application package so Assets/overlay/presets is included.");
+        }
 
         var directory = ResolveDirectory(preset.Id);
         foreach (var asset in new[] { preset.Template, preset.Stylesheet })
         {
             if (string.IsNullOrWhiteSpace(asset) || !File.Exists(Path.Combine(directory, asset)))
+            {
                 throw new FileNotFoundException(
                     $"Overlay preset '{preset.Id}' is incomplete. Missing resource: {asset}", directory);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(preset.RequiredCssMarker))
@@ -62,9 +66,11 @@ public sealed class OverlayPresetCatalog
             var stylesheetPath = Path.Combine(directory, preset.Stylesheet);
             var stylesheet = File.ReadAllText(stylesheetPath);
             if (!stylesheet.Contains(preset.RequiredCssMarker, StringComparison.Ordinal))
+            {
                 throw new InvalidDataException(
                     $"Overlay preset '{preset.Id}' has the wrong stylesheet. " +
                     $"Expected CSS marker: {preset.RequiredCssMarker}");
+            }
         }
         return preset;
     }
@@ -73,10 +79,16 @@ public sealed class OverlayPresetCatalog
     {
         var definition = List().FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(definition?.SourceDirectory))
+        {
             return definition.SourceDirectory!;
+        }
+
         var userPath = Path.Combine(UserDirectory, id);
         if (Directory.Exists(userPath))
+        {
             return userPath;
+        }
+
         return Path.Combine(BuiltInDirectory, id);
     }
 
@@ -112,7 +124,10 @@ public sealed class OverlayPresetCatalog
     {
         var source = ResolveDirectory(id);
         if (!Directory.Exists(source))
+        {
             throw new DirectoryNotFoundException(source);
+        }
+
         var destination = Path.Combine(UserDirectory, id);
         Directory.CreateDirectory(UserDirectory);
         CopyDirectory(source, destination);
@@ -122,16 +137,22 @@ public sealed class OverlayPresetCatalog
     private void AddDefinitions(List<OverlayPresetDefinition> result, string root)
     {
         if (!Directory.Exists(root))
+        {
             return;
+        }
+
         foreach (var directory in Directory.EnumerateDirectories(root))
         {
             var manifestPath = Path.Combine(directory, "manifest.json");
             if (!File.Exists(manifestPath))
+            {
                 continue;
+            }
+
             try
             {
                 var definition = JsonSerializer.Deserialize<OverlayPresetDefinition>(
-                    File.ReadAllText(manifestPath), JsonOptions);
+                    File.ReadAllText(manifestPath), _jsonOptions);
                 if (definition is null || string.IsNullOrWhiteSpace(definition.Id))
                 {
                     AppLogger.Error(
@@ -155,7 +176,10 @@ public sealed class OverlayPresetCatalog
         var fullPath = Path.GetFullPath(Path.Combine(directory, fileName));
         var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        {
             return null;
+        }
+
         return File.ReadAllText(fullPath);
     }
 
@@ -163,8 +187,13 @@ public sealed class OverlayPresetCatalog
     {
         Directory.CreateDirectory(destination);
         foreach (var file in Directory.EnumerateFiles(source))
+        {
             File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+        }
+
         foreach (var directory in Directory.EnumerateDirectories(source))
+        {
             CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+        }
     }
 }

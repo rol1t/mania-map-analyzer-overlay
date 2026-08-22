@@ -7,7 +7,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
 public sealed class SettingsStore
 {
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions _options = new()
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true
@@ -18,8 +18,10 @@ public sealed class SettingsStore
         try
         {
             if (File.Exists(AppPaths.SettingsPath))
-                return JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(AppPaths.SettingsPath), Options)
+            {
+                return JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(AppPaths.SettingsPath), _options)
                     ?? new LauncherSettings();
+            }
         }
         catch (Exception exception)
         {
@@ -32,6 +34,6 @@ public sealed class SettingsStore
     public void Save(LauncherSettings settings)
     {
         Directory.CreateDirectory(AppPaths.DataDirectory);
-        File.WriteAllText(AppPaths.SettingsPath, JsonSerializer.Serialize(settings, Options));
+        File.WriteAllText(AppPaths.SettingsPath, JsonSerializer.Serialize(settings, _options));
     }
 }

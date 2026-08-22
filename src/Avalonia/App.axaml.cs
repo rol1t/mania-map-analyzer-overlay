@@ -68,8 +68,12 @@ public partial class App : Application
     private static void OnAppDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e)
     {
         if (e.ExceptionObject is Exception exception)
+        {
             AppLogger.Error("Unhandled application exception", exception);
+        }
         else
+        {
             AppLogger.Error("Unhandled application exception", e.ExceptionObject?.ToString() ?? "Unknown exception.");
+        }
     }
 }

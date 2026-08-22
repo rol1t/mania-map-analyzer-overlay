@@ -11,7 +11,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 /// </summary>
 internal sealed class JsonAnalyzerAdapter : IAnalyzerAdapter
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         AllowTrailingCommas = true,
         ReadCommentHandling = JsonCommentHandling.Skip
@@ -28,11 +28,13 @@ internal sealed class JsonAnalyzerAdapter : IAnalyzerAdapter
     {
         snapshot = null;
         if (string.IsNullOrWhiteSpace(payload))
+        {
             return false;
+        }
 
         try
         {
-            snapshot = JsonSerializer.Deserialize<AnalysisSnapshot>(payload, JsonOptions);
+            snapshot = JsonSerializer.Deserialize<AnalysisSnapshot>(payload, _jsonOptions);
             return snapshot is not null &&
                    snapshot.SchemaVersion == Descriptor.SnapshotSchemaVersion &&
                    string.Equals(snapshot.SourceId, Descriptor.Id, StringComparison.OrdinalIgnoreCase);

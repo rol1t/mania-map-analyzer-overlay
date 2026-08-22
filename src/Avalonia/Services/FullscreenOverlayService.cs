@@ -16,7 +16,7 @@ public sealed class FullscreenOverlayService
     private const string EnvironmentKey = "ENABLE_INGAME_OVERLAY";
     private const string CounterName = "ManiaMapAnalyzerOverlay";
     private const string BaseUrl = "http://127.0.0.1:24050";
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
     public bool IsSupported => OperatingSystem.IsWindows();
 
@@ -24,7 +24,10 @@ public sealed class FullscreenOverlayService
     {
         var path = EnvironmentPath;
         if (!File.Exists(path))
+        {
             return fallback;
+        }
+
         var match = Regex.Match(File.ReadAllText(path),
             "(?im)^\\s*" + Regex.Escape(EnvironmentKey) + "\\s*=\\s*(?<value>[^#\\r\\n]*)");
         return match.Success
@@ -35,9 +38,14 @@ public sealed class FullscreenOverlayService
     public void SetEnabled(bool enabled)
     {
         if (!IsSupported)
+        {
             throw new PlatformNotSupportedException("The official tosu in-game overlay is currently available on Windows only.");
+        }
+
         if (!File.Exists(EnvironmentPath))
+        {
             throw new FileNotFoundException("tosu.env was not found. Run the installer to restore components.", EnvironmentPath);
+        }
 
         var content = File.ReadAllText(EnvironmentPath);
         var replacement = EnvironmentKey + "=" + (enabled ? "true" : "false");
@@ -59,7 +67,7 @@ public sealed class FullscreenOverlayService
         try
         {
             configuration = File.Exists(settingsPath)
-                ? JsonSerializer.Deserialize<InGameOverlayConfiguration>(File.ReadAllText(settingsPath), JsonOptions) ?? new()
+                ? JsonSerializer.Deserialize<InGameOverlayConfiguration>(File.ReadAllText(settingsPath), _jsonOptions) ?? new()
                 : new();
         }
         catch (Exception exception)
@@ -110,7 +118,7 @@ public sealed class FullscreenOverlayService
         }
 
         Directory.CreateDirectory(settingsDirectory);
-        File.WriteAllText(settingsPath, JsonSerializer.Serialize(configuration, JsonOptions), new UTF8Encoding(false));
+        File.WriteAllText(settingsPath, JsonSerializer.Serialize(configuration, _jsonOptions), new UTF8Encoding(false));
     }
 
     public void WriteRuntime(
@@ -124,7 +132,10 @@ public sealed class FullscreenOverlayService
         var runtime = setupScript + Environment.NewLine + observerScript;
         var runtimePath = Path.Combine(CounterDirectory, "runtime.js");
         if (File.Exists(runtimePath) && File.ReadAllText(runtimePath) == runtime)
+        {
             return;
+        }
+
         File.WriteAllText(runtimePath, runtime, new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(CounterDirectory, "runtime.version"),
             DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture), new UTF8Encoding(false));
@@ -155,13 +166,21 @@ public sealed class FullscreenOverlayService
         File.WriteAllText(Path.Combine(CounterDirectory, "index.html"), BuildIndexHtml(analyzer), new UTF8Encoding(false));
         var fullscreenCss = Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay", "runtime", "fullscreen.css");
         if (File.Exists(fullscreenCss))
+        {
             File.Copy(fullscreenCss, Path.Combine(CounterDirectory, "fullscreen.css"), overwrite: true);
+        }
+
         var runtimePath = Path.Combine(CounterDirectory, "runtime.js");
         var versionPath = Path.Combine(CounterDirectory, "runtime.version");
         if (!File.Exists(runtimePath))
+        {
             File.WriteAllText(runtimePath, "(function(){})();", new UTF8Encoding(false));
+        }
+
         if (!File.Exists(versionPath))
+        {
             File.WriteAllText(versionPath, "0", new UTF8Encoding(false));
+        }
     }
 
     private static string EnvironmentPath => Path.Combine(AppPaths.TosuDirectory, "tosu.env");

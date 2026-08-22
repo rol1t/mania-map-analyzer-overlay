@@ -30,14 +30,21 @@ public static class AppPaths
     private static string GetDataRoot()
     {
         if (OperatingSystem.IsWindows())
+        {
             return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        }
 
         if (OperatingSystem.IsMacOS())
+        {
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support");
+        }
 
         var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         if (!string.IsNullOrWhiteSpace(xdgDataHome))
+        {
             return xdgDataHome;
+        }
+
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
     }
 }

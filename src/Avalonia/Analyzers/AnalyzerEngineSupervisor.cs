@@ -578,12 +578,19 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
         ThrowIfDisposed();
 
         AnalyzerEngineScriptBridge? bridge;
+        AnalyzerEngineSupervisorState state;
         lock (_sync)
         {
             bridge = _bridge;
+            state = _state;
         }
 
         if (bridge is null)
+        {
+            return;
+        }
+
+        if (state.Status != AnalyzerEngineSupervisorStatus.Ready)
         {
             return;
         }
@@ -608,12 +615,19 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
         ThrowIfDisposed();
 
         AnalyzerEngineScriptBridge? bridge;
+        AnalyzerEngineSupervisorState state;
         lock (_sync)
         {
             bridge = _bridge;
+            state = _state;
         }
 
         if (bridge is null)
+        {
+            return;
+        }
+
+        if (state.Status != AnalyzerEngineSupervisorStatus.Ready)
         {
             return;
         }

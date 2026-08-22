@@ -10,15 +10,20 @@ internal sealed class WindowsProcessJob : IDisposable
 {
     private const uint KillOnJobClose = 0x00002000;
     private const int ExtendedLimitInformation = 9;
-    private IntPtr handle;
+    private IntPtr _handle;
 
     public WindowsProcessJob()
     {
         if (!OperatingSystem.IsWindows())
+        {
             return;
-        handle = CreateJobObject(IntPtr.Zero, null);
-        if (handle == IntPtr.Zero)
+        }
+
+        _handle = CreateJobObject(IntPtr.Zero, null);
+        if (_handle == IntPtr.Zero)
+        {
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
 
         var info = new JobObjectExtendedLimitInformation();
         info.BasicLimitInformation.LimitFlags = KillOnJobClose;
@@ -27,8 +32,10 @@ internal sealed class WindowsProcessJob : IDisposable
         try
         {
             Marshal.StructureToPtr(info, pointer, false);
-            if (!SetInformationJobObject(handle, ExtendedLimitInformation, pointer, (uint)length))
+            if (!SetInformationJobObject(_handle, ExtendedLimitInformation, pointer, (uint)length))
+            {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
         }
         catch
         {
@@ -43,16 +50,21 @@ internal sealed class WindowsProcessJob : IDisposable
 
     public void Attach(Process process)
     {
-        if (handle != IntPtr.Zero && !AssignProcessToJobObject(handle, process.Handle))
+        if (_handle != IntPtr.Zero && !AssignProcessToJobObject(_handle, process.Handle))
+        {
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
     }
 
     public void Dispose()
     {
-        if (handle == IntPtr.Zero)
+        if (_handle == IntPtr.Zero)
+        {
             return;
-        CloseHandle(handle);
-        handle = IntPtr.Zero;
+        }
+
+        CloseHandle(_handle);
+        _handle = IntPtr.Zero;
     }
 
     [StructLayout(LayoutKind.Sequential)]

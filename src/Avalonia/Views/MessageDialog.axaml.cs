@@ -13,9 +13,13 @@ public partial class MessageDialog : Window
         MessageText.Text = message;
         YesButton.Content = yesText;
         if (string.IsNullOrWhiteSpace(noText))
+        {
             NoButton.IsVisible = false;
+        }
         else
+        {
             NoButton.Content = noText;
+        }
     }
 
     private void Yes_Click(object? sender, RoutedEventArgs e) => Close(true);

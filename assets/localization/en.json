@@ -88,6 +88,7 @@
   "status.headless_failed": "Headless failed:",
   "status.headless_osu_not_running": "osu! client is not running",
   "status.headless_no_beatmap": "No beatmap selected",
+  "status.headless_unsupported_mode": "Current beatmap is not osu!mania",
   "replay.import.title": "Import osu! stable replay",
   "replay.import.file_type": "osu! replay (*.osr)",
   "replay.import.selected": "Replay selected: {0}",
