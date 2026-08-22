@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 
@@ -18,7 +19,7 @@ public static class HeadlessAnalysisKeyBuilder
         return new HeadlessBeatmapKey(
             snapshot.Identity.StableKey,
             snapshot.Rate,
-            snapshot.Mods,
+            CreateModsKey(snapshot.Mods),
             snapshot.RawBeatmap.Length);
     }
 
@@ -32,7 +33,7 @@ public static class HeadlessAnalysisKeyBuilder
         return new HeadlessSceneKey(
             snapshot.Identity.StableKey,
             snapshot.Rate,
-            snapshot.Mods,
+            CreateModsKey(snapshot.Mods),
             configuration.ConfigurationVersion,
             configuration.DefaultEngineId,
             configuration.DefaultAlgorithm,
@@ -65,5 +66,10 @@ public static class HeadlessAnalysisKeyBuilder
     {
         var sceneKey = BuildSceneKey(snapshot, configuration);
         return !sceneKey.Equals(lastSceneKey);
+    }
+
+    private static string CreateModsKey(System.Collections.Immutable.ImmutableArray<string> mods)
+    {
+        return string.Join(',', mods.OrderBy(static mod => mod, StringComparer.OrdinalIgnoreCase));
     }
 }

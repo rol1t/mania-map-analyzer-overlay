@@ -13,14 +13,32 @@ public sealed class HeadlessAnalysisKeyTests
     [Fact]
     public void SameBeatmapAndConfigAreEqual()
     {
-        var snapshot = CreateSnapshot();
+        var snapshot = CreateSnapshot(mods: new[] { "HD", "HR" });
+        var equivalentSnapshot = CreateSnapshot(mods: new[] { "HD", "HR" });
         var configuration = CreateConfiguration();
 
         var key1 = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshot, configuration);
-        var key2 = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshot, configuration);
+        var key2 = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(equivalentSnapshot, configuration);
 
         Assert.Equal(key1, key2);
-        Assert.True(HeadlessAnalysisKeyBuilder.IsSameBeatmapAndConfig(snapshot, configuration, key1, key1.SceneKey));
+        Assert.True(HeadlessAnalysisKeyBuilder.IsSameBeatmapAndConfig(equivalentSnapshot, configuration, key1, key1.SceneKey));
+    }
+
+    [Fact]
+    public void ModsInDifferentOrderProduceEqualKeys()
+    {
+        var snapshotA = CreateSnapshot(mods: new[] { "HR", "HD" });
+        var snapshotB = CreateSnapshot(mods: new[] { "HD", "HR" });
+        var configuration = CreateConfiguration();
+
+        var keyA = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshotA, configuration);
+        var keyB = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshotB, configuration);
+
+        Assert.Equal(keyA, keyB);
+        Assert.Equal(keyA.BeatmapKey, keyB.BeatmapKey);
+        Assert.Equal(keyA.SceneKey, keyB.SceneKey);
+        Assert.Equal("HD,HR", keyA.BeatmapKey.Mods);
+        Assert.Equal("HD,HR", keyA.SceneKey.Mods);
     }
 
     [Fact]

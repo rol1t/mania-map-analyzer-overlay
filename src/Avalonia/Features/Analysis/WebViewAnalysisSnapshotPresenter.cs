@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
@@ -31,11 +32,44 @@ public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresente
         var json = JsonSerializer.Serialize(snapshot, _jsonOptions);
         var script =
             $"window.dispatchEvent(new CustomEvent('analysis:snapshot', {{detail: {json}}})); " +
-            $"if (typeof window._overlayRenderAnalysisSnapshot === 'function') window._overlayRenderAnalysisSnapshot({json});";
+            $"if (typeof window.__overlayRenderAnalysisSnapshot === 'function') window.__overlayRenderAnalysisSnapshot({json});";
 
-        await _webView.InvokeScript(script);
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            await InvokeOnUiAsync(script, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Dispatcher.UIThread.Post(async () =>
+            {
+                try
+                {
+                    await InvokeOnUiAsync(script, cancellationToken).ConfigureAwait(false);
+                    completion.TrySetResult(null);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    completion.TrySetCanceled(cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            });
+            using (cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken)))
+            {
+                await completion.Task.ConfigureAwait(false);
+            }
+        }
         AppLogger.Info(
             "Headless snapshot push",
             $"Pushed headless snapshot for beatmap {snapshot.Beatmap.Title} [{snapshot.Beatmap.Version}] to WebView.");
+    }
+
+    private async Task InvokeOnUiAsync(string script, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await _webView.InvokeScript(script).ConfigureAwait(false);
     }
 }

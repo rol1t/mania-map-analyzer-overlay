@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Immutable;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 
@@ -11,7 +10,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 public sealed record HeadlessBeatmapKey(
     string StableKey,
     double Rate,
-    ImmutableArray<string> Mods,
+    string Mods,
     int RawBeatmapLength);
 
 /// <summary>
@@ -21,7 +20,7 @@ public sealed record HeadlessBeatmapKey(
 public sealed record HeadlessSceneKey(
     string StableKey,
     double Rate,
-    ImmutableArray<string> Mods,
+    string Mods,
     string ConfigurationVersion,
     string DefaultEngineId,
     string DefaultAlgorithm,

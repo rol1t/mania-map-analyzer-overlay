@@ -31,7 +31,7 @@ public partial class MainWindow : Window
 {
     private const string BaseUrl = "http://127.0.0.1:24050";
     private const string FullscreenEditorUrl = BaseUrl + "/api/ingame?edit=true";
-    private static readonly Uri TosuBaseUri = new(BaseUrl);
+    private static readonly Uri _tosuBaseUri = new(BaseUrl);
 
     private readonly OverlayPresetCatalog _presetCatalog = new();
     private readonly AnalyzerAdapterCatalog _analyzerCatalog = new();
@@ -259,7 +259,7 @@ public partial class MainWindow : Window
         try
         {
             var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var beatmapSource = new TosuBeatmapSource(httpClient, TosuBaseUri);
+            var beatmapSource = new TosuBeatmapSource(httpClient, _tosuBaseUri);
             var scriptHostFactory = () => new WebViewAnalyzerScriptHost(Browser);
             var presenter = new WebViewAnalysisSnapshotPresenter(Browser);
 
@@ -679,7 +679,7 @@ public partial class MainWindow : Window
     private AnalyzerAdapterPackage ActiveAnalyzer =>
         _presentation.ResolveAnalyzer(_model?.Settings.AnalyzerProviderId);
 
-    private string AnalysisUrl => ActiveAnalyzer.GetAnalysisUri(TosuBaseUri).ToString();
+    private string AnalysisUrl => ActiveAnalyzer.GetAnalysisUri(_tosuBaseUri).ToString();
 
     private void SetControlsEnabled(bool enabled, bool keepRestart = false)
     {
@@ -1287,7 +1287,7 @@ public partial class MainWindow : Window
         if (dialog.OpenAnalyzerSettings)
         {
             var selectedAnalyzer = _presentation.ResolveAnalyzer(dialog.AnalyzerProviderId);
-            var settingsUri = selectedAnalyzer.GetSettingsUri(TosuBaseUri);
+            var settingsUri = selectedAnalyzer.GetSettingsUri(_tosuBaseUri);
             if (settingsUri is not null)
             {
                 Navigate(settingsUri.ToString());

@@ -34,8 +34,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     private WidgetAnalysisRunner? _widgetRunner;
     private WidgetAnalysisSceneRunner? _sceneRunner;
     private AnalysisRunScope? _sceneScope;
-    private CancellationTokenSource? _pollCancellation;
-    private Task? _pollTask;
+    private readonly HeadlessPollingLifecycle _pollingLifecycle;
     private EffectiveAnalysisConfiguration _configuration = EffectiveAnalysisConfigurationStore.CreateDefault();
     private HeadlessAnalysisKey? _lastAnalysisKey;
     private HeadlessSceneKey? _lastSceneKey;
@@ -71,6 +70,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         _pollInterval = pollInterval > TimeSpan.Zero
             ? pollInterval
             : throw new ArgumentOutOfRangeException(nameof(pollInterval));
+        _pollingLifecycle = new HeadlessPollingLifecycle(PollLoopAsync);
     }
 
     public event EventHandler<AnalyzerEngineSupervisorState>? StateChanged;
@@ -179,79 +179,24 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        var pollTask = StopPolling();
-
-        if (pollTask is not null)
-        {
-            var timeoutExpired = false;
-            var callerCancelled = false;
-            try
-            {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-                await pollTask.WaitAsync(linked.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                callerCancelled = true;
-            }
-            catch (OperationCanceledException)
-            {
-                // Graceful shutdown timeout elapsed (WaitAsync was cancelled by the timeout token)
-                // or the poll loop was cancelled. Only treat as timeout if the task is still live.
-                if (!pollTask.IsCompleted)
-                {
-                    timeoutExpired = true;
-                    AppLogger.Warning("Stopping headless analysis", "Polling did not stop within the shutdown timeout; awaiting completion before releasing resources.");
-                }
-            }
-            catch (TimeoutException)
-            {
-                if (!pollTask.IsCompleted)
-                {
-                    timeoutExpired = true;
-                    AppLogger.Warning("Stopping headless analysis", "Polling did not stop within the shutdown timeout; awaiting completion before releasing resources.");
-                }
-            }
-
-            try
-            {
-                await pollTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when the polling loop is cancelled.
-            }
-
-            if (callerCancelled)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-        }
-
         await _stateGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            var remainingPollTask = StopPolling();
-            if (remainingPollTask is not null)
+            try
             {
-                try
-                {
-                    await remainingPollTask.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                }
+                await _pollingLifecycle.StopAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
             }
 
             DisposeRunners();
+            await DisposeEngineAsync().ConfigureAwait(false);
         }
         finally
         {
             _stateGate.Release();
         }
-
-        await DisposeEngineAsync().ConfigureAwait(false);
     }
 
     public async Task RestartAsync(CancellationToken cancellationToken = default)
@@ -273,31 +218,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 "Effective analysis mapping",
                 $"Reloaded mapping: {_configuration.Widgets.Length} widget(s), engine={_configuration.DefaultEngineId}, algorithm={_configuration.DefaultAlgorithm}");
 
-            var pollTask = StopPolling();
-            if (pollTask is not null)
-            {
-                await pollTask.ConfigureAwait(false);
-            }
-
-            DisposeRunners();
-            InitializeRunners();
-
-            lock (_sync)
-            {
-                _lastAnalysisKey = null;
-                _lastSceneKey = null;
-            }
-
-            AnalyzerEngineSupervisor? supervisorCopy;
-            lock (_sync)
-            {
-                supervisorCopy = _supervisor;
-            }
-
-            if (supervisorCopy?.IsReady == true)
-            {
-                await TriggerPollAsync(cancellationToken).ConfigureAwait(false);
-            }
+            await RestartPollingAsync(withImmediatePoll: true, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -371,6 +292,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         }
 
         await StopAsync(CancellationToken.None).ConfigureAwait(false);
+        await _pollingLifecycle.DisposeAsync().ConfigureAwait(false);
         _beatmapHttpClient.Dispose();
         _stateGate.Dispose();
         GC.SuppressFinalize(this);
@@ -378,6 +300,14 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
     private void Supervisor_StateChanged(object? sender, AnalyzerEngineSupervisorState state)
     {
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+        }
+
         EnterState(state);
     }
 
@@ -400,17 +330,26 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             await _stateGate.WaitAsync().ConfigureAwait(false);
             try
             {
+                lock (_sync)
+                {
+                    if (_disposed)
+                    {
+                        return;
+                    }
+                }
+
                 if (state.IsReady)
                 {
-                    InitializeRunners();
-                    StartPolling();
+                    await RestartPollingAsync(withImmediatePoll: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
                 }
                 else if (state.IsFallback)
                 {
-                    var pollTask = StopPolling();
-                    if (pollTask is not null)
+                    try
                     {
-                        await pollTask.ConfigureAwait(false);
+                        await _pollingLifecycle.StopAsync().ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
                     }
 
                     DisposeRunners();
@@ -418,10 +357,51 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             }
             finally { _stateGate.Release(); }
         }
+        catch (OperationCanceledException)
+        {
+        }
         catch (Exception exception)
         {
             AppLogger.Error("Applying headless supervisor state", exception, userVisible: false);
         }
+    }
+
+    private async Task RestartPollingAsync(bool withImmediatePoll, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _pollingLifecycle.StopAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        DisposeRunners();
+        InitializeRunners();
+
+        lock (_sync)
+        {
+            _lastAnalysisKey = null;
+            _lastSceneKey = null;
+        }
+
+        AnalyzerEngineSupervisor? supervisorCopy;
+        lock (_sync)
+        {
+            supervisorCopy = _supervisor;
+        }
+
+        if (supervisorCopy?.IsReady != true)
+        {
+            return;
+        }
+
+        if (withImmediatePoll)
+        {
+            await TriggerPollAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await _pollingLifecycle.StartAsync().ConfigureAwait(false);
     }
 
     private void InitializeRunners()
@@ -495,39 +475,6 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             $"Scene '{snapshot.SceneId}' generation {snapshot.Generation} composed with {snapshot.OrderedSnapshots.Length} widget(s).");
     }
 
-    private void StartPolling()
-    {
-        StopPolling();
-        lock (_sync)
-        {
-            var cancellation = new CancellationTokenSource();
-            _pollCancellation = cancellation;
-            _pollTask = Task.Run(() => PollLoopAsync(cancellation.Token), cancellation.Token);
-        }
-    }
-
-    private Task? StopPolling()
-    {
-        lock (_sync)
-        {
-            var task = _pollTask;
-            var cancellation = _pollCancellation;
-            _pollTask = null;
-            _pollCancellation = null;
-            cancellation?.Cancel();
-            if (task is null)
-            {
-                cancellation?.Dispose();
-            }
-            else
-            {
-                _ = task.ContinueWith(_ => cancellation?.Dispose(), TaskScheduler.Default);
-            }
-
-            return task;
-        }
-    }
-
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -546,11 +493,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
     private async Task TriggerPollAsync(CancellationToken cancellationToken)
     {
-        CancellationToken token;
-        lock (_sync)
-        {
-            token = _pollCancellation?.Token ?? cancellationToken;
-        }
+        var token = cancellationToken;
         try
         {
             await PollOnceAsync(token).ConfigureAwait(false);
