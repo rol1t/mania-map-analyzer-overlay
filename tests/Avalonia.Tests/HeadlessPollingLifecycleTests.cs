@@ -22,7 +22,10 @@ public sealed class HeadlessPollingLifecycleTests
             entered.TrySetResult(null);
             try
             {
-                await release.Task.WaitAsync(cancellationToken);
+                // Remain in-flight until release is set, ignoring cancellation while waiting.
+                // Observe cancellation only after release so Stop/Restart deterministically waits.
+                await release.Task.ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
             }
             finally
             {
