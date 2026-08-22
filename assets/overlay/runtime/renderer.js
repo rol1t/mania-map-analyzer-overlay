@@ -66,6 +66,13 @@
       if (id && (!ranks.has(id) || rankHasValue(entry))) ranks.set(id, entry);
     });
 
+    // Suppress stale LN DAN for maps without long notes.
+    var currentLnPercent = snapshot && snapshot.difficulty ? snapshot.difficulty.lnPercent : null;
+    var hasCurrentLn = currentLnPercent != null && Number(currentLnPercent) > 0;
+    if (!hasCurrentLn) {
+      ranks.delete("ln-dan");
+    }
+
     const merged = Object.assign({}, snapshot, { ranks: Array.from(ranks.values()) });
     // The adapter may publish provisional tosu telemetry before the headless
     // snapshot arrives. MMA does not know replay data, so preserve the live
@@ -256,6 +263,83 @@
     }
   }
 
+  function renderPauseCoach(snapshot) {
+    const container = byId("overlay-pause-coach");
+    if (!container) return;
+
+    const pc = snapshot && snapshot.pauseCoach;
+    if (!pc) {
+      container.hidden = true;
+      return;
+    }
+
+    const timing = pc.timing || {};
+    const performance = pc.performance || {};
+    const hasMeaningfulData = pc.hasData !== false;
+    // Hide only when object is present but completely empty (defensive).
+    if (!hasMeaningfulData && !timing.sampleCount && (!pc.insights || pc.insights.length === 0) && performance.wholeHits == null && performance.recentHits == null) {
+      // Still show provisional header when fidelity present; otherwise hide to avoid empty block.
+      const hasFidelity = pc.fidelity || pc.isProvisional;
+      if (!hasFidelity) {
+        container.hidden = true;
+        return;
+      }
+    }
+
+    container.hidden = false;
+
+    function fmt(value, digits) {
+      return formatNumber(value, digits) || "—";
+    }
+
+    const fidelityRaw = pc.fidelity ? String(pc.fidelity) : (pc.isProvisional ? "provisional" : "");
+    const fidelityLabel = fidelityRaw ? fidelityRaw.replace("replay.fidelity.", "") : "";
+    const marginRaw = timing.timingMargin != null ? timing.timingMargin : timing.margin;
+    const margin = String(marginRaw || "").trim().toLowerCase();
+
+    let statusText = fidelityLabel || "";
+    if (margin && margin !== "unknown") {
+      statusText = statusText ? statusText + " \u00B7 " + margin : margin;
+    } else if (margin === "unknown" && statusText) {
+      statusText = statusText + " \u00B7 " + margin;
+    } else if (!statusText && margin) {
+      statusText = margin;
+    }
+    if (!statusText) statusText = "—";
+    text("overlay-pause-status", statusText, "—");
+
+    const bias = timing.meanMs != null ? timing.meanMs : timing.driftMs;
+    text("overlay-pause-bias", bias == null ? "—" : fmt(bias, 1) + " ms", "—");
+
+    text("overlay-pause-ur", timing.unstableRate == null ? "—" : fmt(timing.unstableRate, 1), "—");
+
+    let recentText = "—";
+    if (performance.recentHits != null || performance.recentMisses != null) {
+      const rh = performance.recentHits != null ? String(performance.recentHits) : "0";
+      const rm = performance.recentMisses != null ? String(performance.recentMisses) : "0";
+      recentText = rh + " / " + rm;
+    } else if (performance.wholeHits != null || performance.wholeMisses != null) {
+      const wh = performance.wholeHits != null ? String(performance.wholeHits) : "0";
+      const wm = performance.wholeMisses != null ? String(performance.wholeMisses) : "0";
+      recentText = wh + " / " + wm;
+    }
+    text("overlay-pause-recent", recentText, "—");
+
+    const insightsEl = byId("overlay-pause-insights");
+    if (insightsEl) {
+      const insights = Array.isArray(pc.insights) ? pc.insights : [];
+      insightsEl.textContent = "";
+      insightsEl.hidden = insights.length === 0;
+      insights.forEach(function (insight) {
+        const line = document.createElement("div");
+        line.className = "overlay-replay-insight";
+        line.textContent = insight.message || String(insight.code || "");
+        line.title = insight.message || "";
+        insightsEl.appendChild(line);
+      });
+    }
+  }
+
   function renderMainCard(snapshot) {
     var difficulty = snapshot.difficulty || {};
     var starText = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
@@ -269,9 +353,13 @@
     text("rework-meta", "LN%: " + lnLabel + " · Keys: " + keys, "LN — · Keys —");
     var rc = rank(snapshot, "rc-dan") || {};
     var ln = rank(snapshot, "ln-dan") || {};
-    const hasRankData = [rc, ln].some(rankHasValue);
-    if (hasRankData) {
-      text("rework-diff", (rc.value || "—") + " || " + (ln.value || "—"), "—");
+    var hasLnPercent = Number.isFinite(lnValue) && lnValue > 0;
+    var rcHas = rankHasValue(rc);
+    var lnHas = hasLnPercent && rankHasValue(ln);
+    if (rcHas || lnHas) {
+      var rcText = rc.value || "—";
+      var lnText = ln.value || "—";
+      text("rework-diff", lnHas ? rcText + " || " + lnText : rcText, "—");
     }
     var card = document.querySelector(".main-card");
     if (card) {
@@ -286,6 +374,7 @@
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
     renderReplay(effectiveSnapshot);
+    renderPauseCoach(effectiveSnapshot);
     renderMainCard(effectiveSnapshot);
   }
 

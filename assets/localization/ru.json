@@ -66,6 +66,7 @@
   "appearance.layout": "Расположение",
   "appearance.analyzer": "Анализатор",
   "appearance.size": "Размер",
+  "appearance.opacity": "Непрозрачность",
   "appearance.open_css": "Открыть CSS",
   "appearance.analyzer_settings": "Параметры анализатора",
   "appearance.cancel": "Отмена",

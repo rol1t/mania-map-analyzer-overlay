@@ -31,9 +31,6 @@
         </WrapPanel>
       </Grid>
     </Border>
-    <NativeWebView x:Name="Browser" Grid.Row="1" Background="#0E1016"
-                   NavigationCompleted="Browser_NavigationCompleted"
-                   WebMessageReceived="Browser_WebMessageReceived"
-                   NewWindowRequested="Browser_NewWindowRequested" />
+    <Border x:Name="BrowserHost" Grid.Row="1" Background="#0E1016" />
   </Grid>
 </Window>

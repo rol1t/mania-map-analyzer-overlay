@@ -36,4 +36,14 @@ public static class OverlayVisibilityPolicy
             _ => true
         };
     }
+
+    /// <summary>
+    /// A minimized osu! window is an editing state for the desktop overlay.
+    /// Keep the surface available even when the selected preset normally hides
+    /// itself outside active play.
+    /// </summary>
+    public static bool ShouldShow(string? policy, bool isPlaying, bool? isPaused, bool osuMinimized) =>
+        osuMinimized || ShouldShow(policy, isPlaying, isPaused);
+
+    public static bool ShouldShowBeforeGameplayStateIsKnown(string? policy) => Normalize(policy) != Never;
 }

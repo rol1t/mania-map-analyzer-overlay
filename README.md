@@ -54,7 +54,7 @@ Use **Overlay** for windowed or borderless osu!. Use **Stable FS** only when osu
 | Move the widget | Drag the center while osu! is inactive and input is enabled |
 | Resize the widget | Drag an edge/corner while osu! is inactive, or hold `Ctrl` and use the mouse wheel |
 
-When osu! is the active window, overlay interaction is disabled so an accidental click cannot focus the widget or minimize the game. Disable the overlay when it is not needed to keep resource use low.
+When osu! is inactive, the desktop overlay becomes an ordinary activatable edit window and appears in the taskbar/task switcher so WebView2 can receive drag and resize input reliably. When osu! is the active window, the overlay returns to a protected tool-window state and interaction is disabled so an accidental click cannot focus the widget or minimize the game. Disable the overlay when it is not needed to keep resource use low.
 
 For osu!stable exclusive fullscreen, enable **Stable FS**, confirm the tosu restart, and use tosu's in-game editor (`Ctrl+Shift+Space`) to position the official in-game overlay. The launcher applies the selected layout and scale to that overlay.
 
@@ -233,13 +233,15 @@ Set `visibilityPolicy` in the manifest to choose when a preset is displayed:
 | `paused-only` | A map is playing and paused. |
 | `never` | Never shown. Useful for disabling a preset without deleting its files. |
 
-Visibility is evaluated from the analyser-neutral gameplay snapshot (`isPlaying` and `isPaused`). Focus state controls interaction and click-through behavior, not this policy decision. The shipped Default and Horizontal presets use `always`; Companella uses `outside-play`. A user preset can choose a different policy without changing application code. Unknown values are normalized to `always`; inspect `application.log` when diagnosing an unexpected visibility result.
+Visibility is evaluated from the analyser-neutral gameplay snapshot (`isPlaying` and `isPaused`). A minimized osu! window is treated as an editing state, so the overlay remains visible regardless of the selected policy. Focus state controls interaction and click-through behavior, not this policy decision. The shipped Default and Horizontal presets use `always`; Companella uses `outside-play`. A user preset can choose a different policy without changing application code. Unknown values are normalized to `always`; inspect `application.log` when diagnosing an unexpected visibility result.
+
+Until the first gameplay snapshot arrives, the desktop overlay stays visible for every policy except `never`. This keeps the edit surface available while tosu is starting or temporarily unavailable; the configured policy is applied as soon as a valid gameplay state is received.
 
 ### 6. Live data and the Companella exception
 
-The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, and an optional `replay` block. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
+The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, an optional `replay` block, and an optional provisional `pauseCoach` block that appears only while paused. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
 
-For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), and `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
+For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below), and `pauseCoach` (provisional aggregate-only timing and recent hit/miss while paused — `timing.timingMargin`, `timing.meanMs`/`driftMs`, `timing.unstableRate`, `performance.recentHits`/`recentMisses`, and `insights`; no per-column, per-object, finger, or LN claims; see below). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
 
 There is one current renderer limitation: the built-in Companella renderer updates a fixed set of IDs only when the selected layout id is exactly `companella`. Those IDs are:
 
@@ -276,6 +278,19 @@ overlay-replay-insights     (pattern insights, replay.pattern.* / replay.insight
 
 The replay block is `null` when no post-play `.osr` is available; the renderer keeps `overlay-replay` hidden in that case and falls back to map-only display. Live provisional telemetry (`TosuLiveReplaySource`) never populates per-column/LN fields.
 
+The same preset also hosts the provisional pause coach, rendered only when `snapshot.pauseCoach` is present. The renderer uses safe `textContent` and existing number formatting and keeps the block hidden when absent. Its stable IDs are:
+
+```text
+overlay-pause-coach         (container, hidden when snapshot.pauseCoach is absent)
+overlay-pause-status        (status/margin — fidelity + timing.timingMargin)
+overlay-pause-bias          (aggregate bias — timing.meanMs/driftMs)
+overlay-pause-ur            (aggregate UR — timing.unstableRate)
+overlay-pause-recent        (recent hit/miss — performance.recentHits/recentMisses)
+overlay-pause-insights      (aggregate insights — pauseCoach.insights.*)
+```
+
+The pause coach is strictly aggregate-only. It derives provisional timing from the latest `HitErrorArray` and cumulative judgement counts captured at the playing → paused transition; it never emits per-column, per-object, finger, or LN conclusions. Insights are conservative and require a minimum sample threshold. The exact post-play `.osr` replay remains authoritative for per-column, pattern, and LN analysis — do not treat the provisional aggregate as ground truth.
+
 Therefore:
 
 1. To create a Companella variant with live summary cards and charts, override the user preset with id `companella` and edit its template/CSS.
@@ -283,7 +298,7 @@ Therefore:
 3. To create a new id such as `my-preset` without replay, use CSS to rearrange and style the existing analyser card, or provide static additional markup. The current renderer does not populate arbitrary new IDs with snapshot values.
 4. A general user-defined renderer/plugin API is not part of this release. Do not assume that adding JavaScript to a manifest will create new live data fields.
 
-Live replay fields are intentionally provisional. The adapter reads only documented tosu v2 fields: `beatmap.time.live`, `play.score`, `play.accuracy`, `play.unstableRate`, and `play.hitErrorArray`. It does not infer columns or LN events from polling. The header badge displays `provisional` until an exact replay-file result is available.
+Live replay and pause-coach fields are intentionally provisional and aggregate-only. The adapter reads only documented tosu v2 fields: `beatmap.time.live`, `play.score`, `play.accuracy`, `play.unstableRate`, and `play.hitErrorArray`. It does not infer columns, per-object timing, finger assignments, or LN events from polling. Both the replay header and the pause-coach header display `provisional` until an exact replay-file result is available. For pause coaching, exact `.osr` remains authoritative; provisional aggregates are hints only and must not be presented as per-column or LN diagnostics.
 
 This boundary is intentional: the domain model stays independent from a particular tosu widget, while the shipped analyser adapter translates source data into the normalized snapshot.
 

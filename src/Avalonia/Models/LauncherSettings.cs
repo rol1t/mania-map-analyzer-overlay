@@ -20,6 +20,7 @@ public sealed class LauncherSettings
     public string OverlayLayoutMode { get; set; } = "default";
     public string OverlayPresetId { get; set; } = "default";
     public int OverlayScalePercent { get; set; } = 100;
+    public int OverlayOpacityPercent { get; set; } = 100;
     public int CompanellaLayoutVersion { get; set; } = 3;
     public bool FullscreenOverlayEnabled
     {
@@ -47,6 +48,7 @@ public sealed class LauncherSettings
         OverlayLayoutMode = OverlayLayoutMode,
         OverlayPresetId = OverlayPresetId,
         OverlayScalePercent = OverlayScalePercent,
+        OverlayOpacityPercent = OverlayOpacityPercent,
         CompanellaLayoutVersion = CompanellaLayoutVersion,
         FullscreenOverlayEnabled = FullscreenOverlayEnabled,
         FullscreenOverlayStyleVersion = FullscreenOverlayStyleVersion,

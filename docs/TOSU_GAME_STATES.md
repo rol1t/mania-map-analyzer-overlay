@@ -117,6 +117,8 @@ visibility are separate concerns:
   pause does not change the `state` enum.
 - `game.focused` controls whether the overlay may accept mouse input; it does
   not decide whether the widget is displayed.
+- A minimized osu! window is treated as an editing state: the overlay remains
+  visible even when the selected gameplay policy would hide it during play.
 - An analyzer's own DOM classes must not control application-level visibility.
   The ManiaMapAnalyser adapter removes its source-specific menu-hiding class,
   while presets continue to render only the normalized domain snapshot.
