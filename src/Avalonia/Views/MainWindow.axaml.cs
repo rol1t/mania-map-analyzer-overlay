@@ -416,6 +416,7 @@ public partial class MainWindow : Window
             {
                 HeadlessBeatmapSourceState.OsuNotRunning => L("status.headless_osu_not_running"),
                 HeadlessBeatmapSourceState.NoBeatmap => L("status.headless_no_beatmap"),
+                HeadlessBeatmapSourceState.UnsupportedMode => L("status.headless_unsupported_mode"),
                 _ => null
             };
 

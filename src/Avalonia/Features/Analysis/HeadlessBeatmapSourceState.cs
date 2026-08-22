@@ -9,5 +9,6 @@ public enum HeadlessBeatmapSourceState
     OK,
     OsuNotRunning,
     NoBeatmap,
+    UnsupportedMode,
     Error
 }

@@ -598,6 +598,23 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 return;
             }
 
+            if (HeadlessBeatmapMode.IsExplicitlyNonMania(snapshot))
+            {
+                lock (_sync)
+                {
+                    _lastAnalysisKey = null;
+                    _lastSceneKey = null;
+                }
+
+                var modeMessage = $"Current beatmap {snapshot.Identity.StableKey} is not osu!mania.";
+                AppLogger.Info("Headless beatmap poll", $"Skipping non-mania beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} mode={snapshot.Metadata.Mode} — analysis not started.");
+                AppLogger.Debug("Headless beatmap poll", modeMessage);
+                BeatmapSourceStateChanged?.Invoke(this, new HeadlessBeatmapSourceStateEventArgs(
+                    HeadlessBeatmapSourceState.UnsupportedMode,
+                    modeMessage));
+                return;
+            }
+
             HeadlessAnalysisKey? lastAnalysisKey;
             HeadlessSceneKey? lastSceneKey;
             lock (_sync)
