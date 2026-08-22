@@ -80,6 +80,47 @@ Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extr
 - [x] Document and enforce permissions/sandbox boundaries for user-provided analyzer packages and JavaScript (`README` preset security, `DocumentationService` docs, `AnalyzerEngineCatalog.ResolveContainedFile`/`IsPathContained` + `AnalyzerEnginePackageDeployer` reparse-point checks).
 - [x] Add integrity checks and clear warnings for untrusted analyzer or preset resources (`AnalyzerEngineCatalog` path-traversal/symlink diagnostics, `tests/Avalonia.Tests/PackageIntegrityTests.cs` — missing fields, path escape warnings).
 
+## Maintainability refactor — checkpoint (2026-08-22)
+
+> Checkpoint appended without touching source files, without running commands/commits, to allow safe resume after an OpenCode restart. Covers current **uncommitted** working-tree state on `main` (ahead of `origin/main` by 2 commits). No commit/push was made for the current working-tree changes.
+
+### Completed in this refactor (working tree + recent commits)
+
+- [x] `Directory.Build.props` centralization — common MSBuild properties (`TargetFramework net8.0`, `Nullable`, `ImplicitUsings`, `EnforceCodeStyleInBuild`, `AnalysisMode`, `LangVersion`) extracted to root `Directory.Build.props` (`4541a8b`).
+- [x] CI `restore → format → build → test` sequence — `.github/workflows/build.yml` now runs `dotnet restore`, `dotnet format --verify-no-changes`, `dotnet build --no-restore`, `dotnet test --no-build` on `windows-latest`/`ubuntu-latest` (`8.0.419`).
+- [x] `.editorconfig` enforcement — `csharp_prefer_braces = true:warning`, `private_fields_should_be_underscore_camel_case` raised to `warning` with `!const` filter, new `private_constants_should_be_pascal_case = warning` + `private_constants` symbol (`const` only).
+- [x] Production `_camelCase` normalization — private fields renamed to `_camelCase` across `src/Avalonia/**`, `src/Core/**`, `src/ReplayAnalysis/**`, `src/Services/**`, `src/Updater/**` (`4541a8b`, `252c454` plus current working-tree edits to `AnalyzerAdapterCatalog`, `JsonAnalyzerAdapter`, `WindowsOverlayController`, `WindowsProcessJob`, `AppLogger`, `AppPaths`, `CustomCssService`, `FullscreenOverlayService`, `OverlayPresetCatalog`, `SettingsStore`, `TosuService`, `UpdateService`, `ViewLocator`, `AppearanceDialog`, `MessageDialog`, `AnalyzerCoordinator`, `ReplayModPolicy`, `UiText`, `Updater/Program`, etc.).
+- [x] Braces formatting — single-statement `if`/`for`/`foreach`/`using` blocks expanded to Allman braces per `csharp_prefer_braces` (visible in `AnalyzerEngineScriptBridge.Scripts`, `WindowsOverlayController`, `FullscreenOverlayService`, `OverlayPresetCatalog`, `TosuService`, `UpdateService`, `AppearanceDialog`, `AnalyzerCoordinator`, etc.); `dotnet format` diff still pending final verification.
+- [x] Headless analysis extraction from `MainWindow` — new feature slice `src/Avalonia/Features/Analysis/` + `tests/Avalonia.Tests/HeadlessAnalysisKeyTests.cs` (10 new files total — 9 in `Features/Analysis/` plus `HeadlessAnalysisKeyTests.cs`, `HeadlessAnalysisController.cs` ~682 lines):
+  - `HeadlessAnalysisController` — owns polling, `AnalyzerEngineSupervisor`/`AnalyzerExecutionCoordinator` wiring, generation/dedup, timer lifecycle and disposal.
+  - Typed events — `HeadlessAnalysisResultEventArgs` / `HeadlessBeatmapSourceStateEventArgs` + `HeadlessBeatmapSourceState` instead of ad-hoc tuples.
+  - Typed deduplication keys — `HeadlessAnalysisKey` (immutable record) + `HeadlessAnalysisKeyBuilder` (`BuildAnalysisKey`, `IsSameBeatmapAndConfig`, `IsNewSceneGeneration`) covering `sceneKey` vs full `analysisKey` (raw beatmap length changes analysis key but not scene key).
+  - Snapshot presenter abstraction — `IAnalysisSnapshotPresenter` + `WebViewAnalysisSnapshotPresenter` (WebView push decoupled from controller).
+   - Engine dependency record — `HeadlessEngineServices` bundling `AnalyzerEngineCatalog`, `AnalyzerEnginePackageDeployer`, and script-host factory (`Func<IAnalyzerScriptHost>`).
+- [x] `MainWindow` wiring and integration — headless fields/methods were removed from `MainWindow.axaml.cs` and orchestration delegated to `HeadlessAnalysisController` for `PollHeadlessBeatmapAsync`/`PushHeadlessSnapshotAsync`, replay import (`StableOsrReplayReader` + `ReplayAnalysisSession`), config change handling, restart/disposal (`Dispose`/`OnClosed` forwarding to controller), `App.axaml.cs` composition root updated to inject `HeadlessEngineServices`.
+- [x] Focused key tests — `tests/Avalonia.Tests/HeadlessAnalysisKeyTests.cs` (untracked, 6 facts: `SameBeatmapAndConfigAreEqual`, `DifferentRateAreNotEqual`, `DifferentModsAreNotEqual`, `DifferentConfigurationAreNotEqual`, `DifferentRawBeatmapLength_ChangesAnalysisKeyButNotSceneKey`, `NullPreviousKeys_AreNeverSame`).
+
+### Remaining — must be done before closing the refactor
+
+- [ ] Run final `dotnet format ManiaMapAnalyzerOverlay.sln --no-restore` + `dotnet build --configuration Release --no-restore --nologo` + `dotnet test --configuration Release --no-build --nologo` after the last controller corrections; fix any new `csharp_prefer_braces` / `IDE` / `CA` warnings.
+- [ ] Finish/verify test method naming and any new analyzer warnings still present in working tree (e.g. `HeadlessAnalysisKeyTests` naming conventions, `AnalyzerCoordinator`/Tosu nullability warnings).
+- [ ] Independent review (reviewer) of the extraction — especially `HeadlessAnalysisController` threading/timers, event ordering, WebView presenter lifetime, and replay/config integration.
+- [ ] Inspect complete diff (`git diff HEAD` — 23 modified files `833+`/`673-` plus 9 untracked `Features/` + `HeadlessAnalysisKeyTests`) before staging; stage only refactor-related files.
+- [ ] Then continue P0/P1 architecture per plan:
+  - [ ] Overlay extraction (window/overlay services out of `MainWindow`).
+  - [ ] Composition root / ViewModel cleanup (reduce code-behind, clarify DI).
+  - [ ] Typed Tosu errors (replace stringly-typed diagnostics).
+  - [ ] WebView/lifecycle review (cancellation, navigation, disposal).
+  - [ ] `UpdateService` decomposition.
+  - [ ] Version centralization (single source of truth for `2.3.0`).
+  - [ ] `Services` folder decision (namespace/folder alignment).
+  - [ ] Remaining cleanup (naming, dead code, docs).
+
+### Process notes
+
+- No `git add` / `git commit` / `git push` was performed for the current working-tree changes in this checkpoint (per instructions). Changes remain **uncommitted** and **unstaged**.
+- Manual UI acceptance (osu! stable/lazer windowed/borderless/fullscreen, visibility/focus/drag/resize/DPI, clean shutdown, installer/hash/release notes) remains required and is unchanged under `Manual acceptance and release` below.
+
 ## Manual acceptance and release
 
 - [ ] Manually test osu! stable and lazer in windowed, borderless, and fullscreen modes.

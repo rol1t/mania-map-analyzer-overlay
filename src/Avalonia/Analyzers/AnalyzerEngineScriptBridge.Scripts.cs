@@ -9,7 +9,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 
 public sealed partial class AnalyzerEngineScriptBridge
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = false
     };
@@ -30,22 +30,22 @@ public sealed partial class AnalyzerEngineScriptBridge
             ["mixedCompanellaExport"] = manifest.MixedCompanellaExport ?? string.Empty
         };
 
-        var key = JsonSerializer.Serialize(_registryKey, JsonOptions);
-        var runtime = JsonSerializer.Serialize(runtimeUrl, JsonOptions);
-        var worker = JsonSerializer.Serialize(workerUrl, JsonOptions);
-        var config = JsonSerializer.Serialize(configuration, JsonOptions);
-        var runtimeSource = JsonSerializer.Serialize(_package.ReadRuntimeScript(), JsonOptions);
+        var key = JsonSerializer.Serialize(_registryKey, _jsonOptions);
+        var runtime = JsonSerializer.Serialize(runtimeUrl, _jsonOptions);
+        var worker = JsonSerializer.Serialize(workerUrl, _jsonOptions);
+        var config = JsonSerializer.Serialize(configuration, _jsonOptions);
+        var runtimeSource = JsonSerializer.Serialize(_package.ReadRuntimeScript(), _jsonOptions);
         var protocolSource = JsonSerializer.Serialize(
             ReadProtocolScript(manifest.Runtime),
-            JsonOptions);
+            _jsonOptions);
         var normalizerSource = JsonSerializer.Serialize(
             ReadSiblingScript(manifest.Worker, "normalizer.mjs"),
-            JsonOptions);
-        var workerSource = JsonSerializer.Serialize(_package.ReadWorkerScript(), JsonOptions);
-        var prefix = JsonSerializer.Serialize(NativeMessagePrefix, JsonOptions);
-        var protocol = JsonSerializer.Serialize(_protocol, JsonOptions);
+            _jsonOptions);
+        var workerSource = JsonSerializer.Serialize(_package.ReadWorkerScript(), _jsonOptions);
+        var prefix = JsonSerializer.Serialize(NativeMessagePrefix, _jsonOptions);
+        var protocol = JsonSerializer.Serialize(_protocol, _jsonOptions);
         var protocolVersion = _protocolVersion.ToString();
-        var serializedSessionId = JsonSerializer.Serialize(sessionId, JsonOptions);
+        var serializedSessionId = JsonSerializer.Serialize(sessionId, _jsonOptions);
         var script = """
 (async function() {
     const registry = globalThis.__maniaMapAnalyzerOverlayEngines || (globalThis.__maniaMapAnalyzerOverlayEngines = Object.create(null));
@@ -215,8 +215,8 @@ public sealed partial class AnalyzerEngineScriptBridge
             speedRate = request.Rate,
             mods = request.Mods
         };
-        var json = JsonSerializer.Serialize(payload, JsonOptions);
-        var key = JsonSerializer.Serialize(_registryKey, JsonOptions);
+        var json = JsonSerializer.Serialize(payload, _jsonOptions);
+        var key = JsonSerializer.Serialize(_registryKey, _jsonOptions);
         var script = """
 (function() {
     const state = globalThis.__maniaMapAnalyzerOverlayEngines?.[__KEY__];
@@ -234,9 +234,9 @@ public sealed partial class AnalyzerEngineScriptBridge
 
     private string BuildCancelScript(string correlationId, string reason)
     {
-        var key = JsonSerializer.Serialize(_registryKey, JsonOptions);
-        var id = JsonSerializer.Serialize(correlationId, JsonOptions);
-        var serializedReason = JsonSerializer.Serialize(reason, JsonOptions);
+        var key = JsonSerializer.Serialize(_registryKey, _jsonOptions);
+        var id = JsonSerializer.Serialize(correlationId, _jsonOptions);
+        var serializedReason = JsonSerializer.Serialize(reason, _jsonOptions);
         var script = """
 (function() {
     const state = globalThis.__maniaMapAnalyzerOverlayEngines?.[__KEY__];
@@ -251,7 +251,7 @@ public sealed partial class AnalyzerEngineScriptBridge
 
     private string BuildResetScript()
     {
-        var key = JsonSerializer.Serialize(_registryKey, JsonOptions);
+        var key = JsonSerializer.Serialize(_registryKey, _jsonOptions);
         var script = """
 (function() {
     const registry = globalThis.__maniaMapAnalyzerOverlayEngines;

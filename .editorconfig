@@ -40,6 +40,7 @@ csharp_style_expression_bodied_methods = false:suggestion
 csharp_style_expression_bodied_constructors = false:suggestion
 csharp_style_expression_bodied_properties = true:suggestion
 csharp_style_expression_bodied_accessors = true:suggestion
+csharp_prefer_braces = true:warning
 
 # Naming follows the Microsoft/.NET convention: PascalCase for public API and
 # types, camelCase for locals and parameters, and _camelCase for private fields.
@@ -51,9 +52,13 @@ dotnet_naming_rule.interfaces_should_have_i_prefix.severity = suggestion
 dotnet_naming_rule.interfaces_should_have_i_prefix.symbols = interfaces
 dotnet_naming_rule.interfaces_should_have_i_prefix.style = interface_prefix
 
-dotnet_naming_rule.private_fields_should_be_underscore_camel_case.severity = suggestion
+dotnet_naming_rule.private_fields_should_be_underscore_camel_case.severity = warning
 dotnet_naming_rule.private_fields_should_be_underscore_camel_case.symbols = private_fields
 dotnet_naming_rule.private_fields_should_be_underscore_camel_case.style = underscore_camel_case
+
+dotnet_naming_rule.private_constants_should_be_pascal_case.severity = warning
+dotnet_naming_rule.private_constants_should_be_pascal_case.symbols = private_constants
+dotnet_naming_rule.private_constants_should_be_pascal_case.style = pascal_case
 
 dotnet_naming_rule.public_members_should_be_pascal_case.severity = suggestion
 dotnet_naming_rule.public_members_should_be_pascal_case.symbols = public_members
@@ -77,7 +82,11 @@ dotnet_naming_symbols.interfaces.required_modifiers =
 
 dotnet_naming_symbols.private_fields.applicable_kinds = field
 dotnet_naming_symbols.private_fields.applicable_accessibilities = private, protected
-dotnet_naming_symbols.private_fields.required_modifiers =
+dotnet_naming_symbols.private_fields.required_modifiers = !const
+
+dotnet_naming_symbols.private_constants.applicable_kinds = field
+dotnet_naming_symbols.private_constants.applicable_accessibilities = private, protected
+dotnet_naming_symbols.private_constants.required_modifiers = const
 
 dotnet_naming_symbols.public_members.applicable_kinds = property, method, event, field
 dotnet_naming_symbols.public_members.applicable_accessibilities = public, protected, protected_internal

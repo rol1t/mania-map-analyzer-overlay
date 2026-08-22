@@ -93,10 +93,16 @@ public sealed class WindowsOverlayController : IDisposable
     public bool RegisterHotkeys()
     {
         if (!IsSupported || _registered)
+        {
             return IsSupported;
+        }
+
         var handle = Handle;
         if (handle == IntPtr.Zero)
+        {
             return false;
+        }
+
         var exit = RegisterHotKey(handle, ExitHotkeyId, ModControl | ModShift, VkF10);
         var input = RegisterHotKey(handle, InputHotkeyId, ModControl | ModShift, VkF9);
         _registered = exit && input;
@@ -117,7 +123,10 @@ public sealed class WindowsOverlayController : IDisposable
         // Keep the existing overlay behavior for a live osu! _window, but do
         // not restore/focus osu! when it is already minimized.
         if (IsSupported && GetOsuWindowState() == OsuWindowState.Restored)
+        {
             ReturnFocusToOsu();
+        }
+
         SynchronizeWithOsuWindow();
     }
 
@@ -129,7 +138,10 @@ public sealed class WindowsOverlayController : IDisposable
         // Protected overlay mode disables the top-level _window. Re-enable it
         // before changing mode so Avalonia/WebView can be used normally again.
         if (IsSupported)
+        {
             EnableWindow(Handle, true);
+        }
+
         _overlayMode = false;
         SetClickThrough(false);
         SetInteractive(false);
@@ -139,7 +151,10 @@ public sealed class WindowsOverlayController : IDisposable
     public void ToggleInput()
     {
         if (!_overlayMode)
+        {
             return;
+        }
+
         if (IsOsuInteractionBlocked())
         {
             ProtectForOsu();
@@ -161,13 +176,18 @@ public sealed class WindowsOverlayController : IDisposable
         }
         SetClickThrough(!_clickThrough);
         if (_clickThrough && state == OsuWindowState.Restored)
+        {
             ReturnFocusToOsu();
+        }
     }
 
     public void BeginDrag()
     {
         if (!_overlayMode || !_interactive || _clickThrough || IsOsuInteractionBlocked() || Handle == IntPtr.Zero)
+        {
             return;
+        }
+
         ReleaseCapture();
         SendMessage(Handle, WmNcLButtonDown, (IntPtr)HtCaption, IntPtr.Zero);
     }
@@ -175,7 +195,9 @@ public sealed class WindowsOverlayController : IDisposable
     public void BeginResize(string direction)
     {
         if (!_overlayMode || !_interactive || _clickThrough || IsOsuInteractionBlocked() || !_window.CanResize || Handle == IntPtr.Zero)
+        {
             return;
+        }
 
         var hitTest = direction.Trim().ToLowerInvariant() switch
         {
@@ -190,7 +212,9 @@ public sealed class WindowsOverlayController : IDisposable
             _ => HtClient
         };
         if (hitTest == HtClient)
+        {
             return;
+        }
 
         ReleaseCapture();
         SendMessage(Handle, WmNcLButtonDown, (IntPtr)hitTest, IntPtr.Zero);
@@ -202,7 +226,10 @@ public sealed class WindowsOverlayController : IDisposable
         // osu! is the active user _window. The guard will reevaluate this when
         // focus changes or the foreground process changes.
         if (!enabled && _overlayMode && IsOsuInteractionBlocked())
+        {
             enabled = true;
+        }
+
         if (_clickThrough == enabled)
         {
             ApplyStyles();
@@ -219,7 +246,9 @@ public sealed class WindowsOverlayController : IDisposable
     {
         _osuFocused = focused;
         if (!_overlayMode)
+        {
             return;
+        }
 
         if (focused)
         {
@@ -238,11 +267,15 @@ public sealed class WindowsOverlayController : IDisposable
     public void SetWindowVisible(bool visible)
     {
         if (!IsSupported)
+        {
             throw new PlatformNotSupportedException("Native overlay visibility is only available on Windows.");
+        }
 
         var handle = Handle;
         if (handle == IntPtr.Zero)
+        {
             throw new InvalidOperationException("The overlay _window handle is not available.");
+        }
 
         ShowWindow(handle, visible ? SwShowNoActivate : SwHide);
         if (IsWindowVisible(handle) != visible)
@@ -257,7 +290,10 @@ public sealed class WindowsOverlayController : IDisposable
     private void ProtectForOsu()
     {
         if (!_overlayMode)
+        {
             return;
+        }
+
         SetClickThrough(true);
         SetInteractive(false);
         ApplyStyles();
@@ -266,16 +302,23 @@ public sealed class WindowsOverlayController : IDisposable
     private void ApplyStyles()
     {
         if (!IsSupported || Handle == IntPtr.Zero)
+        {
             return;
+        }
+
         var styles = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
         var windowStyles = GetWindowLongPtr(Handle, GwlStyle).ToInt64();
         if (_overlayMode)
         {
             styles |= WsExToolWindow | WsExNoActivate;
             if (_clickThrough)
+            {
                 styles |= WsExTransparent;
+            }
             else
+            {
                 styles &= ~WsExTransparent;
+            }
             // Avalonia may remove the resize frame while CanResize is false.
             // Keep the native frame available; custom hit testing below only
             // exposes it while the widget is _interactive.
@@ -329,7 +372,10 @@ public sealed class WindowsOverlayController : IDisposable
                 return (IntPtr)MaNoActivateAndEat;
             }
             if (message != WmHotkey)
+            {
                 return IntPtr.Zero;
+            }
+
             if (wParam.ToInt32() == ExitHotkeyId)
             {
                 handled = true;
@@ -356,7 +402,9 @@ public sealed class WindowsOverlayController : IDisposable
     private void SynchronizeWithOsuWindow()
     {
         if (!_overlayMode || !IsSupported)
+        {
             return;
+        }
 
         var processRunning = IsOsuProcessRunning();
         if (_osuProcessRunning != processRunning)
@@ -407,7 +455,13 @@ public sealed class WindowsOverlayController : IDisposable
             {
                 return processes.Length > 0;
             }
-            finally { foreach (var process in processes) process.Dispose(); }
+            finally
+            {
+                foreach (var process in processes)
+                {
+                    process.Dispose();
+                }
+            }
         }
         catch (Exception exception)
         {
@@ -420,7 +474,9 @@ public sealed class WindowsOverlayController : IDisposable
     {
         var foreground = GetForegroundWindow();
         if (foreground == IntPtr.Zero || GetWindowThreadProcessId(foreground, out var processId) == 0 || processId == 0)
+        {
             return false;
+        }
 
         try
         {
@@ -440,7 +496,10 @@ public sealed class WindowsOverlayController : IDisposable
     private void SetInteractive(bool enabled)
     {
         if (_interactive == enabled)
+        {
             return;
+        }
+
         _interactive = enabled;
         InteractionChanged?.Invoke(enabled);
     }
@@ -448,9 +507,14 @@ public sealed class WindowsOverlayController : IDisposable
     private int GetResizeHitTest(IntPtr lParam)
     {
         if (Handle == IntPtr.Zero || !GetWindowRect(Handle, out var rectangle))
+        {
             return HtClient;
+        }
+
         if (!TryGetScreenPoint(lParam, out var point))
+        {
             return HtClient;
+        }
 
         var border = Math.Max(6, GetSystemMetrics(SmCxSizeFrame) + GetSystemMetrics(SmCxPaddedBorder));
         var left = point.X >= rectangle.Left && point.X < rectangle.Left + border;
@@ -459,28 +523,55 @@ public sealed class WindowsOverlayController : IDisposable
         var bottom = point.Y < rectangle.Bottom && point.Y >= rectangle.Bottom - border;
 
         if (left && top)
+        {
             return HtTopLeft;
+        }
+
         if (right && top)
+        {
             return HtTopRight;
+        }
+
         if (left && bottom)
+        {
             return HtBottomLeft;
+        }
+
         if (right && bottom)
+        {
             return HtBottomRight;
+        }
+
         if (left)
+        {
             return HtLeft;
+        }
+
         if (right)
+        {
             return HtRight;
+        }
+
         if (top)
+        {
             return HtTop;
+        }
+
         if (bottom)
+        {
             return HtBottom;
+        }
+
         return HtClient;
     }
 
     private static bool TryGetScreenPoint(IntPtr lParam, out POINT point)
     {
         if (GetCursorPos(out point))
+        {
             return true;
+        }
+
         var value = lParam.ToInt64();
         point = new POINT(unchecked((short)(value & 0xFFFF)), unchecked((short)((value >> 16) & 0xFFFF)));
         return true;
@@ -508,11 +599,18 @@ public sealed class WindowsOverlayController : IDisposable
                 {
                     var handle = process.MainWindowHandle;
                     if (handle == IntPtr.Zero || !IsWindow(handle) || !IsWindowVisible(handle))
+                    {
                         continue;
+                    }
+
                     if (IsIconic(handle))
+                    {
                         minimized = true;
+                    }
                     else
+                    {
                         return OsuWindowState.Restored;
+                    }
                 }
                 catch (Exception exception)
                 {
@@ -525,7 +623,13 @@ public sealed class WindowsOverlayController : IDisposable
             AppLogger.Warning("Inspecting osu! windows", "The osu! _window state could not be determined.", exception);
             return OsuWindowState.Unknown;
         }
-        finally { foreach (var process in processes) process.Dispose(); }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
+        }
         return minimized ? OsuWindowState.Minimized : OsuWindowState.None;
     }
 
@@ -536,13 +640,21 @@ public sealed class WindowsOverlayController : IDisposable
         {
             var process = processes.FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
             if (process is not null)
+            {
                 SetForegroundWindow(process.MainWindowHandle);
+            }
         }
         catch (Exception exception)
         {
             AppLogger.Warning("Returning focus to osu!", "The osu! _window could not be focused.", exception);
         }
-        finally { foreach (var process in processes) process.Dispose(); }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
+        }
     }
 
     public void Dispose()
@@ -554,7 +666,10 @@ public sealed class WindowsOverlayController : IDisposable
             // Ensure a _window disabled for protected overlay input cannot remain
             // disabled after the controller is disposed.
             if (IsSupported)
+            {
                 EnableWindow(handle, true);
+            }
+
             if (_registered && handle != IntPtr.Zero)
             {
                 UnregisterHotKey(handle, ExitHotkeyId);

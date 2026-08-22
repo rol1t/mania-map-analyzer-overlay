@@ -15,7 +15,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 /// </summary>
 public sealed class AnalyzerAdapterCatalog
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         AllowTrailingCommas = true,
         ReadCommentHandling = JsonCommentHandling.Skip
@@ -60,7 +60,7 @@ public sealed class AnalyzerAdapterCatalog
             try
             {
                 manifest = JsonSerializer.Deserialize<AnalyzerAdapterManifest>(
-                    File.ReadAllText(manifestPath), JsonOptions);
+                    File.ReadAllText(manifestPath), _jsonOptions);
             }
             catch (Exception exception)
             {
@@ -108,7 +108,10 @@ public sealed class AnalyzerAdapterCatalog
         var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var fullPath = Path.GetFullPath(Path.Combine(directory, relativePath));
         if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        {
             throw new FileNotFoundException("Analyzer adapter bridge script was not found.", fullPath);
+        }
+
         return fullPath;
     }
 

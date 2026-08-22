@@ -110,9 +110,14 @@ public sealed class UpdateService : IDisposable
             var tosuAsset = FindAsset(tosuRelease, tosuPattern);
             var addonAsset = FindAsset(addonRelease, "^ManiaMapAnalyser\\.by\\.Leo_Black\\.zip$");
             if (tosuAsset is null)
+            {
                 throw new InvalidOperationException("The latest tosu release does not contain a compatible archive for this platform.");
+            }
+
             if (addonAsset is null)
+            {
                 throw new InvalidOperationException("The latest ManiaMapAnalyser release does not contain its archive.");
+            }
 
             result.LatestTosu = tosuRelease.TagName;
             result.LatestAddon = addonRelease.TagName;
@@ -176,7 +181,10 @@ public sealed class UpdateService : IDisposable
             savedState.OffsetsSource = result.OffsetsSource;
             savedState.LastCheckUtc = DateTime.UtcNow;
             if (result.UpdatedTosu || result.UpdatedAddon)
+            {
                 savedState.UpdatedUtc = DateTime.UtcNow;
+            }
+
             await SaveStateAsync(savedState, cancellationToken);
 
             result.Success = true;
@@ -206,9 +214,15 @@ public sealed class UpdateService : IDisposable
         // helper. Linux packages are updated by replacing the AppImage/tar
         // package until a package-manager-specific updater is introduced.
         if (!OperatingSystem.IsWindows())
+        {
             return false;
+        }
+
         if (!File.Exists(AppPaths.UpdaterExecutablePath))
+        {
             return false;
+        }
+
         try
         {
             var process = Process.Start(new ProcessStartInfo
@@ -242,7 +256,10 @@ public sealed class UpdateService : IDisposable
     private async Task<OffsetStatus> CheckLazerOffsetsAsync(string? version, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(version))
+        {
             return new OffsetStatus("not-detected", "");
+        }
+
         foreach (var source in new[] { $"https://tosu.app/offsets/{version}.json", $"https://osuck.net/offsets/{version}.json" })
         {
             try
@@ -251,11 +268,16 @@ public sealed class UpdateService : IDisposable
                 requestTimeout.CancelAfter(TimeSpan.FromSeconds(12));
                 using var response = await _httpClient.GetAsync(source, requestTimeout.Token);
                 if (!response.IsSuccessStatusCode)
+                {
                     continue;
+                }
+
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 var offsets = await JsonSerializer.DeserializeAsync<OffsetResponse>(stream, _jsonOptions, cancellationToken);
                 if (offsets is not null && string.Equals(offsets.OsuVersion, version, StringComparison.OrdinalIgnoreCase))
+                {
                     return new OffsetStatus("supported", source);
+                }
             }
             catch (HttpRequestException exception)
             {
@@ -278,7 +300,9 @@ public sealed class UpdateService : IDisposable
         var executableName = GetTosuExecutableName();
         var files = Directory.EnumerateFiles(extractPath, executableName, SearchOption.AllDirectories).ToArray();
         if (files.Length != 1)
+        {
             throw new InvalidOperationException($"The tosu archive does not contain a single {executableName} executable.");
+        }
 
         Directory.CreateDirectory(AppPaths.TosuDirectory);
         var target = Path.Combine(AppPaths.TosuDirectory, executableName);
@@ -291,7 +315,10 @@ public sealed class UpdateService : IDisposable
         try
         {
             if (File.Exists(target))
+            {
                 File.Move(target, previous, overwrite: true);
+            }
+
             File.Move(staged, target, overwrite: true);
             TryDeleteFile(previous);
             MakeExecutableIfNeeded(target);
@@ -300,7 +327,10 @@ public sealed class UpdateService : IDisposable
         {
             AppLogger.Error("Installing tosu executable", exception);
             if (!File.Exists(target) && File.Exists(previous))
+            {
                 File.Move(previous, target, overwrite: true);
+            }
+
             TryDeleteFile(staged);
             throw;
         }
@@ -316,7 +346,9 @@ public sealed class UpdateService : IDisposable
         var metadataFiles = Directory.EnumerateFiles(extractPath, "metadata.txt", SearchOption.AllDirectories)
             .Where(path => File.ReadAllText(path).Contains("Name: ManiaMapAnalyser", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (metadataFiles.Length != 1)
+        {
             throw new InvalidOperationException("The addon archive does not contain a single ManiaMapAnalyser root.");
+        }
 
         var sourceRoot = Path.GetDirectoryName(metadataFiles[0])!;
         var staticRoot = Path.Combine(AppPaths.TosuDirectory, "static");
@@ -341,7 +373,10 @@ public sealed class UpdateService : IDisposable
         {
             AppLogger.Error("Installing ManiaMapAnalyser", exception);
             if (Directory.Exists(backup) && !Directory.Exists(target))
+            {
                 Directory.Move(backup, target);
+            }
+
             TryDeleteDirectory(staged);
             throw;
         }
@@ -366,7 +401,9 @@ public sealed class UpdateService : IDisposable
                 await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                 copied += read;
                 if (total is > 0)
+                {
                     progress?.Report((int)Math.Clamp(copied * 100 / total.Value, 0, 100));
+                }
             }
             await output.FlushAsync(cancellationToken);
         }
@@ -375,23 +412,32 @@ public sealed class UpdateService : IDisposable
         // hashing. This matters on Windows, where the FileShare.None handle
         // otherwise remains open until the end of the method.
         if (new FileInfo(destination).Length == 0)
+        {
             throw new InvalidOperationException("The downloaded file is empty.");
+        }
 
         if (string.IsNullOrWhiteSpace(asset.Digest) ||
             !asset.Digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+        {
             throw new InvalidOperationException("GitHub did not provide a SHA-256 digest for the downloaded component.");
+        }
 
         await using var hashStream = File.OpenRead(destination);
         var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, cancellationToken));
         var expected = asset.Digest["sha256:".Length..];
         if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+        {
             throw new InvalidOperationException("The downloaded file failed its SHA-256 integrity check.");
+        }
     }
 
     private async Task StopOwnedProcessAsync(string executablePath, CancellationToken cancellationToken)
     {
         if (!File.Exists(executablePath))
+        {
             return;
+        }
+
         var expected = Path.GetFullPath(executablePath);
         foreach (var candidate in Process.GetProcessesByName("tosu"))
         {
@@ -400,9 +446,15 @@ public sealed class UpdateService : IDisposable
                 var path = candidate.MainModule?.FileName;
                 if (path is null || !string.Equals(Path.GetFullPath(path), expected,
                         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                {
                     continue;
+                }
+
                 if (!candidate.HasExited)
+                {
                     candidate.Kill(entireProcessTree: true);
+                }
+
                 await candidate.WaitForExitAsync(cancellationToken);
             }
             catch (InvalidOperationException exception)
@@ -421,7 +473,10 @@ public sealed class UpdateService : IDisposable
     {
         var path = AppPaths.TosuEnvironmentPath;
         if (File.Exists(path))
+        {
             return;
+        }
+
         Directory.CreateDirectory(AppPaths.TosuDirectory);
         File.WriteAllText(path, """
 DEBUG_LOG=false
@@ -467,7 +522,10 @@ STATIC_FOLDER_PATH=./static
             }
         }
         if (!shouldSeed)
+        {
             return;
+        }
+
         Directory.CreateDirectory(folder);
         File.WriteAllText(path, """
 {
@@ -485,7 +543,10 @@ STATIC_FOLDER_PATH=./static
         foreach (var path in new[] { AppPaths.InstallStatePath, Path.Combine(AppPaths.BaseDirectory, "install-state.json") })
         {
             if (!File.Exists(path))
+            {
                 continue;
+            }
+
             try
             {
                 await using var stream = File.OpenRead(path);
@@ -548,7 +609,9 @@ STATIC_FOLDER_PATH=./static
                     {
                         var path = process.MainModule?.FileName;
                         if (path?.Contains("osulazer", StringComparison.OrdinalIgnoreCase) == true)
+                        {
                             candidates.Add(path);
+                        }
                     }
                     catch (Exception exception)
                     {
@@ -568,13 +631,18 @@ STATIC_FOLDER_PATH=./static
         foreach (var path in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!File.Exists(path))
+            {
                 continue;
+            }
+
             try
             {
                 var productVersion = FileVersionInfo.GetVersionInfo(path).ProductVersion ?? "";
                 var match = System.Text.RegularExpressions.Regex.Match(productVersion, @"(?<version>\d{4}\.\d+\.\d+)");
                 if (match.Success)
+                {
                     return match.Groups["version"].Value;
+                }
             }
             catch (Exception exception)
             {
@@ -589,7 +657,10 @@ STATIC_FOLDER_PATH=./static
     private static Version ParseVersion(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
+        {
             return new Version(0, 0, 0, 0);
+        }
+
         var normalized = value.Trim().TrimStart('v', 'V');
         return Version.TryParse(normalized, out var version) ? version : new Version(0, 0, 0, 0);
     }
@@ -600,15 +671,23 @@ STATIC_FOLDER_PATH=./static
     {
         Directory.CreateDirectory(target);
         foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
             Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
+        }
+
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
             File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)), overwrite: true);
+        }
     }
 
     private static void MakeExecutableIfNeeded(string path)
     {
         if (OperatingSystem.IsWindows())
+        {
             return;
+        }
+
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
             UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
     }
@@ -618,7 +697,9 @@ STATIC_FOLDER_PATH=./static
         try
         {
             if (File.Exists(path))
+            {
                 File.Delete(path);
+            }
         }
         catch (Exception exception) { AppLogger.Warning($"Deleting file '{path}'", "Cleanup failed.", exception); }
     }
@@ -628,7 +709,9 @@ STATIC_FOLDER_PATH=./static
         try
         {
             if (Directory.Exists(path))
+            {
                 Directory.Delete(path, recursive: true);
+            }
         }
         catch (Exception exception) { AppLogger.Warning($"Deleting directory '{path}'", "Cleanup failed.", exception); }
     }
@@ -637,13 +720,18 @@ STATIC_FOLDER_PATH=./static
     private void ThrowIfDisposed()
     {
         if (_disposed)
+        {
             throw new ObjectDisposedException(nameof(UpdateService));
+        }
     }
 
     public void Dispose()
     {
         if (_disposed)
+        {
             return;
+        }
+
         _disposed = true;
         _httpClient.Dispose();
     }

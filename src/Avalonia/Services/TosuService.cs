@@ -38,12 +38,16 @@ public sealed class TosuService : IDisposable
                 ServerUrl + "json/v2?overlay_state=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
+            {
                 return null;
+            }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             if (!document.RootElement.TryGetProperty("state", out var state))
+            {
                 return null;
+            }
 
             var stateName = string.Empty;
             if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("name", out var name) &&
@@ -56,7 +60,9 @@ public sealed class TosuService : IDisposable
             if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("number", out var number))
             {
                 if (number.TryGetInt32(out var numericState))
+                {
                     stateNumber = numericState;
+                }
             }
 
             bool? isPlaying = stateName switch
@@ -126,7 +132,9 @@ public sealed class TosuService : IDisposable
             });
 
             if (_process is null)
+            {
                 throw new InvalidOperationException("The operating system did not start tosu.");
+            }
 
             _processJob.Attach(_process);
 
@@ -136,9 +144,12 @@ public sealed class TosuService : IDisposable
 
             var ready = await WaitForServerAsync(cancellationToken);
             if (!ready)
+            {
                 AppLogger.Error(
                     "Starting tosu",
                     new TimeoutException("tosu started, but its local server did not become available."));
+            }
+
             Publish(ready ? "status.tosu_running" : "status.tosu_started_server_unavailable", ready);
         }
         catch (Exception exception)
@@ -162,13 +173,17 @@ public sealed class TosuService : IDisposable
         _processJob?.Dispose();
         _processJob = null;
         if (runningProcess is null)
+        {
             return;
+        }
 
         runningProcess.Exited -= OnProcessExited;
         try
         {
             if (!runningProcess.HasExited)
+            {
                 runningProcess.Kill(entireProcessTree: true);
+            }
         }
         catch (InvalidOperationException exception)
         {
@@ -188,13 +203,17 @@ public sealed class TosuService : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_process is null || _process.HasExited)
+            {
                 return false;
+            }
 
             try
             {
                 using var response = await _httpClient.GetAsync(ServerUrl, cancellationToken);
                 if (response.IsSuccessStatusCode)
+                {
                     return true;
+                }
             }
             catch (HttpRequestException exception)
             {
@@ -226,15 +245,23 @@ public sealed class TosuService : IDisposable
         };
 
         foreach (var candidate in candidates)
+        {
             if (File.Exists(candidate))
+            {
                 return Path.GetFullPath(candidate);
+            }
+        }
+
         return null;
     }
 
     private static void StopStaleBundledInstances(string expectedPath)
     {
         if (!OperatingSystem.IsWindows())
+        {
             return;
+        }
+
         var expected = Path.GetFullPath(expectedPath);
         foreach (var stale in Process.GetProcessesByName("tosu"))
         {
@@ -261,7 +288,9 @@ public sealed class TosuService : IDisposable
     private void OnProcessExited(object? sender, EventArgs e)
     {
         if (!_disposed)
+        {
             Publish("status.tosu_stopped", false);
+        }
     }
 
     private void Publish(string message, bool isRunning) => StateChanged?.Invoke(this, new TosuStateChangedEventArgs(message, isRunning));
@@ -269,13 +298,18 @@ public sealed class TosuService : IDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed)
+        {
             throw new ObjectDisposedException(nameof(TosuService));
+        }
     }
 
     public void Dispose()
     {
         if (_disposed)
+        {
             return;
+        }
+
         _disposed = true;
         Stop();
         _httpClient.Dispose();

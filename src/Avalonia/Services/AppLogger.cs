@@ -1,7 +1,7 @@
 ﻿using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
+using DiagnosticsDebug = global::System.Diagnostics.Debug;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -12,11 +12,13 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 /// </summary>
 public static class AppLogger
 {
-    private static readonly object Sync = new();
+    private static readonly object _sync = new();
 
     public static event EventHandler<AppLogEntry>? ErrorRaised;
 
     public static string LogPath => Path.Combine(AppPaths.DataDirectory, "application.log");
+
+    public static void Debug(string operation, string message) => Write("DEBUG", operation, message, null, false);
 
     public static void Info(string operation, string message) => Write("INFO", operation, message, null, false);
 
@@ -42,7 +44,7 @@ public static class AppLogger
 
         try
         {
-            lock (Sync)
+            lock (_sync)
             {
                 Directory.CreateDirectory(AppPaths.DataDirectory);
                 File.AppendAllText(LogPath, line + Environment.NewLine, new UTF8Encoding(false));
@@ -50,8 +52,8 @@ public static class AppLogger
         }
         catch (Exception loggingException)
         {
-            Debug.WriteLine($"Could not write application log: {loggingException}");
-            Debug.WriteLine(line);
+            DiagnosticsDebug.WriteLine($"Could not write application log: {loggingException}");
+            DiagnosticsDebug.WriteLine(line);
         }
 
         if (level == "ERROR" || (level == "WARN" && exception is not null))
@@ -60,7 +62,7 @@ public static class AppLogger
             {
                 ErrorRaised?.Invoke(null, entry);
             }
-            catch (Exception notificationException) { Debug.WriteLine($"Error notification failed: {notificationException}"); }
+            catch (Exception notificationException) { DiagnosticsDebug.WriteLine($"Error notification failed: {notificationException}"); }
         }
     }
 }

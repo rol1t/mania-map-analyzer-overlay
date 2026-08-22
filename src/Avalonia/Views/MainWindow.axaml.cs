@@ -16,6 +16,7 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
+using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Avalonia.Platform;
@@ -40,30 +41,17 @@ public partial class MainWindow : Window
     private readonly WindowsOverlayController _windowsOverlay;
     private readonly DispatcherTimer _overlayResizeDebounceTimer;
     private readonly DispatcherTimer _overlayGameplayPollTimer;
-    private readonly DispatcherTimer _headlessBeatmapPollTimer;
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
     private readonly AnalyzerEngineCatalog _analyzerEngineCatalog = new();
     private readonly AnalyzerEnginePackageDeployer _analyzerEngineDeployer = new();
     private readonly EffectiveAnalysisConfigurationStore _effectiveAnalysisStore = new();
     private readonly ReplayAnalysisSession _replayAnalysisSession = new();
-    private EffectiveAnalysisConfiguration _effectiveAnalysisConfiguration = EffectiveAnalysisConfigurationStore.CreateDefault();
     private MainViewModel? _model;
     private CancellationTokenSource? _previewPresentationCancellation;
     private CancellationTokenSource? _overlayGameplayPollCancellation;
     private AnalyzerCoordinator? _analyzerCoordinator;
-    private WebViewAnalyzerScriptHost? _analyzerScriptHost;
-    private AnalyzerEngineSupervisor? _analyzerSupervisor;
-    private TosuBeatmapSource? _tosuBeatmapSource;
-    private HttpClient? _tosuBeatmapHttpClient;
-    private CancellationTokenSource? _headlessBeatmapPollCancellation;
-    private int _headlessBeatmapPollInFlight;
-    private string? _lastHeadlessBeatmapKey;
+    private HeadlessAnalysisController? _headlessAnalysisController;
     private AnalyzerEngineSupervisorState? _lastSupervisorState;
-    private DateTime _lastOsuNotRunningLogUtc = DateTime.MinValue;
-    private WidgetAnalysisRunner? _headlessWidgetRunner;
-    private WidgetAnalysisSceneRunner? _headlessSceneRunner;
-    private AnalysisRunScope? _headlessSceneScope;
-    private string? _lastHeadlessSceneKey;
     private AnalysisSnapshot? _lastAnalyzerSnapshot;
     private bool _initialized;
     private bool _overlayMode;
@@ -103,13 +91,19 @@ public partial class MainWindow : Window
         {
             _overlayInteractive = interactive;
             if (_overlayMode)
+            {
                 CanResize = interactive;
+            }
+
             UpdateOverlayVisibility();
         };
         _windowsOverlay.OsuProcessChanged += running =>
         {
             if (running || !_overlayMode)
+            {
                 return;
+            }
+
             Dispatcher.UIThread.Post(() =>
             {
                 ReturnToLauncherAfterGameExit(
@@ -120,8 +114,6 @@ public partial class MainWindow : Window
         _overlayResizeDebounceTimer.Tick += OverlayResizeDebounceTimer_Tick;
         _overlayGameplayPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         _overlayGameplayPollTimer.Tick += OverlayGameplayPollTimer_Tick;
-        _headlessBeatmapPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
-        _headlessBeatmapPollTimer.Tick += HeadlessBeatmapPollTimer_Tick;
         SizeChanged += MainWindow_SizeChanged;
         Opened += async (_, _) =>
         {
@@ -140,29 +132,39 @@ public partial class MainWindow : Window
     {
         AppLogger.ErrorRaised -= AppLogger_ErrorRaised;
         _overlayResizeDebounceTimer.Stop();
-        _headlessBeatmapPollTimer.Stop();
         StopOverlayGameplayPolling();
-        StopHeadlessBeatmapPolling();
         _previewPresentationCancellation?.Cancel();
         _previewPresentationCancellation?.Dispose();
         _windowsOverlay.Dispose();
         _updates.Dispose();
-        _tosuBeatmapHttpClient?.Dispose();
         if (_analyzerCoordinator is not null)
         {
             _analyzerCoordinator.SnapshotChanged -= AnalyzerSnapshotChanged;
         }
 
-        if (_analyzerSupervisor is not null)
+        if (_headlessAnalysisController is not null)
         {
-            _analyzerSupervisor.StateChanged -= AnalyzerSupervisor_StateChanged;
-            _ = _analyzerSupervisor.DisposeAsync().AsTask();
+            _headlessAnalysisController.StateChanged -= HeadlessAnalysisController_StateChanged;
+            _headlessAnalysisController.ResultProduced -= HeadlessAnalysisController_ResultProduced;
+            _headlessAnalysisController.BeatmapSourceStateChanged -= HeadlessAnalysisController_BeatmapSourceStateChanged;
+            var disposeTask = _headlessAnalysisController.DisposeAsync().AsTask();
+            _ = ObserveControllerDisposeAsync(disposeTask);
         }
 
-        DisposeHeadlessRunners();
-        _analyzerScriptHost?.DisposeAsync().AsTask().ConfigureAwait(false);
         _model?.Dispose();
         base.OnClosed(e);
+    }
+
+    private static async Task ObserveControllerDisposeAsync(Task disposeTask)
+    {
+        try
+        {
+            await disposeTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Disposing headless analysis controller", exception, userVisible: false);
+        }
     }
 
     private void AppLogger_ErrorRaised(object? sender, AppLogEntry entry)
@@ -175,7 +177,9 @@ public partial class MainWindow : Window
             var status = statusPrefix + entry.Operation + " — " + entry.Message;
             _model?.SetStatus(status);
             if (!entry.UserVisible || !_initialized || _overlayMode || _showingLoggedError)
+            {
                 return;
+            }
 
             _showingLoggedError = true;
             try
@@ -202,7 +206,10 @@ public partial class MainWindow : Window
     private async Task InitializeAsync()
     {
         if (_initialized)
+        {
             return;
+        }
+
         _initialized = true;
         _model = DataContext as MainViewModel ?? throw new InvalidOperationException("Main view model is unavailable.");
         _analyzerCoordinator = new AnalyzerCoordinator(
@@ -224,7 +231,10 @@ public partial class MainWindow : Window
         ShowMessagePage(L("dialog.prepare.title"), L("dialog.prepare.message"), false);
 
         if (!await CheckUpdatesAsync())
+        {
             return;
+        }
+
         SynchronizeFullscreenState();
         await _model.StartAsync();
         if (_model.Tosu.IsRunning)
@@ -241,7 +251,41 @@ public partial class MainWindow : Window
             ShowMessagePage(L("status.tosu_not_running"), _model.Status, true);
         }
 
-        await InitializeHeadlessEngineAsync();
+        await InitializeHeadlessAnalysisControllerAsync();
+    }
+
+    private async Task InitializeHeadlessAnalysisControllerAsync()
+    {
+        try
+        {
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            var beatmapSource = new TosuBeatmapSource(httpClient, TosuBaseUri);
+            var scriptHostFactory = () => new WebViewAnalyzerScriptHost(Browser);
+            var presenter = new WebViewAnalysisSnapshotPresenter(Browser);
+
+            _headlessAnalysisController = new HeadlessAnalysisController(
+                new HeadlessEngineServices(_analyzerEngineCatalog, _analyzerEngineDeployer, scriptHostFactory),
+                httpClient,
+                beatmapSource,
+                presenter,
+                _effectiveAnalysisStore,
+                TimeSpan.FromMilliseconds(900));
+
+            _headlessAnalysisController.StateChanged += HeadlessAnalysisController_StateChanged;
+            _headlessAnalysisController.ResultProduced += HeadlessAnalysisController_ResultProduced;
+            _headlessAnalysisController.BeatmapSourceStateChanged += HeadlessAnalysisController_BeatmapSourceStateChanged;
+
+            // Ensure the WebView has finished loading the analysis page before
+            // bootstrapping the headless runtime. Injecting the runtime too early
+            // makes globalThis.location.href point at the previous document and
+            // the subsequent navigation resets the bridge, producing engine.runtime_reset.
+            await WaitForAnalysisWebViewReadyAsync();
+            await _headlessAnalysisController.StartAsync();
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Initializing headless analysis controller", exception);
+        }
     }
 
     private void Tosu_StateChanged(object? sender, TosuStateChangedEventArgs e)
@@ -252,9 +296,9 @@ public partial class MainWindow : Window
             if (e.IsRunning)
             {
                 SetControlsEnabled(true);
-                if (_analyzerSupervisor is not null)
+                if (_headlessAnalysisController is not null)
                 {
-                    _ = _analyzerSupervisor.NotifyTosuRestartAsync();
+                    _ = _headlessAnalysisController.NotifyTosuRestartAsync();
                 }
             }
             else if (_initialized && _overlayMode)
@@ -272,7 +316,10 @@ public partial class MainWindow : Window
     private void ReturnToLauncherAfterGameExit(string statusKey)
     {
         if (!_overlayMode)
+        {
             return;
+        }
+
         try
         {
             LeaveOverlayMode();
@@ -281,74 +328,6 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             AppLogger.Error("Returning to launcher after game exit", exception);
-        }
-    }
-
-    private async Task InitializeHeadlessEngineAsync()
-    {
-        try
-        {
-            if (_analyzerSupervisor is not null)
-            {
-                _analyzerSupervisor.StateChanged -= AnalyzerSupervisor_StateChanged;
-                await _analyzerSupervisor.DisposeAsync();
-                _analyzerSupervisor = null;
-            }
-
-            _analyzerScriptHost?.DisposeAsync().AsTask().ConfigureAwait(false);
-            _analyzerScriptHost = new WebViewAnalyzerScriptHost(Browser);
-            _analyzerSupervisor = new AnalyzerEngineSupervisor(
-                _analyzerEngineCatalog,
-                _analyzerEngineDeployer,
-                _analyzerScriptHost);
-            _analyzerSupervisor.StateChanged += AnalyzerSupervisor_StateChanged;
-
-            _tosuBeatmapHttpClient?.Dispose();
-            _tosuBeatmapHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            _tosuBeatmapSource = new TosuBeatmapSource(_tosuBeatmapHttpClient, TosuBaseUri);
-            _effectiveAnalysisConfiguration = _effectiveAnalysisStore.Load();
-            AppLogger.Info(
-                "Effective analysis configuration",
-                $"Loaded effective configuration: engine={_effectiveAnalysisConfiguration.DefaultEngineId} algorithm={_effectiveAnalysisConfiguration.DefaultAlgorithm} widgets={_effectiveAnalysisConfiguration.Widgets.Length}");
-
-            // Ensure the WebView has finished loading the analysis page before
-            // bootstrapping the headless runtime. Injecting the runtime too early
-            // makes globalThis.location.href point at the previous document and
-            // the subsequent navigation resets the bridge, producing engine.runtime_reset.
-            await WaitForAnalysisWebViewReadyAsync();
-
-            var preferredEngineId = string.IsNullOrWhiteSpace(_effectiveAnalysisConfiguration.DefaultEngineId)
-                ? _analyzerEngineCatalog.Available().FirstOrDefault()?.Id
-                : _effectiveAnalysisConfiguration.DefaultEngineId;
-            var state = await _analyzerSupervisor.StartAsync(preferredEngineId);
-            _lastSupervisorState = state;
-            if (state.IsFallback)
-            {
-                AppLogger.Warning(
-                    "Analyzer engine supervisor",
-                    $"Headless engine fallback active: {state.Message} Diagnostics: {string.Join("; ", state.Diagnostics.Select(diagnostic => diagnostic.Code))}");
-                DisposeHeadlessRunners();
-            }
-            else if (state.IsReady)
-            {
-                InitializeHeadlessRunners();
-                StartHeadlessBeatmapPolling();
-            }
-
-            UpdateHeadlessStatusUi(state);
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Error("Initializing headless analyzer engine", exception);
-            var fallbackState = new AnalyzerEngineSupervisorState(
-                AnalyzerEngineSupervisorStatus.Fallback,
-                null,
-                null,
-                $"Headless engine initialization failed: {exception.Message}. Legacy DOM adapter remains the explicit fallback.",
-                [],
-                IsFallback: true,
-                IsReady: false);
-            UpdateHeadlessStatusUi(fallbackState);
         }
     }
 
@@ -408,163 +387,69 @@ public partial class MainWindow : Window
         }
     }
 
-    private void InitializeHeadlessRunners()
-    {
-        DisposeHeadlessRunners();
-        var coordinator = _analyzerSupervisor?.Coordinator;
-        if (coordinator is null)
-        {
-            AppLogger.Warning("Headless runners", "Cannot initialize widget runners: coordinator is not ready.");
-            return;
-        }
-
-        try
-        {
-            _headlessWidgetRunner = new WidgetAnalysisRunner(coordinator);
-            _headlessSceneRunner = new WidgetAnalysisSceneRunner(coordinator);
-            _headlessSceneScope = new AnalysisRunScope("headless-scene");
-            _headlessWidgetRunner.SnapshotComposed += HeadlessWidgetSnapshotComposed;
-            _headlessSceneRunner.SnapshotComposed += HeadlessSceneSnapshotComposed;
-            AppLogger.Info("Headless runners", $"Initialized widget runners for {_effectiveAnalysisConfiguration.Widgets.Length} widget(s).");
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Error("Initializing headless runners", exception);
-        }
-    }
-
-    private void DisposeHeadlessRunners()
-    {
-        if (_headlessWidgetRunner is not null)
-        {
-            _headlessWidgetRunner.SnapshotComposed -= HeadlessWidgetSnapshotComposed;
-            _headlessWidgetRunner.Dispose();
-            _headlessWidgetRunner = null;
-        }
-
-        if (_headlessSceneRunner is not null)
-        {
-            _headlessSceneRunner.SnapshotComposed -= HeadlessSceneSnapshotComposed;
-            _headlessSceneRunner.Dispose();
-            _headlessSceneRunner = null;
-        }
-
-        _headlessSceneScope?.Dispose();
-        _headlessSceneScope = null;
-        _lastHeadlessSceneKey = null;
-    }
-
-    private void HeadlessWidgetSnapshotComposed(ComposedWidgetSnapshot snapshot)
-    {
-        AppLogger.Info(
-            "Headless widget composition",
-            $"Widget '{snapshot.WidgetId}' composed with outcome {snapshot.Outcome} and {snapshot.Metrics.Count} metrics. Diagnostics: {string.Join(", ", snapshot.Diagnostics.Select(diagnostic => diagnostic.Code))}");
-    }
-
-    private void HeadlessSceneSnapshotComposed(WidgetAnalysisSceneSnapshot snapshot)
-    {
-        AppLogger.Info(
-            "Headless scene composition",
-            $"Scene '{snapshot.SceneId}' generation {snapshot.Generation} composed with {snapshot.OrderedSnapshots.Length} widget(s).");
-    }
-
-    private WidgetAnalysisSceneSpec? BuildHeadlessSceneSpec(TosuBeatmapSnapshot snapshot)
-    {
-        var descriptor = _analyzerSupervisor?.ActiveDescriptor;
-        if (descriptor is null)
-        {
-            AppLogger.Warning("Headless composition", "Cannot build scene spec: no active analyzer descriptor.");
-            return null;
-        }
-
-        var widgets = new List<WidgetAnalysisSpec>();
-        foreach (var effectiveWidget in _effectiveAnalysisConfiguration.Widgets)
-        {
-            var sources = new List<AnalysisSourceSpec>();
-            foreach (var effectiveSource in effectiveWidget.Sources)
-            {
-                if (!string.Equals(effectiveSource.EngineId, descriptor.Id, StringComparison.OrdinalIgnoreCase))
-                {
-                    AppLogger.Warning(
-                        "Headless composition",
-                        $"Source '{effectiveSource.SourceId}' requests engine '{effectiveSource.EngineId}' but active is '{descriptor.Id}'. Skipping source.");
-                    continue;
-                }
-
-                var configuration = new AnalysisConfiguration(
-                    effectiveSource.RequestedAlgorithm,
-                    effectiveSource.ConfigurationVersion,
-                    effectiveSource.Options);
-                var request = new AnalysisRequest(
-                    descriptor.Id,
-                    snapshot.Identity,
-                    snapshot.RawBeatmap,
-                    configuration,
-                    effectiveWidget.WidgetId,
-                    snapshot.Rate,
-                    snapshot.Mods);
-                sources.Add(new AnalysisSourceSpec(effectiveSource.SourceId, request, descriptor));
-            }
-
-            if (sources.Count == 0)
-            {
-                AppLogger.Warning("Headless composition", $"Widget '{effectiveWidget.WidgetId}' has no usable sources for active engine '{descriptor.Id}'.");
-                continue;
-            }
-
-            var bindings = effectiveWidget.Bindings.Select(binding =>
-                new WidgetMetricBinding(binding.TargetMetricId, binding.Candidates, binding.AllowsNull));
-            try
-            {
-                widgets.Add(new WidgetAnalysisSpec(effectiveWidget.WidgetId, sources, bindings));
-            }
-            catch (Exception exception)
-            {
-                AppLogger.Warning("Headless composition", $"Widget '{effectiveWidget.WidgetId}' has invalid bindings: {exception.Message}", exception);
-            }
-        }
-
-        if (widgets.Count == 0)
-        {
-            AppLogger.Warning("Headless composition", "No widgets could be built from effective configuration.");
-            return null;
-        }
-
-        try
-        {
-            return new WidgetAnalysisSceneSpec("headless-scene", widgets);
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Warning("Headless composition", $"Could not build scene spec: {exception.Message}", exception);
-            return null;
-        }
-    }
-
-    private void AnalyzerSupervisor_StateChanged(object? sender, AnalyzerEngineSupervisorState state)
+    private void HeadlessAnalysisController_StateChanged(object? sender, AnalyzerEngineSupervisorState state)
     {
         Dispatcher.UIThread.Post(() =>
         {
             _lastSupervisorState = state;
             UpdateHeadlessStatusUi(state);
-            if (state.IsReady)
-            {
-                if (_headlessWidgetRunner is null || _headlessSceneRunner is null)
-                {
-                    InitializeHeadlessRunners();
-                }
+        });
+    }
 
-                if (_headlessBeatmapPollTimer.IsEnabled == false)
-                {
-                    StartHeadlessBeatmapPolling();
-                }
-            }
-            else if (state.IsFallback)
+    private void HeadlessAnalysisController_ResultProduced(object? sender, HeadlessAnalysisResultEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var status = FormatHeadlessResultStatus(e);
+            if (status is not null)
             {
-                DisposeHeadlessRunners();
-                StopHeadlessBeatmapPolling();
+                _model?.SetStatus(status);
             }
         });
+    }
+
+    private void HeadlessAnalysisController_BeatmapSourceStateChanged(object? sender, HeadlessBeatmapSourceStateEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var status = e.State switch
+            {
+                HeadlessBeatmapSourceState.OsuNotRunning => L("status.headless_osu_not_running"),
+                HeadlessBeatmapSourceState.NoBeatmap => L("status.headless_no_beatmap"),
+                _ => null
+            };
+
+            if (status is not null && _model is not null && !string.Equals(_model.Status, status, StringComparison.Ordinal))
+            {
+                _model.SetStatus(status);
+            }
+        });
+    }
+
+    private string? FormatHeadlessResultStatus(HeadlessAnalysisResultEventArgs e)
+    {
+        var diagnosticsSummary = e.Diagnostics.Count == 0
+            ? string.Empty
+            : $" {string.Join("; ", e.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code))}";
+
+        if (e.Outcome == AnalysisOutcome.Partial)
+        {
+            return L("status.headless_partial") + $" {e.ActualAlgorithm ?? e.Beatmap.Metadata.Version} partial" + diagnosticsSummary;
+        }
+
+        if (e.Outcome == AnalysisOutcome.Success)
+        {
+            var star = e.Snapshot.Difficulty.StarRating?.ToString() ?? "n/a";
+            var algo = e.ActualAlgorithm ?? e.Beatmap.Metadata.Version;
+            return L("status.headless_success") + $" {e.Beatmap.Metadata.Title} [{e.Beatmap.Metadata.Version}] {algo} star={star}";
+        }
+
+        if (e.Outcome == AnalysisOutcome.Failed)
+        {
+            return L("status.headless_failed") + diagnosticsSummary + " (DOM fallback)";
+        }
+
+        return null;
     }
 
     private void UpdateHeadlessStatusUi(AnalyzerEngineSupervisorState state)
@@ -597,327 +482,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void StartHeadlessBeatmapPolling()
-    {
-        if (_tosuBeatmapSource is null)
-        {
-            return;
-        }
-
-        StopHeadlessBeatmapPolling();
-        _headlessBeatmapPollCancellation = new CancellationTokenSource();
-        _headlessBeatmapPollTimer.Start();
-        _ = PollHeadlessBeatmapAsync();
-    }
-
-    private void StopHeadlessBeatmapPolling()
-    {
-        _headlessBeatmapPollTimer.Stop();
-        _headlessBeatmapPollCancellation?.Cancel();
-        _headlessBeatmapPollCancellation?.Dispose();
-        _headlessBeatmapPollCancellation = null;
-    }
-
-    private async void HeadlessBeatmapPollTimer_Tick(object? sender, EventArgs e) =>
-        await PollHeadlessBeatmapAsync();
-
-    private async Task PollHeadlessBeatmapAsync()
-    {
-        if (_tosuBeatmapSource is null || _analyzerSupervisor is null || Interlocked.Exchange(ref _headlessBeatmapPollInFlight, 1) != 0)
-        {
-            return;
-        }
-
-        var cancellationToken = _headlessBeatmapPollCancellation?.Token ?? CancellationToken.None;
-
-        try
-        {
-            TosuBeatmapSnapshot snapshot;
-            try
-            {
-                snapshot = await _tosuBeatmapSource.GetCurrentAsync(cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (TosuBeatmapSourceException exception)
-            {
-                if (IsOsuNotRunningBeatmapException(exception))
-                {
-                    var now = DateTime.UtcNow;
-                    if (now - _lastOsuNotRunningLogUtc > TimeSpan.FromSeconds(5))
-                    {
-                        _lastOsuNotRunningLogUtc = now;
-                        AppLogger.Info("Headless beatmap poll", "osu! client is not running — headless beatmap fetch skipped (tosu HTTP 500).");
-                    }
-
-                    _lastHeadlessBeatmapKey = null;
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        // Show a friendly non-error status instead of an exception dialog.
-                        // Keep the legacy DOM adapter as fallback while the game is closed.
-                        if (_model is not null && !string.Equals(_model.Status, L("status.headless_osu_not_running"), StringComparison.Ordinal))
-                        {
-                            _model.SetStatus(L("status.headless_osu_not_running"));
-                        }
-                    });
-
-                    return;
-                }
-
-                if (IsNoBeatmapBeatmapException(exception))
-                {
-                    var now = DateTime.UtcNow;
-                    if (now - _lastOsuNotRunningLogUtc > TimeSpan.FromSeconds(5))
-                    {
-                        _lastOsuNotRunningLogUtc = now;
-                        AppLogger.Info("Headless beatmap poll", "No current beatmap is available — osu! is running but no map is selected.");
-                    }
-
-                    // Do not treat as error: keep polling and do not overwrite a useful status
-                    // with a stale map. Clearing the key forces a re-analysis once a map appears.
-                    _lastHeadlessBeatmapKey = null;
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        if (_model is not null && string.IsNullOrWhiteSpace(_model.Status))
-                        {
-                            _model.SetStatus(L("status.headless_no_beatmap"));
-                        }
-                    });
-
-                    return;
-                }
-
-                AppLogger.Warning("Headless beatmap poll", exception.Message, exception);
-                return;
-            }
-
-            var key = snapshot.Identity.StableKey + "|" + snapshot.Rate.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", snapshot.Mods) + "|" + snapshot.RawBeatmap.Length;
-            var effectiveKey = _effectiveAnalysisConfiguration.ConfigurationVersion + "|" + _effectiveAnalysisConfiguration.DefaultEngineId + "|" + _effectiveAnalysisConfiguration.DefaultAlgorithm + "|" + _effectiveAnalysisConfiguration.Widgets.Length;
-            var combinedKey = key + "|" + effectiveKey;
-            var sceneKey = snapshot.Identity.StableKey + "|" + snapshot.Rate.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", snapshot.Mods) + "|" + effectiveKey;
-            if (string.Equals(combinedKey, _lastHeadlessBeatmapKey, StringComparison.Ordinal) &&
-                string.Equals(sceneKey, _lastHeadlessSceneKey, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            // Scene generation is invalidated when map/rate/mods or effective config changes.
-            var isNewSceneGeneration = !string.Equals(sceneKey, _lastHeadlessSceneKey, StringComparison.Ordinal);
-            if (isNewSceneGeneration)
-            {
-                AppLogger.Info("Headless scene", $"Effective scene generation invalidated: newKey={sceneKey}");
-            }
-
-            _lastHeadlessBeatmapKey = combinedKey;
-            _lastHeadlessSceneKey = sceneKey;
-            AppLogger.Info(
-                "Headless beatmap poll",
-                $"New beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} rate={snapshot.Rate} mods=[{string.Join(",", snapshot.Mods)}] effective={effectiveKey}");
-
-            // Prefer composed widget/scene execution so shared analyzer results are de-duplicated
-            // and rate/mods are execution dimensions per source, not per beatmap generation.
-            if (_headlessSceneRunner is not null && _headlessWidgetRunner is not null)
-            {
-                var sceneSpec = BuildHeadlessSceneSpec(snapshot);
-                if (sceneSpec is not null)
-                {
-                    try
-                    {
-                        var sceneSnapshot = await _headlessSceneRunner.RunAsync(sceneSpec, cancellationToken);
-                        Dispatcher.UIThread.Post(() =>
-                        {
-                            foreach (var widgetSnapshot in sceneSnapshot.OrderedSnapshots)
-                            {
-                                var outcomeText = widgetSnapshot.Outcome switch
-                                {
-                                    AnalysisOutcome.Success => "Success",
-                                    AnalysisOutcome.Partial => "Partial",
-                                    AnalysisOutcome.Failed => "Failed",
-                                    AnalysisOutcome.Cancelled => "Cancelled",
-                                    _ => widgetSnapshot.Outcome.ToString()
-                                };
-                                var metricsSummary = string.Join(", ", widgetSnapshot.Metrics.Take(4).Select(metric => metric.Key + "=" + metric.Value.Metric.Value.ToString()));
-                                var diagnosticsSummary = widgetSnapshot.Diagnostics.Length == 0
-                                    ? string.Empty
-                                    : $" Diagnostics: {string.Join("; ", widgetSnapshot.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message))}";
-                                AppLogger.Info(
-                                    "Headless scene result",
-                                    $"Widget '{widgetSnapshot.WidgetId}' outcome={outcomeText} metrics=[{metricsSummary}]{diagnosticsSummary}");
-                            }
-
-                            var first = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
-                            if (first is not null)
-                            {
-                                if (first.Outcome == AnalysisOutcome.Partial)
-                                {
-                                    var diag = first.Diagnostics.Length == 0 ? string.Empty : $" {string.Join("; ", first.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code))}";
-                                    _model?.SetStatus(L("status.headless_partial") + $" {first.Metrics.Values.FirstOrDefault()?.Provenance.ActualAlgorithm ?? snapshot.Metadata.Version} partial" + diag);
-                                }
-                                else if (first.Outcome == AnalysisOutcome.Success)
-                                {
-                                    var star = first.Metrics.TryGetValue("difficulty.star", out var metric) ? metric.Metric.Value.ToString() ?? "n/a" : "n/a";
-                                    var algo = first.Metrics.Values.FirstOrDefault()?.Provenance.ActualAlgorithm ?? snapshot.Metadata.Version;
-                                    _model?.SetStatus(L("status.headless_success") + $" {snapshot.Metadata.Title} [{snapshot.Metadata.Version}] {algo} star={star}");
-                                }
-                                else if (first.Outcome == AnalysisOutcome.Failed)
-                                {
-                                    var diag = first.Diagnostics.Length == 0 ? string.Empty : $" {string.Join("; ", first.Diagnostics.Take(2).Select(diagnostic => diagnostic.Code))}";
-                                    _model?.SetStatus(L("status.headless_failed") + diag + " (DOM fallback)");
-                                }
-                            }
-                        });
-
-                        // Push the domain-level snapshot to the WebView so the renderer can consume it without querying DOM selectors.
-                        try
-                        {
-                            var firstWidget = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
-                            if (firstWidget is not null)
-                            {
-                                var headlessSnapshot = HeadlessSnapshotConverter.FromComposed(snapshot, null, firstWidget);
-                                await PushHeadlessSnapshotAsync(headlessSnapshot, cancellationToken);
-                            }
-                        }
-                        catch (Exception pushException)
-                        {
-                            AppLogger.Warning("Headless snapshot push", $"Failed to push scene snapshot: {pushException.Message}", pushException);
-                        }
-
-                        return;
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        AppLogger.Info("Headless scene", $"Scene generation for {sceneKey} was superseded by a newer map/config generation.");
-                        return;
-                    }
-                    catch (Exception exception)
-                    {
-                        AppLogger.Warning("Headless scene composition", $"Scene composition failed for {sceneKey}: {exception.Message}", exception);
-                    }
-                }
-            }
-
-            var result = await _analyzerSupervisor.AnalyzeAsync(snapshot, cancellationToken: cancellationToken);
-            if (result is null)
-            {
-                AppLogger.Info("Headless analysis", $"Headless analysis returned no result for {snapshot.Identity.StableKey}. DOM adapter remains the explicit fallback for this beatmap.");
-                return;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-            {
-                var outcomeText = result.Outcome switch
-                {
-                    AnalysisOutcome.Success => "Success",
-                    AnalysisOutcome.Partial => "Partial (inspect diagnostics)",
-                    AnalysisOutcome.Failed => "Failed (fallback to DOM)",
-                    AnalysisOutcome.Cancelled => "Cancelled",
-                    _ => result.Outcome.ToString()
-                };
-                var metricsSummary = string.Join(", ", result.Metrics.Take(4).Select(metric => metric.Key + "=" + metric.Value.Value.ToString()));
-                var diagnosticsSummary = result.Diagnostics.Length == 0
-                    ? string.Empty
-                    : $" Diagnostics: {string.Join("; ", result.Diagnostics.Take(3).Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message))}";
-                AppLogger.Info(
-                    "Headless analysis result",
-                    $"Beatmap {snapshot.Identity.StableKey} outcome={outcomeText} metrics=[{metricsSummary}]{diagnosticsSummary}");
-
-                if (result.Outcome == AnalysisOutcome.Partial)
-                {
-                    _model?.SetStatus(L("status.headless_partial") + $" {result.ActualAlgorithm ?? snapshot.Metadata.Version} partial" + diagnosticsSummary);
-                }
-                else if (result.Outcome == AnalysisOutcome.Success)
-                {
-                    _model?.SetStatus(L("status.headless_success") + $" {snapshot.Metadata.Title} [{snapshot.Metadata.Version}] {result.ActualAlgorithm} star={result.Metrics.GetValueOrDefault("difficulty.star")?.Value.ToString() ?? "n/a"}");
-                }
-                else if (result.Outcome == AnalysisOutcome.Failed)
-                {
-                    _model?.SetStatus(L("status.headless_failed") + diagnosticsSummary + " (DOM fallback)");
-                }
-            });
-
-            try
-            {
-                var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
-                await PushHeadlessSnapshotAsync(headlessSnapshot, cancellationToken);
-            }
-            catch (Exception pushException)
-            {
-                AppLogger.Warning("Headless snapshot push", $"Failed to push single snapshot: {pushException.Message}", pushException);
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Error("Polling headless beatmap", exception, userVisible: false);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _headlessBeatmapPollInFlight, 0);
-        }
-    }
-
-    private async Task PushHeadlessSnapshotAsync(AnalysisSnapshot snapshot, CancellationToken cancellationToken)
-    {
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            var script = $"window.dispatchEvent(new CustomEvent('analysis:snapshot', {{detail: {json}}})); if (typeof window._overlayRenderAnalysisSnapshot === 'function') window._overlayRenderAnalysisSnapshot({json});";
-            await Browser.InvokeScript(script);
-            AppLogger.Info("Headless snapshot push", $"Pushed headless snapshot for beatmap {snapshot.Beatmap.Title} [{snapshot.Beatmap.Version}] to WebView.");
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Warning("Pushing headless snapshot", $"Could not push headless snapshot to WebView: {exception.Message}", exception);
-        }
-    }
-
-    private static bool IsOsuNotRunningBeatmapException(TosuBeatmapSourceException exception)
-    {
-        var message = exception.Message ?? string.Empty;
-        if (message.Contains("500", StringComparison.Ordinal) &&
-            message.Contains("osu", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var inner = exception.InnerException?.Message ?? string.Empty;
-        return inner.Contains("500", StringComparison.Ordinal) &&
-               inner.Contains("osu", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsNoBeatmapBeatmapException(TosuBeatmapSourceException exception)
-    {
-        var message = exception.Message ?? string.Empty;
-        if (message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var inner = exception.InnerException?.Message ?? string.Empty;
-        return inner.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
-               inner.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-               inner.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase);
-    }
-
     private async Task<bool> CheckUpdatesAsync()
     {
         if (_model is null)
+        {
             return false;
+        }
+
         _model.SetStatus(L("status.checking_updates"));
         try
         {
@@ -925,7 +496,10 @@ public partial class MainWindow : Window
                 _model.SetStatus(LocalizeUpdateMessage(update.Message)));
             var result = await _updates.CheckComponentsAsync(progress: progress);
             if (!result.Success)
+            {
                 throw new InvalidOperationException(result.Error ?? L("status.update_failed"));
+            }
+
             if (result.LauncherUpdateAvailable)
             {
                 var accept = await ConfirmAsync(L("dialog.update_available.title"),
@@ -937,11 +511,18 @@ public partial class MainWindow : Window
                 }
             }
             if (result.UpdatedTosu || result.UpdatedAddon)
+            {
                 _model.SetStatus(L("status.components_updated"));
+            }
             else if (string.Equals(result.Compatibility, "unsupported", StringComparison.OrdinalIgnoreCase))
+            {
                 await InfoAsync(L("dialog.compatibility.title"), UiText.Format("dialog.compatibility.message", result.LazerVersion));
+            }
+
             if (!string.IsNullOrWhiteSpace(result.Warning))
+            {
                 _model.SetStatus(LocalizeResourceOrText(result.Warning));
+            }
 
             SetComponentPreparationState(false);
             return true;
@@ -1003,12 +584,18 @@ public partial class MainWindow : Window
     private void SynchronizeFullscreenState()
     {
         if (_model is null)
+        {
             return;
+        }
+
         var enabled = _fullscreen.ReadEnabled(_model.Settings.FullscreenOverlayEnabled);
         if (enabled && !ActiveAnalyzer.Descriptor.SupportsFullscreen)
         {
             if (_fullscreen.IsSupported)
+            {
                 _fullscreen.SetEnabled(false);
+            }
+
             enabled = false;
         }
         _model.Settings.FullscreenOverlayEnabled = enabled;
@@ -1027,7 +614,10 @@ public partial class MainWindow : Window
     private void ApplyLanguage()
     {
         if (_model is null)
+        {
             return;
+        }
+
         Title = L("window.title");
         BrandText.Text = L("app.brand");
         AnalysisButton.Content = L("button.map_analysis");
@@ -1068,7 +658,10 @@ public partial class MainWindow : Window
     private void RefreshLanguageSelector()
     {
         if (LanguageSelector is null)
+        {
             return;
+        }
+
         _updatingLanguageSelector = true;
         try
         {
@@ -1106,7 +699,9 @@ public partial class MainWindow : Window
     private void UpdatePreviewScaleText()
     {
         if (PreviewScaleText is not null && _model is not null)
+        {
             PreviewScaleText.Content = _model.Settings.OverlayScalePercent + "%";
+        }
     }
 
     private void Navigate(string url)
@@ -1148,14 +743,14 @@ public partial class MainWindow : Window
                 await ApplyPresentationAsync();
             }
 
-            if (_analyzerSupervisor is not null)
+            if (_headlessAnalysisController is not null)
             {
-                var status = _analyzerSupervisor.CurrentState.Status;
+                var status = _headlessAnalysisController.CurrentState.Status;
                 if (status == AnalyzerEngineSupervisorStatus.Ready ||
                     status == AnalyzerEngineSupervisorStatus.Fallback ||
                     status == AnalyzerEngineSupervisorStatus.Error)
                 {
-                    await _analyzerSupervisor.NotifyNavigationAsync();
+                    await _headlessAnalysisController.NotifyNavigationAsync();
                 }
             }
         }
@@ -1179,16 +774,19 @@ public partial class MainWindow : Window
     private void HandleBrowserWebMessage(WebMessageReceivedEventArgs e)
     {
         if (string.IsNullOrEmpty(e.Body))
+        {
             return;
+        }
+
         var message = e.Body;
 
         if (message.StartsWith(AnalyzerEngineScriptBridge.NativeMessagePrefix, StringComparison.Ordinal))
         {
             // WebViewAnalyzerScriptHost already subscribes to Browser.WebMessageReceived and forwards
             // this message to the bridge. Logging here is sufficient and avoids duplicate delivery.
-            if (_analyzerSupervisor is not null && !_analyzerSupervisor.IsReady)
+            if (_headlessAnalysisController is not null && !_headlessAnalysisController.CurrentState.IsReady)
             {
-                AppLogger.Info("Analyzer engine bridge", $"Received bridge message while supervisor state={_analyzerSupervisor.CurrentState.Status}.");
+                AppLogger.Info("Analyzer engine bridge", $"Received bridge message while supervisor state={_headlessAnalysisController.CurrentState.Status}.");
             }
 
             return;
@@ -1200,11 +798,20 @@ public partial class MainWindow : Window
             return;
         }
         if (TryHandleGameplayStateTrace(message))
+        {
             return;
+        }
+
         if (TryHandleAnalyzerMessage(message))
+        {
             return;
+        }
+
         if (!_overlayMode)
+        {
             return;
+        }
+
         if (message == "overlay:drag")
         {
             _windowsOverlay.BeginDrag();
@@ -1219,25 +826,37 @@ public partial class MainWindow : Window
         if (message == "overlay:play:1")
         {
             if (!_overlayNativePlayStateKnown)
+            {
                 SetOverlaySuppressedByPlay(true, _overlayIsPaused);
+            }
+
             return;
         }
         if (message == "overlay:play:0")
         {
             if (!_overlayNativePlayStateKnown)
+            {
                 SetOverlaySuppressedByPlay(false, false);
+            }
+
             return;
         }
         if (message == "overlay:pause:1")
         {
             if (!_overlayNativePlayStateKnown && _overlayPlayStateKnown)
+            {
                 SetOverlaySuppressedByPlay(_overlayIsPlaying, true);
+            }
+
             return;
         }
         if (message == "overlay:pause:0")
         {
             if (!_overlayNativePlayStateKnown && _overlayPlayStateKnown)
+            {
                 SetOverlaySuppressedByPlay(_overlayIsPlaying, false);
+            }
+
             return;
         }
         if (message == "overlay:focus:1")
@@ -1259,18 +878,25 @@ public partial class MainWindow : Window
         }
         const string sizePrefix = "overlay:size:";
         if (!message.StartsWith(sizePrefix, StringComparison.Ordinal))
+        {
             return;
+        }
+
         var values = message[sizePrefix.Length..].Split(',');
         if (values.Length == 3 && int.TryParse(values[0], out var width) && int.TryParse(values[1], out var height) &&
             float.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+        {
             ResizeOverlayToWidget(width, height);
+        }
     }
 
     private bool TryHandleGameplayStateTrace(string message)
     {
         const string prefix = "overlay:state-debug:";
         if (!message.StartsWith(prefix, StringComparison.Ordinal))
+        {
             return false;
+        }
 
         try
         {
@@ -1320,7 +946,9 @@ public partial class MainWindow : Window
         bool? isFocused)
     {
         if (!_overlayMode)
+        {
             return;
+        }
 
         var signature = string.Join(
             '|',
@@ -1331,7 +959,9 @@ public partial class MainWindow : Window
             isFocused?.ToString() ?? "null");
         if (_lastGameplayTraceBySource.TryGetValue(source, out var previousSignature) &&
             string.Equals(previousSignature, signature, StringComparison.Ordinal))
+        {
             return;
+        }
 
         _lastGameplayTraceBySource[source] = signature;
         AppLogger.Info(
@@ -1346,7 +976,9 @@ public partial class MainWindow : Window
     {
         const string prefix = "analysis:";
         if (!message.StartsWith(prefix, StringComparison.Ordinal))
+        {
             return false;
+        }
 
         var payload = message[prefix.Length..];
         var separator = payload.IndexOf(':');
@@ -1366,21 +998,31 @@ public partial class MainWindow : Window
 
     private void AnalyzerSnapshotChanged(AnalysisSnapshot snapshot)
     {
-        _lastAnalyzerSnapshot = snapshot;
+        if (_headlessAnalysisController is not { IsHeadlessActive: true })
+        {
+            _lastAnalyzerSnapshot = snapshot;
+        }
         if (!_overlayMode || _overlayNativePlayStateKnown || snapshot.Gameplay.IsPlaying is not bool isPlaying)
+        {
             return;
+        }
 
         Dispatcher.UIThread.Post(() =>
         {
             if (_overlayMode)
+            {
                 SetOverlaySuppressedByPlay(isPlaying, snapshot.Gameplay.IsPaused);
+            }
         });
     }
 
     private async Task ApplyPresentationAsync()
     {
         if (_model is null)
+        {
             return;
+        }
+
         await ApplyPresentationAsync(_model.Settings, _overlayMode, updateFullscreen: true, reportErrors: true, CancellationToken.None);
     }
 
@@ -1412,11 +1054,13 @@ public partial class MainWindow : Window
                 "Overlay replay layout state",
                 replayLayoutState ?? "The WebView returned no replay layout state.");
             if (updateFullscreen && settings.FullscreenOverlayEnabled)
+            {
                 _fullscreen.WriteRuntime(
                     settings,
                     analyzer.Descriptor,
                     scripts.FullscreenSetupScript,
                     scripts.FullscreenObserverScript);
+            }
         }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -1440,7 +1084,9 @@ public partial class MainWindow : Window
         finally
         {
             if (entered)
+            {
                 _presentationGate.Release();
+            }
         }
     }
 
@@ -1460,7 +1106,9 @@ public partial class MainWindow : Window
         finally
         {
             if (entered)
+            {
                 _presentationGate.Release();
+            }
         }
     }
 
@@ -1469,7 +1117,10 @@ public partial class MainWindow : Window
         try
         {
             if (_model is null)
+            {
                 return;
+            }
+
             _overlayResizeDebounceTimer.Stop();
             _overlayResizeScaleUpdatePending = false;
             _overlayNativeResizePending = false;
@@ -1477,7 +1128,10 @@ public partial class MainWindow : Window
             _overlayResizeGuardUntilUtc = default;
             var next = Math.Clamp(_model.Settings.OverlayScalePercent + delta, 50, 180);
             if (next == _model.Settings.OverlayScalePercent)
+            {
                 return;
+            }
+
             _model.Settings.OverlayScalePercent = next;
             _model.SaveSettings();
             UpdatePreviewScaleText();
@@ -1546,15 +1200,15 @@ public partial class MainWindow : Window
             _replayAnalysisSession.Import(buffer.ToArray(), file.Name);
             _model.SetStatus(UiText.Format("replay.import.selected", file.Name));
 
-            if (_tosuBeatmapSource is null)
+            if (_headlessAnalysisController is null)
             {
                 _model.SetStatus(L("replay.import.no_beatmap_source"));
                 return;
             }
 
-            var beatmap = await _tosuBeatmapSource.GetCurrentAsync();
+            var beatmap = await _headlessAnalysisController.BeatmapSource.GetCurrentAsync();
             var result = await _replayAnalysisSession.AnalyzeAsync(beatmap);
-            var baseSnapshot = _lastAnalyzerSnapshot;
+            var baseSnapshot = _headlessAnalysisController.LastSnapshot;
             if (baseSnapshot is null)
             {
                 baseSnapshot = HeadlessSnapshotConverter.FromComposed(
@@ -1564,7 +1218,7 @@ public partial class MainWindow : Window
             }
 
             var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
-            await PushHeadlessSnapshotAsync(replaySnapshot, CancellationToken.None);
+            await _headlessAnalysisController.PushSnapshotAsync(replaySnapshot, CancellationToken.None);
             AppLogger.Info(
                 "Replay import",
                 $"file={file.Name}; outcome={result.Outcome}; metrics={result.Metrics.Count}; " +
@@ -1603,7 +1257,10 @@ public partial class MainWindow : Window
     private async void Appearance_Click(object? sender, RoutedEventArgs e)
     {
         if (_model is null)
+        {
             return;
+        }
+
         var dialog = new AppearanceDialog(_model.Settings);
         dialog.PreviewChanged += AppearancePreviewChanged;
         bool accepted;
@@ -1632,7 +1289,10 @@ public partial class MainWindow : Window
             var selectedAnalyzer = _presentation.ResolveAnalyzer(dialog.AnalyzerProviderId);
             var settingsUri = selectedAnalyzer.GetSettingsUri(TosuBaseUri);
             if (settingsUri is not null)
+            {
                 Navigate(settingsUri.ToString());
+            }
+
             return;
         }
         var analyzerChanged = !string.Equals(
@@ -1641,7 +1301,10 @@ public partial class MainWindow : Window
             StringComparison.OrdinalIgnoreCase);
         _model.Settings.AnalyzerProviderId = dialog.AnalyzerProviderId;
         if (analyzerChanged)
+        {
             _analyzerCoordinator?.Switch(_model.Settings.AnalyzerProviderId);
+        }
+
         _model.Settings.OverlayLayoutMode = dialog.LayoutMode;
         _model.Settings.OverlayPresetId = dialog.PresetId;
         _model.Settings.OverlayScalePercent = dialog.ScalePercent;
@@ -1650,7 +1313,10 @@ public partial class MainWindow : Window
         if (_model.Settings.FullscreenOverlayEnabled && !ActiveAnalyzer.Descriptor.SupportsFullscreen)
         {
             if (_fullscreen.IsSupported)
+            {
                 _fullscreen.SetEnabled(false);
+            }
+
             _model.Settings.FullscreenOverlayEnabled = false;
             restartForFullscreen = true;
         }
@@ -1661,14 +1327,20 @@ public partial class MainWindow : Window
         }
         _model.SaveSettings();
         if (restartForFullscreen)
+        {
             await _model.RestartAsync();
+        }
+
         Navigate(AnalysisUrl);
     }
 
     private void AppearancePreviewChanged(LauncherSettings previewSettings)
     {
         if (_model is null || !ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+        {
             return;
+        }
+
         _previewPresentationCancellation?.Cancel();
         _previewPresentationCancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
@@ -1711,19 +1383,14 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _effectiveAnalysisConfiguration = _effectiveAnalysisStore.Load();
-            AppLogger.Info(
-                "Effective analysis mapping",
-                $"Reloaded mapping: {_effectiveAnalysisConfiguration.Widgets.Length} widget(s), engine={_effectiveAnalysisConfiguration.DefaultEngineId}, algorithm={_effectiveAnalysisConfiguration.DefaultAlgorithm}");
-            InitializeHeadlessRunners();
-            _lastHeadlessSceneKey = null;
-            _lastHeadlessBeatmapKey = null;
-            if (_analyzerSupervisor?.IsReady == true)
+            if (_headlessAnalysisController is null)
             {
-                _ = PollHeadlessBeatmapAsync();
+                return;
             }
 
-            _model?.SetStatus(L("mapping.title") + ": " + _effectiveAnalysisConfiguration.Widgets.Length + " widget(s)");
+            await _headlessAnalysisController.ReloadConfigurationAsync();
+            var widgetCount = _headlessAnalysisController.CurrentConfiguration.Widgets.Length;
+            _model?.SetStatus(L("mapping.title") + ": " + widgetCount + " widget(s)");
         }
         catch (Exception exception)
         {
@@ -1747,12 +1414,18 @@ public partial class MainWindow : Window
     private async void Restart_Click(object? sender, RoutedEventArgs e)
     {
         if (_model is null)
+        {
             return;
+        }
+
         SetComponentPreparationState(_componentPreparationFailed);
         SetControlsEnabled(false);
         ShowMessagePage(L("dialog.prepare_tosu.title"), L("dialog.prepare_tosu.message"), false);
         if (!await CheckUpdatesAsync())
+        {
             return;
+        }
+
         await _model.RestartAsync();
         var running = _model.Tosu.IsRunning;
         if (running)
@@ -1766,29 +1439,35 @@ public partial class MainWindow : Window
             ShowMessagePage(L("status.tosu_not_running"), L("dialog.components_error.message"), true);
         }
         SetControlsEnabled(running, keepRestart: !running);
-        if (running)
+        if (running && _headlessAnalysisController is not null)
         {
             Navigate(AnalysisUrl);
-            await InitializeHeadlessEngineAsync();
+            await WaitForAnalysisWebViewReadyAsync();
+            await _headlessAnalysisController.RestartAsync();
         }
 
-        if (!running && _analyzerSupervisor is not null)
+        if (!running && _headlessAnalysisController is not null)
         {
-            await _analyzerSupervisor.NotifyTosuRestartAsync();
+            await _headlessAnalysisController.NotifyTosuRestartAsync();
         }
     }
 
     private void LanguageSelector_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_model is null || _updatingLanguageSelector || LanguageSelector.SelectedItem is not LanguageOption selected)
+        {
             return;
+        }
+
         UiText.Initialize(selected.Id);
         _model.Settings.Language = UiText.CurrentLanguage;
         _model.SaveSettings();
         ApplyLanguage();
         _model.SetStatus(L(_model.Tosu.IsRunning ? "status.tosu_running" : "status.tosu_not_running"), _model.Tosu.IsRunning);
         if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+        {
             Browser.Refresh();
+        }
     }
 
     private async void Overlay_Click(object? sender, RoutedEventArgs e)
@@ -1803,7 +1482,10 @@ public partial class MainWindow : Window
     private async Task EnterOverlayModeAsync()
     {
         if (_model is null || _overlayMode)
+        {
             return;
+        }
+
         if (OperatingSystem.IsWindows() && !_windowsOverlay.RegisterHotkeys())
         {
             await InfoAsync(L("dialog.hotkey.title"), L("dialog.hotkey.message"));
@@ -1870,7 +1552,10 @@ public partial class MainWindow : Window
     private void LeaveOverlayMode()
     {
         if (!_overlayMode || _model is null)
+        {
             return;
+        }
+
         SaveOverlayBounds();
         _overlayInteractive = false;
         StopOverlayGameplayPolling();
@@ -1911,7 +1596,10 @@ public partial class MainWindow : Window
     private void ResizeOverlayToWidget(int physicalWidth, int physicalHeight)
     {
         if (!_overlayMode || physicalWidth is < 120 or > 2400 || physicalHeight is < 80 or > 3200)
+        {
             return;
+        }
+
         if (_overlayInteractive)
         {
             if (_overlayExpectedWidgetPhysicalWidth is int expectedWidth)
@@ -1920,7 +1608,10 @@ public partial class MainWindow : Window
                 if (!matchesExpectedWidth &&
                     (_overlayNativeResizePending || _overlayResizeScaleUpdateRunning ||
                      DateTime.UtcNow < _overlayResizeGuardUntilUtc))
+                {
                     return;
+                }
+
                 if (!matchesExpectedWidth || DateTime.UtcNow >= _overlayResizeGuardUntilUtc)
                 {
                     _overlayExpectedWidgetPhysicalWidth = null;
@@ -1939,9 +1630,14 @@ public partial class MainWindow : Window
         var targetSize = new Size(physicalWidth / RenderScaling, physicalHeight / RenderScaling);
         var sizeChanged = !IsCloseToSize(ClientSize, targetSize);
         if (sizeChanged)
+        {
             _ignoredProgrammaticOverlaySize = targetSize;
+        }
         else
+        {
             _ignoredProgrammaticOverlaySize = null;
+        }
+
         _suppressOverlayResizeFeedback = true;
         try
         {
@@ -1960,9 +1656,15 @@ public partial class MainWindow : Window
     private void MainWindow_SizeChanged(object? sender, SizeChangedEventArgs e)
     {
         if (!_overlayMode)
+        {
             return;
+        }
+
         if (!_overlayInteractive || _suppressOverlayResizeFeedback)
+        {
             return;
+        }
+
         if (_ignoredProgrammaticOverlaySize is Size programmaticSize && IsCloseToSize(ClientSize, programmaticSize))
         {
             _ignoredProgrammaticOverlaySize = null;
@@ -1977,7 +1679,10 @@ public partial class MainWindow : Window
     private void QueueOverlayScaleUpdate()
     {
         if (!_overlayMode || !_overlayInteractive || _suppressOverlayResizeFeedback)
+        {
             return;
+        }
+
         _overlayResizeDebounceTimer.Stop();
         _overlayResizeDebounceTimer.Start();
     }
@@ -2014,10 +1719,15 @@ public partial class MainWindow : Window
     private async Task ApplyOverlayScaleFromWindowAsync()
     {
         if (!_overlayMode || !_overlayInteractive || _suppressOverlayResizeFeedback || _model is null)
+        {
             return;
+        }
+
         var baseWidth = GetOverlayBaseWidth(_model.Settings.OverlayLayoutMode);
         if (baseWidth <= 0 || ClientSize.Width <= 0)
+        {
             return;
+        }
 
         var next = Math.Clamp((int)Math.Round(ClientSize.Width / baseWidth * 100d), 50, 180);
         if (next == _model.Settings.OverlayScalePercent)
@@ -2072,14 +1782,18 @@ public partial class MainWindow : Window
         _overlaySuppressedByPolicy = suppressed;
         UpdateOverlayVisibility();
         if (stateChanged)
+        {
             LogOverlayGameplayState(visibilityPolicy, isPlaying, isPaused);
+        }
     }
 
     private void StartOverlayGameplayPolling()
     {
         StopOverlayGameplayPolling();
         if (_model is null)
+        {
             return;
+        }
 
         _overlayGameplayPollCancellation = new CancellationTokenSource();
         _overlayGameplayPollTimer.Start();
@@ -2100,7 +1814,9 @@ public partial class MainWindow : Window
     private async Task PollOverlayGameplayStateAsync()
     {
         if (!_overlayMode || _model is null || Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
+        {
             return;
+        }
 
         var cancellationToken = _overlayGameplayPollCancellation?.Token ?? CancellationToken.None;
         try
@@ -2114,7 +1830,10 @@ public partial class MainWindow : Window
                     {
                         _overlayNativePlayStateKnown = true;
                         if (state.IsPlaying is bool isPlaying)
+                        {
                             SetOverlaySuppressedByPlay(isPlaying, state.IsPaused);
+                        }
+
                         TraceGameplayState("native-http", state.Name, state.Number, state.IsPlaying, state.IsPaused, null);
                     }
                 });
@@ -2137,7 +1856,9 @@ public partial class MainWindow : Window
     private void UpdateOverlayVisibility()
     {
         if (!_overlayMode)
+        {
             return;
+        }
         // A size report is an optimization for synchronizing the native
         // window bounds, not a prerequisite for visibility. If WebView has
         // not reported its first measurement yet, the saved/default client
@@ -2149,12 +1870,16 @@ public partial class MainWindow : Window
     private void SetOverlayWindowVisibility(bool visible)
     {
         if (_overlayWindowVisible == visible)
+        {
             return;
+        }
 
         try
         {
             if (visible)
+            {
                 Opacity = 1;
+            }
 
             if (OperatingSystem.IsWindows())
             {
@@ -2170,7 +1895,10 @@ public partial class MainWindow : Window
             }
 
             if (!visible)
+            {
                 Opacity = 0;
+            }
+
             _overlayWindowVisible = visible;
         }
         catch (Exception exception)
@@ -2197,7 +1925,9 @@ public partial class MainWindow : Window
     private string ResolveOverlayVisibilityPolicy()
     {
         if (_model is null)
+        {
             return OverlayVisibilityPolicy.Always;
+        }
 
         var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
                               (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
@@ -2209,7 +1939,10 @@ public partial class MainWindow : Window
     private void SaveOverlayBounds()
     {
         if (!_overlayMode || _model is null)
+        {
             return;
+        }
+
         _model.Settings.OverlayX = Position.X;
         _model.Settings.OverlayY = Position.Y;
         _model.Settings.OverlayWidth = (int)Math.Ceiling(ClientSize.Width * RenderScaling);
@@ -2220,14 +1953,20 @@ public partial class MainWindow : Window
     private async void Fullscreen_Click(object? sender, RoutedEventArgs e)
     {
         if (_model is null || !_fullscreen.IsSupported || !ActiveAnalyzer.Descriptor.SupportsFullscreen)
+        {
             return;
+        }
+
         var enable = !_fullscreen.ReadEnabled(_model.Settings.FullscreenOverlayEnabled);
         var confirmed = await ConfirmAsync(L("dialog.fullscreen.title"),
             enable
                 ? L("dialog.fullscreen.enable")
                 : L("dialog.fullscreen.disable"));
         if (!confirmed)
+        {
             return;
+        }
+
         try
         {
             _fullscreen.SetEnabled(enable);
@@ -2247,7 +1986,9 @@ public partial class MainWindow : Window
                     UiText.Format("dialog.fullscreen.enabled_message", ActiveAnalyzer.Descriptor.Name));
             }
             else
+            {
                 Navigate(AnalysisUrl);
+            }
         }
         catch (Exception exception)
         {
