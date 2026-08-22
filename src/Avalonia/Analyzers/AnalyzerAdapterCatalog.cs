@@ -21,12 +21,12 @@ public sealed class AnalyzerAdapterCatalog
         ReadCommentHandling = JsonCommentHandling.Skip
     };
 
-    private readonly Lazy<IReadOnlyList<AnalyzerAdapterPackage>> packages;
+    private readonly Lazy<IReadOnlyList<AnalyzerAdapterPackage>> _packages;
 
-    public AnalyzerAdapterCatalog() => packages = new Lazy<IReadOnlyList<AnalyzerAdapterPackage>>(LoadPackages);
+    public AnalyzerAdapterCatalog() => _packages = new Lazy<IReadOnlyList<AnalyzerAdapterPackage>>(LoadPackages);
 
     public string RootDirectory => Path.Combine(AppPaths.BaseDirectory, "Assets", "analyzers");
-    public IReadOnlyList<AnalyzerAdapterPackage> List() => packages.Value;
+    public IReadOnlyList<AnalyzerAdapterPackage> List() => _packages.Value;
 
     public AnalyzerAdapterPackage Require(string? id)
     {

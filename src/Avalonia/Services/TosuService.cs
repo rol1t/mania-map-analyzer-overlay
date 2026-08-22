@@ -13,15 +13,15 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 public sealed class TosuService : IDisposable
 {
     private const string ServerUrl = "http://127.0.0.1:24050/";
-    private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };
-    private Process? process;
-    private WindowsProcessJob? processJob;
-    private bool disposed;
+    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };
+    private Process? _process;
+    private WindowsProcessJob? _processJob;
+    private bool _disposed;
 
     public event EventHandler<TosuStateChangedEventArgs>? StateChanged;
 
     public string? ExecutablePath => FindExecutable();
-    public bool IsRunning => process is { HasExited: false };
+    public bool IsRunning => _process is { HasExited: false };
 
     /// <summary>
     /// Reads the authoritative osu! gameplay state from tosu. The overlay uses
@@ -34,7 +34,7 @@ public sealed class TosuService : IDisposable
 
         try
         {
-            using var response = await httpClient.GetAsync(
+            using var response = await _httpClient.GetAsync(
                 ServerUrl + "json/v2?overlay_state=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -99,7 +99,7 @@ public sealed class TosuService : IDisposable
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (process is { HasExited: false })
+        if (_process is { HasExited: false })
         {
             Publish("status.tosu_already_running", true);
             return;
@@ -115,9 +115,9 @@ public sealed class TosuService : IDisposable
         try
         {
             StopStaleBundledInstances(executable);
-            processJob?.Dispose();
-            processJob = new WindowsProcessJob();
-            process = Process.Start(new ProcessStartInfo
+            _processJob?.Dispose();
+            _processJob = new WindowsProcessJob();
+            _process = Process.Start(new ProcessStartInfo
             {
                 FileName = executable,
                 WorkingDirectory = Path.GetDirectoryName(executable)!,
@@ -125,13 +125,13 @@ public sealed class TosuService : IDisposable
                 CreateNoWindow = true
             });
 
-            if (process is null)
+            if (_process is null)
                 throw new InvalidOperationException("The operating system did not start tosu.");
 
-            processJob.Attach(process);
+            _processJob.Attach(_process);
 
-            process.EnableRaisingEvents = true;
-            process.Exited += OnProcessExited;
+            _process.EnableRaisingEvents = true;
+            _process.Exited += OnProcessExited;
             Publish("status.tosu_starting", false);
 
             var ready = await WaitForServerAsync(cancellationToken);
@@ -157,10 +157,10 @@ public sealed class TosuService : IDisposable
 
     public void Stop()
     {
-        var runningProcess = process;
-        process = null;
-        processJob?.Dispose();
-        processJob = null;
+        var runningProcess = _process;
+        _process = null;
+        _processJob?.Dispose();
+        _processJob = null;
         if (runningProcess is null)
             return;
 
@@ -187,12 +187,12 @@ public sealed class TosuService : IDisposable
         for (var attempt = 0; attempt < 80; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (process is null || process.HasExited)
+            if (_process is null || _process.HasExited)
                 return false;
 
             try
             {
-                using var response = await httpClient.GetAsync(ServerUrl, cancellationToken);
+                using var response = await _httpClient.GetAsync(ServerUrl, cancellationToken);
                 if (response.IsSuccessStatusCode)
                     return true;
             }
@@ -260,7 +260,7 @@ public sealed class TosuService : IDisposable
 
     private void OnProcessExited(object? sender, EventArgs e)
     {
-        if (!disposed)
+        if (!_disposed)
             Publish("status.tosu_stopped", false);
     }
 
@@ -268,17 +268,17 @@ public sealed class TosuService : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (disposed)
+        if (_disposed)
             throw new ObjectDisposedException(nameof(TosuService));
     }
 
     public void Dispose()
     {
-        if (disposed)
+        if (_disposed)
             return;
-        disposed = true;
+        _disposed = true;
         Stop();
-        httpClient.Dispose();
+        _httpClient.Dispose();
     }
 }
 

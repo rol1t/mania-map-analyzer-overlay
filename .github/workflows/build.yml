@@ -27,6 +27,10 @@ jobs:
         run: dotnet restore ManiaMapAnalyzerOverlay.sln
       - name: Verify C# formatting
         run: dotnet format ManiaMapAnalyzerOverlay.sln --no-restore --verify-no-changes --verbosity minimal
+      - name: Build solution
+        run: dotnet build ManiaMapAnalyzerOverlay.sln --configuration Release --no-restore --nologo
+      - name: Run tests
+        run: dotnet test ManiaMapAnalyzerOverlay.sln --configuration Release --no-build --nologo
       - name: Build application payload (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

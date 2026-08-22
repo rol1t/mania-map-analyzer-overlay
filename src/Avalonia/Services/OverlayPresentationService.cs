@@ -12,8 +12,8 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 /// </summary>
 public sealed class OverlayPresentationService
 {
-    private readonly OverlayPresetCatalog presets;
-    private readonly AnalyzerAdapterCatalog analyzers;
+    private readonly OverlayPresetCatalog _presets;
+    private readonly AnalyzerAdapterCatalog _analyzers;
 
     public OverlayPresentationService()
         : this(new OverlayPresetCatalog(), new AnalyzerAdapterCatalog())
@@ -22,8 +22,8 @@ public sealed class OverlayPresentationService
 
     public OverlayPresentationService(OverlayPresetCatalog presets, AnalyzerAdapterCatalog analyzers)
     {
-        this.presets = presets;
-        this.analyzers = analyzers;
+        this._presets = presets;
+        this._analyzers = analyzers;
     }
 
     public PresentationScripts Build(LauncherSettings settings, bool overlayMode)
@@ -32,14 +32,14 @@ public sealed class OverlayPresentationService
                               (settings.OverlayPresetId == "default" && settings.OverlayLayoutMode != "default")
             ? settings.OverlayLayoutMode
             : settings.OverlayPresetId;
-        var preset = presets.Require(requestedPreset);
-        var analyzer = analyzers.Require(settings.AnalyzerProviderId);
+        var preset = _presets.Require(requestedPreset);
+        var analyzer = _analyzers.Require(settings.AnalyzerProviderId);
         var layout = NormalizeLayout(preset.Id);
         var scale = Math.Clamp(settings.OverlayScalePercent, 50, 180) / 100d;
         var presetWidth = GetPresetWidth(layout);
 
-        var css = presets.ReadStylesheet(preset.Id) ?? string.Empty;
-        var template = presets.ReadTemplate(preset.Id) ?? string.Empty;
+        var css = _presets.ReadStylesheet(preset.Id) ?? string.Empty;
+        var template = _presets.ReadTemplate(preset.Id) ?? string.Empty;
         var customCss = layout == "custom" ? CustomCssService.Read() : string.Empty;
         var interactionCss = RequireRuntimeAsset("interaction.css");
         var resizeHandleCss = RequireRuntimeAsset("resize-handles.css");
@@ -62,7 +62,7 @@ public sealed class OverlayPresentationService
         return new PresentationScripts(setup, observer, fullscreenSetup, fullscreenObserver);
     }
 
-    public AnalyzerAdapterPackage ResolveAnalyzer(string? analyzerId) => analyzers.Require(analyzerId);
+    public AnalyzerAdapterPackage ResolveAnalyzer(string? analyzerId) => _analyzers.Require(analyzerId);
 
     public static string NormalizeLayout(string? layout)
     {
@@ -79,7 +79,7 @@ public sealed class OverlayPresentationService
     };
 
     private string RequireRuntimeAsset(string fileName) =>
-        presets.ReadRuntimeAsset(fileName) ?? throw new FileNotFoundException(
+        _presets.ReadRuntimeAsset(fileName) ?? throw new FileNotFoundException(
             $"Overlay runtime resource '{fileName}' was not found. Rebuild the application package.", fileName);
 
     private static string BuildSetupScript(
@@ -109,7 +109,7 @@ public sealed class OverlayPresentationService
             "document.documentElement.classList.toggle('overlay-layout-companella'," + Bool(layout == "companella") + ");" +
             "document.documentElement.classList.toggle('overlay-layout-companella-replay'," + Bool(layout == "companella-replay") + ");" +
             "document.documentElement.classList.toggle('overlay-layout-custom'," + Bool(layout == "custom") + ");" +
-            "if(!" + Bool(transparent) + "){var fitPreview=function(){var root=document.documentElement,hostScale=parseFloat(root.style.getPropertyValue('--overlay-host-scale'))||1,base=parseFloat(root.style.getPropertyValue('--overlay-preset-width'))||760,available=Math.max(240,(window.innerWidth-36)/hostScale);root.style.setProperty('--overlay-preview-width',Math.min(base,available)+'px');};if(window.__overlayPreviewFit)window.removeEventListener('resize',window.__overlayPreviewFit);window.__overlayPreviewFit=fitPreview;window.addEventListener('resize',fitPreview);fitPreview();}else{if(window.__overlayPreviewFit)window.removeEventListener('resize',window.__overlayPreviewFit);window.__overlayPreviewFit=null;document.documentElement.style.removeProperty('--overlay-preview-width');}" +
+            "if(!" + Bool(transparent) + "){var fitPreview=function(){var root=document.documentElement,hostScale=parseFloat(root.style.getPropertyValue('--overlay-host-scale'))||1,base=parseFloat(root.style.getPropertyValue('--overlay-preset-width'))||760,available=Math.max(240,(window.innerWidth-36)/hostScale);root.style.setProperty('--overlay-preview-width',Math.min(base,available)+'px');};if(window._overlayPreviewFit)window.removeEventListener('resize',window._overlayPreviewFit);window._overlayPreviewFit=fitPreview;window.addEventListener('resize',fitPreview);fitPreview();}else{if(window._overlayPreviewFit)window.removeEventListener('resize',window._overlayPreviewFit);window._overlayPreviewFit=null;document.documentElement.style.removeProperty('--overlay-preview-width');}" +
             "document.querySelectorAll('[data-overlay-host-root]').forEach(function(node){node.removeAttribute('data-overlay-host-root');});var card=document.querySelector(" + Js(hostSelector) + ");if(card){card.setAttribute('data-overlay-host-root','');card.querySelectorAll('[data-overlay-preset-node]').forEach(function(node){node.remove();});var markup=" + Js(template) + ";if(markup){var parsed=document.createElement('template');parsed.innerHTML=markup;var anchorSelector=" + Js(presetAnchorSelector ?? string.Empty) + ",anchor=anchorSelector?card.querySelector(anchorSelector):null;Array.from(parsed.content.children).filter(function(node){return node.hasAttribute('data-overlay-preset-node');}).forEach(function(node){card.insertBefore(node,anchor);});}}" +
             "})();";
     }
@@ -128,7 +128,7 @@ public sealed class OverlayPresentationService
             hostSelector,
             resizeHandleCss
         });
-        return "window.__overlayHostConfig=" + configuration + ";" + Environment.NewLine +
+        return "window._overlayHostConfig=" + configuration + ";" + Environment.NewLine +
                hostScript + Environment.NewLine +
                rendererScript + Environment.NewLine +
                adapterScript;

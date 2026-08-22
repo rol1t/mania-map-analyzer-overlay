@@ -28,15 +28,15 @@ public sealed class UpdateService : IDisposable
     private const string AddonRepository = "LeoBlackMT/osumania_map_analyser";
     private const string UserAgent = "ManiaMapAnalyzerOverlay/2.3.0";
 
-    private readonly HttpClient httpClient;
-    private readonly JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web);
-    private bool disposed;
+    private readonly HttpClient _httpClient;
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private bool _disposed;
 
     public UpdateService()
     {
-        httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
-        httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", "2.3.0"));
-        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", "2.3.0"));
+        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
     }
 
     // Kept for compatibility with callers of the previous script-backed service.
@@ -232,10 +232,10 @@ public sealed class UpdateService : IDisposable
     {
         using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         requestTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-        using var response = await httpClient.GetAsync($"https://api.github.com/repos/{repository}/releases/latest", requestTimeout.Token);
+        using var response = await _httpClient.GetAsync($"https://api.github.com/repos/{repository}/releases/latest", requestTimeout.Token);
         response.EnsureSuccessStatusCode();
         await using var content = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonSerializer.DeserializeAsync<GitHubRelease>(content, jsonOptions, cancellationToken)
+        return await JsonSerializer.DeserializeAsync<GitHubRelease>(content, _jsonOptions, cancellationToken)
             ?? throw new InvalidOperationException($"GitHub returned an empty release for {repository}.");
     }
 
@@ -249,11 +249,11 @@ public sealed class UpdateService : IDisposable
             {
                 using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 requestTimeout.CancelAfter(TimeSpan.FromSeconds(12));
-                using var response = await httpClient.GetAsync(source, requestTimeout.Token);
+                using var response = await _httpClient.GetAsync(source, requestTimeout.Token);
                 if (!response.IsSuccessStatusCode)
                     continue;
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                var offsets = await JsonSerializer.DeserializeAsync<OffsetResponse>(stream, jsonOptions, cancellationToken);
+                var offsets = await JsonSerializer.DeserializeAsync<OffsetResponse>(stream, _jsonOptions, cancellationToken);
                 if (offsets is not null && string.Equals(offsets.OsuVersion, version, StringComparison.OrdinalIgnoreCase))
                     return new OffsetStatus("supported", source);
             }
@@ -352,7 +352,7 @@ public sealed class UpdateService : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Get, asset.DownloadUrl);
         request.Headers.UserAgent.ParseAdd(UserAgent);
         request.Headers.Accept.ParseAdd("application/octet-stream");
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         var total = response.Content.Headers.ContentLength;
         await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
@@ -371,7 +371,7 @@ public sealed class UpdateService : IDisposable
             await output.FlushAsync(cancellationToken);
         }
 
-        // The write stream must be disposed before opening the destination for
+        // The write stream must be _disposed before opening the destination for
         // hashing. This matters on Windows, where the FileShare.None handle
         // otherwise remains open until the end of the method.
         if (new FileInfo(destination).Length == 0)
@@ -489,7 +489,7 @@ STATIC_FOLDER_PATH=./static
             try
             {
                 await using var stream = File.OpenRead(path);
-                return await JsonSerializer.DeserializeAsync<InstallState>(stream, jsonOptions, cancellationToken) ?? new InstallState();
+                return await JsonSerializer.DeserializeAsync<InstallState>(stream, _jsonOptions, cancellationToken) ?? new InstallState();
             }
             catch (Exception exception)
             {
@@ -503,7 +503,7 @@ STATIC_FOLDER_PATH=./static
     {
         Directory.CreateDirectory(AppPaths.DataDirectory);
         await using var stream = File.Create(AppPaths.InstallStatePath);
-        await JsonSerializer.SerializeAsync(stream, state, jsonOptions, cancellationToken);
+        await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken);
     }
 
     private bool HasUsableComponents() =>
@@ -636,16 +636,16 @@ STATIC_FOLDER_PATH=./static
 
     private void ThrowIfDisposed()
     {
-        if (disposed)
+        if (_disposed)
             throw new ObjectDisposedException(nameof(UpdateService));
     }
 
     public void Dispose()
     {
-        if (disposed)
+        if (_disposed)
             return;
-        disposed = true;
-        httpClient.Dispose();
+        _disposed = true;
+        _httpClient.Dispose();
     }
 
     private sealed record OffsetStatus(string Status, string Source);

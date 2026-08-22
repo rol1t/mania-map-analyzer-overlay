@@ -2,9 +2,6 @@
   <PropertyGroup>
     <OutputType Condition="'$(OS)' == 'Windows_NT'">WinExe</OutputType>
     <OutputType Condition="'$(OS)' != 'Windows_NT'">Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <Version>2.3.0</Version>
     <AssemblyVersion>2.3.0.0</AssemblyVersion>
     <FileVersion>2.3.0.0</FileVersion>

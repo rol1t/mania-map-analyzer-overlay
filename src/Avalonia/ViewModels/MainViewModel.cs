@@ -8,14 +8,14 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.ViewModels;
 
 public sealed class MainViewModel : ViewModelBase, IDisposable
 {
-    private readonly SettingsStore settingsStore;
-    private string status = UiText.Get("status.tosu_not_running");
-    private bool isRunning;
+    private readonly SettingsStore _settingsStore;
+    private string _status = UiText.Get("status.tosu_not_running");
+    private bool _isRunning;
 
     public MainViewModel()
     {
-        settingsStore = new SettingsStore();
-        Settings = settingsStore.Load();
+        _settingsStore = new SettingsStore();
+        Settings = _settingsStore.Load();
         Tosu = new TosuService();
         Tosu.StateChanged += OnTosuStateChanged;
     }
@@ -33,11 +33,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            return status;
+            return _status;
         }
+
         private set
         {
-            SetProperty(ref status, value);
+            SetProperty(ref _status, value);
         }
     }
 
@@ -45,11 +46,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            return isRunning;
+            return _isRunning;
         }
+
         private set
         {
-            SetProperty(ref isRunning, value);
+            SetProperty(ref _isRunning, value);
         }
     }
 
@@ -67,8 +69,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         await Tosu.RestartAsync();
     }
 
-    public void Stop() => Tosu.Stop();
-    public void SaveSettings() => settingsStore.Save(Settings);
+    public void Stop()
+    {
+        Tosu.Stop();
+    }
+
+    public void SaveSettings()
+    {
+        _settingsStore.Save(Settings);
+    }
     public void SetStatus(string message, bool running = false)
     {
         Status = message;

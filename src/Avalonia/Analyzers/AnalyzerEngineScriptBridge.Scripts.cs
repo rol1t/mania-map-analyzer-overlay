@@ -301,11 +301,11 @@ public sealed partial class AnalyzerEngineScriptBridge
     private static string NormalizeRoot(string path)
     {
         var normalized = path.Trim().Replace('\\', '/');
-        if (!normalized.StartsWith("/", StringComparison.Ordinal))
+        if (!normalized.StartsWith('/'))
         {
             normalized = "/" + normalized;
         }
 
-        return normalized.EndsWith("/", StringComparison.Ordinal) ? normalized : normalized + "/";
+        return normalized.EndsWith('/') ? normalized : normalized + "/";
     }
 }
