@@ -20,6 +20,8 @@
   let beatmap = emptyBeatmap();
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
+  let pauseCoach = null;
+  let lastPlayingHits = null;
 
   function emptyBeatmap() {
     return {
@@ -312,6 +314,195 @@
     }
   }
 
+  function parsePlayHits(play) {
+    const source = play && typeof play === "object" && play.hits && typeof play.hits === "object" ? play.hits : null;
+    function pick(names) {
+      if (!source) return null;
+      for (const name of names) {
+        if (Object.prototype.hasOwnProperty.call(source, name)) {
+          const value = finiteNumber(source[name]);
+          if (value !== null) return value;
+        }
+      }
+      return null;
+    }
+    return {
+      "300": pick(["300", "count300"]),
+      "200": pick(["200", "count200"]),
+      "100": pick(["100", "count100"]),
+      "50": pick(["50", "count50"]),
+      geki: pick(["geki", "countGeki", "gekis"]),
+      katu: pick(["katu", "countKatu", "katus"]),
+      miss: pick(["0", "miss", "countMiss", "count0"]),
+      _raw: source,
+    };
+  }
+
+  function sumHits(hits) {
+    if (!hits) return null;
+    const keys = ["300", "200", "100", "50", "geki", "katu"];
+    let sum = 0;
+    let has = false;
+    for (const key of keys) {
+      const value = hits[key];
+      if (value !== null && Number.isFinite(value)) {
+        sum += value;
+        has = true;
+      }
+    }
+    return has ? sum : null;
+  }
+
+  function createPauseCoach(currentReplay, play, currentHits) {
+    const sampleCount = currentReplay.sampleCount;
+    const meanMs = currentReplay.meanMs;
+    const medianMs = currentReplay.medianMs;
+    const unstableRate = currentReplay.ur;
+    const earlyCount = currentReplay.earlyCount;
+    const lateCount = currentReplay.lateCount;
+    let earlyLateRatio = null;
+    if (typeof earlyCount === "number" && typeof lateCount === "number" && earlyCount > 0 && lateCount > 0) {
+      const ratio = earlyCount / lateCount;
+      earlyLateRatio = Number.isFinite(ratio) ? ratio : null;
+    }
+    const driftMs = meanMs;
+    const recentOffsets = Array.isArray(currentReplay.recentOffsets) ? currentReplay.recentOffsets.slice(-20) : [];
+    const hasEnoughSamples = typeof sampleCount === "number" && sampleCount >= 10;
+    let timingMargin = "unknown";
+    if (hasEnoughSamples && unstableRate !== null && Number.isFinite(unstableRate)) {
+      if (unstableRate < 80) timingMargin = "tight";
+      else if (unstableRate < 140) timingMargin = "moderate";
+      else timingMargin = "wide";
+    }
+    const wholeHits = sumHits(currentHits);
+    const wholeMisses = currentHits ? currentHits.miss : null;
+    const wholeAccuracy = finiteNumber(play && play.accuracy);
+    const recentAccuracy = null;
+    let recentHits = null;
+    let recentMisses = null;
+    if (currentHits) {
+      if (wholeHits !== null) {
+        if (lastPlayingHits) {
+          const prevWhole = sumHits(lastPlayingHits);
+          if (prevWhole !== null && Number.isFinite(prevWhole)) {
+            const delta = wholeHits - prevWhole;
+            recentHits = delta >= 0 ? delta : wholeHits;
+          } else {
+            recentHits = wholeHits;
+          }
+        } else {
+          recentHits = 0;
+        }
+      }
+      if (wholeMisses !== null) {
+        if (lastPlayingHits && lastPlayingHits.miss !== null && Number.isFinite(lastPlayingHits.miss)) {
+          const delta = wholeMisses - lastPlayingHits.miss;
+          recentMisses = delta >= 0 ? delta : wholeMisses;
+        } else if (lastPlayingHits) {
+          recentMisses = wholeMisses;
+        } else {
+          recentMisses = 0;
+        }
+      }
+    }
+    if (recentHits !== null && !Number.isFinite(recentHits)) recentHits = null;
+    if (recentMisses !== null && !Number.isFinite(recentMisses)) recentMisses = null;
+
+    const mapProgressMs = currentReplay.mapProgressMs;
+    const score = finiteNumber(play && play.score);
+    const accuracy = wholeAccuracy;
+    const health = finiteNumber(play && (play.health ?? play.hp ?? play.life));
+    const combo = finiteNumber(play && (play.combo ?? play.currentCombo ?? play.comboCurrent));
+    const maxCombo = finiteNumber(play && (play.maxCombo ?? play.maximumCombo ?? play.max_combo));
+    const failed = play && typeof play.failed === "boolean" ? play.failed : false;
+    let mods = [];
+    if (play && play.mods !== undefined && play.mods !== null) {
+      if (Array.isArray(play.mods)) {
+        mods = play.mods.map(function (value) { return String(value).trim(); }).filter(Boolean).map(function (value) { return value.toUpperCase(); });
+      } else if (typeof play.mods === "object" && Array.isArray(play.mods.array)) {
+        mods = play.mods.array.map(function (entry) {
+          if (entry && typeof entry === "object" && typeof entry.acronym === "string") return entry.acronym.trim().toUpperCase();
+          return String(entry).trim().toUpperCase();
+        }).filter(Boolean);
+      } else {
+        const raw = String(play.mods).trim();
+        if (raw) {
+          mods = raw.split(/[\s,;+]+/).map(function (value) { return value.trim().toUpperCase(); }).filter(Boolean);
+        }
+      }
+    }
+
+    const insights = [];
+    if (hasEnoughSamples) {
+      if (meanMs !== null && Math.abs(meanMs) > 8) {
+        const direction = meanMs < 0 ? "early" : "late";
+        insights.push({
+          code: "pausecoach.timing.drift_" + direction,
+          message: "Aggregate bias " + meanMs.toFixed(1) + "ms " + direction + " (n=" + sampleCount + ", provisional aggregate).",
+          confidence: 0.6,
+        });
+      }
+      if (unstableRate !== null && Number.isFinite(unstableRate) && unstableRate > 45) {
+        insights.push({
+          code: "pausecoach.timing.unstable",
+          message: "UR " + unstableRate.toFixed(1) + " suggests unstable timing (n=" + sampleCount + ", provisional).",
+          confidence: 0.55,
+        });
+      }
+      if (earlyLateRatio !== null && Number.isFinite(earlyLateRatio) && (earlyLateRatio > 2 || earlyLateRatio < 0.5) && insights.length === 0) {
+        insights.push({
+          code: "pausecoach.timing.imbalance",
+          message: "Early/late ratio " + earlyLateRatio.toFixed(2) + " (n=" + sampleCount + ", provisional).",
+          confidence: 0.5,
+        });
+      }
+      insights.splice(3);
+    }
+
+    const diagnostics = [];
+    if (!(typeof sampleCount === "number" && sampleCount > 0)) {
+      diagnostics.push("pausecoach.timing.no_offsets: HitErrorArray unavailable; timing stats suppressed.");
+    }
+    if (wholeHits === null && wholeMisses === null) {
+      diagnostics.push("pausecoach.performance.no_counts: Cumulative judgement counts empty; totals provisional.");
+    }
+
+    return {
+      fidelity: "provisional",
+      isProvisional: true,
+      reason: "Live aggregate only; per-column, per-object, finger and LN claims suppressed. Provisional timing from latest HitErrorArray and cumulative counts.",
+      mapProgressMs: mapProgressMs,
+      score: score,
+      accuracy: accuracy,
+      health: health,
+      combo: combo,
+      maxCombo: maxCombo,
+      failed: failed,
+      mods: mods,
+      timing: {
+        sampleCount: sampleCount,
+        meanMs: meanMs,
+        medianMs: medianMs,
+        unstableRate: unstableRate,
+        earlyLateRatio: earlyLateRatio,
+        driftMs: driftMs,
+        recentOffsets: recentOffsets,
+        timingMargin: timingMargin,
+      },
+      performance: {
+        wholeHits: wholeHits,
+        wholeMisses: wholeMisses,
+        wholeAccuracy: wholeAccuracy,
+        recentAccuracy: recentAccuracy,
+        recentHits: recentHits,
+        recentMisses: recentMisses,
+      },
+      section: {},
+      insights: insights,
+      diagnostics: diagnostics,
+    };
+  }
+
   function buildSnapshot() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -322,6 +513,7 @@
       ranks: splitRanks(text("rework-diff")),
       skills: readSkills(),
       replay,
+      pauseCoach,
     };
   }
 
@@ -329,10 +521,10 @@
     try {
       if (typeof window.__overlayHostSend === "function") {
         window.__overlayHostSend(message);
+      } else if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {
+        window.chrome.webview.postMessage(message);
       } else if (typeof invokeCSharpAction === "function") {
         invokeCSharpAction(message);
-      } else if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage(message);
       }
     } catch (exception) {
       reportRuntimeError("Analyzer bridge message", exception);
@@ -382,7 +574,9 @@
   function publish() {
     animationFrame = 0;
     const snapshot = buildSnapshot();
-    const json = JSON.stringify(snapshot);
+    const json = JSON.stringify(snapshot, function (_key, value) {
+      return typeof value === "number" && !Number.isFinite(value) ? null : value;
+    });
     if (json === lastSignature) return;
     lastSignature = json;
     window.dispatchEvent(new CustomEvent("analysis:snapshot", { detail: snapshot }));
@@ -419,6 +613,8 @@
   }
 
   function applyTosuPayload(payload, source) {
+    const previousGameplay = { ...gameplay };
+    let beatmapIdentityChanged = false;
     const sourceBeatmap = payload && payload.beatmap;
     if (sourceBeatmap) {
       const metadata = sourceBeatmap.metadata || {};
@@ -427,6 +623,9 @@
       const setId = String(sourceBeatmap.set || sourceBeatmap.setId || sourceBeatmap.beatmapSetId || "");
       if (id && beatmap.id && id !== beatmap.id) {
         replay = emptyReplay();
+        beatmapIdentityChanged = true;
+        pauseCoach = null;
+        lastPlayingHits = null;
       }
       const identity = id || setId || `${metadata.artist || sourceBeatmap.artist || ""}-${metadata.title || sourceBeatmap.title || ""}-${sourceBeatmap.version || metadata.difficulty || metadata.version || ""}`;
       beatmap = {
@@ -446,6 +645,8 @@
     }
 
     replay = readLiveReplay(payload);
+    const sourcePlayForCoach = payload && payload.play && typeof payload.play === "object" ? payload.play : {};
+    const currentHits = parsePlayHits(sourcePlayForCoach);
 
     const rawState = payload && payload.state;
     const state = rawState && typeof rawState === "object" ? rawState : null;
@@ -477,6 +678,22 @@
       isPaused: nextIsPaused,
       isFocused,
     };
+
+    const isNewPlayingAttempt = gameplay.isPlaying === true && gameplay.isPaused !== true && previousGameplay.isPlaying !== true;
+    if (beatmapIdentityChanged || isNewPlayingAttempt) {
+      pauseCoach = null;
+      if (isNewPlayingAttempt) lastPlayingHits = null;
+    }
+    if (gameplay.isPlaying === true && gameplay.isPaused !== true) {
+      lastPlayingHits = currentHits;
+      pauseCoach = null;
+    } else if (gameplay.isPaused === true && previousGameplay.isPlaying === true && previousGameplay.isPaused !== true) {
+      pauseCoach = createPauseCoach(replay, sourcePlayForCoach, currentHits);
+    } else if (gameplay.isPaused === true) {
+      if (!pauseCoach) pauseCoach = createPauseCoach(replay, sourcePlayForCoach, currentHits);
+    } else if (gameplay.isPlaying !== true) {
+      pauseCoach = null;
+    }
 
     publishGameplayTrace(source || "unknown", stateNumber, stateName, nextIsPlaying, nextIsPaused, isFocused);
     keepSourceHostAvailable();
@@ -527,7 +744,11 @@
         { field: "game", keys: ["focused", "paused"] },
         {
           field: "beatmap",
-          keys: ["artist", "title", "version", "mapper", "id", "set", "setId", "beatmapSetId", "metadata", "stats", "bpm"],
+          keys: ["artist", "title", "version", "mapper", "id", "set", "setId", "beatmapSetId", "metadata", "stats", "bpm", "time"],
+        },
+        {
+          field: "play",
+          keys: ["score", "accuracy", "combo", "maxCombo", "mods", "health", "hp", "failed", "hits", "hitErrorArray", "unstableRate"],
         },
       ]));
     });

@@ -8,17 +8,25 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 
 public sealed class WebViewAnalyzerScriptHost : IAnalyzerScriptHost
 {
-    private readonly NativeWebView _webView;
+    private readonly Func<NativeWebView> _webViewProvider;
     private readonly IAnalyzerEngineDiagnosticSink _diagnosticSink;
+    private NativeWebView? _subscribedWebView;
     private bool _disposed;
 
     public WebViewAnalyzerScriptHost(
         NativeWebView webView,
         IAnalyzerEngineDiagnosticSink? diagnosticSink = null)
+        : this(CreateProvider(webView), diagnosticSink)
     {
-        _webView = webView ?? throw new ArgumentNullException(nameof(webView));
+    }
+
+    public WebViewAnalyzerScriptHost(
+        Func<NativeWebView> webViewProvider,
+        IAnalyzerEngineDiagnosticSink? diagnosticSink = null)
+    {
+        _webViewProvider = webViewProvider ?? throw new ArgumentNullException(nameof(webViewProvider));
         _diagnosticSink = diagnosticSink ?? new AppLoggerAnalyzerEngineDiagnosticSink();
-        _webView.WebMessageReceived += WebView_WebMessageReceived;
+        AttachToCurrentWebView();
     }
 
     public event EventHandler<AnalyzerScriptMessageEventArgs>? MessageReceived;
@@ -52,7 +60,12 @@ public sealed class WebViewAnalyzerScriptHost : IAnalyzerScriptHost
         }
 
         _disposed = true;
-        _webView.WebMessageReceived -= WebView_WebMessageReceived;
+        if (_subscribedWebView is not null)
+        {
+            _subscribedWebView.WebMessageReceived -= WebView_WebMessageReceived;
+        }
+
+        _subscribedWebView = null;
         MessageReceived = null;
         await Task.CompletedTask;
         GC.SuppressFinalize(this);
@@ -113,7 +126,8 @@ public sealed class WebViewAnalyzerScriptHost : IAnalyzerScriptHost
 
         try
         {
-            return await _webView.InvokeScript(script).ConfigureAwait(false);
+            var webView = AttachToCurrentWebView();
+            return await webView.InvokeScript(script).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -130,6 +144,30 @@ public sealed class WebViewAnalyzerScriptHost : IAnalyzerScriptHost
             _diagnosticSink.Report("Executing analyzer script", diagnostic, exception);
             throw;
         }
+    }
+
+    private NativeWebView AttachToCurrentWebView()
+    {
+        var webView = _webViewProvider();
+        ArgumentNullException.ThrowIfNull(webView);
+        if (!ReferenceEquals(_subscribedWebView, webView))
+        {
+            if (_subscribedWebView is not null)
+            {
+                _subscribedWebView.WebMessageReceived -= WebView_WebMessageReceived;
+            }
+
+            webView.WebMessageReceived += WebView_WebMessageReceived;
+            _subscribedWebView = webView;
+        }
+
+        return webView;
+    }
+
+    private static Func<NativeWebView> CreateProvider(NativeWebView webView)
+    {
+        ArgumentNullException.ThrowIfNull(webView);
+        return () => webView;
     }
 
     private void WebView_WebMessageReceived(object? sender, WebMessageReceivedEventArgs e)

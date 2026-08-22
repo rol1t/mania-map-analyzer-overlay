@@ -33,4 +33,24 @@ public sealed class OverlayVisibilityPolicyTests
         Assert.Equal(OverlayVisibilityPolicy.Always, OverlayVisibilityPolicy.Normalize("not-a-policy"));
         Assert.True(OverlayVisibilityPolicy.ShouldShow("not-a-policy", true, false));
     }
+
+    [Theory]
+    [InlineData("outside-play", false, false)]
+    [InlineData("during-play", true, false)]
+    [InlineData("never", false, false)]
+    public void KeepsOverlayVisibleWhenOsuIsMinimized(string policy, bool isPlaying, bool isPaused)
+    {
+        Assert.True(OverlayVisibilityPolicy.ShouldShow(policy, isPlaying, isPaused, osuMinimized: true));
+    }
+
+    [Theory]
+    [InlineData("always", true)]
+    [InlineData("outside-play", true)]
+    [InlineData("during-play", true)]
+    [InlineData("paused-only", true)]
+    [InlineData("never", false)]
+    public void KeepsOverlayVisibleUntilGameplayStateIsKnown(string policy, bool expected)
+    {
+        Assert.Equal(expected, OverlayVisibilityPolicy.ShouldShowBeforeGameplayStateIsKnown(policy));
+    }
 }

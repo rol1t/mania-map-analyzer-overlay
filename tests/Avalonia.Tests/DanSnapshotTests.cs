@@ -71,7 +71,8 @@ public sealed class DanSnapshotTests
             AnalysisOutcome.Success,
             [
                 Metric("difficulty.label", "3.77 SR || LN 5"),
-                Metric("difficulty.star", 3.77)
+                Metric("difficulty.star", 3.77),
+                Metric("difficulty.lnPercent", 12.5)
             ],
             []);
 
@@ -80,6 +81,110 @@ public sealed class DanSnapshotTests
         RankEstimate ln = Assert.Single(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
         Assert.Equal("3.77 SR", rc.Value);
         Assert.Equal("LN 5", ln.Value);
+    }
+
+    [Fact]
+    public void LnDanIsSuppressedWhenLnPercentIsZero()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("dan.rc.label", "Reform"),
+                Metric("dan.ln.label", "LN 5"),
+                Metric("difficulty.lnPercent", 0),
+                Metric("difficulty.star", 4.0)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.Single(snapshot.Ranks);
+        Assert.DoesNotContain(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
+        Assert.Equal("Reform", Assert.Single(snapshot.Ranks).Value);
+    }
+
+    [Fact]
+    public void LnDanIsSuppressedWhenLnPercentIsNull()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("dan.rc.label", "Reform"),
+                Metric("dan.ln.label", "LN 5"),
+                Metric("difficulty.star", 4.0)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.DoesNotContain(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
+    }
+
+    [Fact]
+    public void LnDanRemainsWhenLnPercentIsPositive()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("dan.rc.label", "Reform"),
+                Metric("dan.ln.label", "LN 6"),
+                Metric("difficulty.lnPercent", 25.5)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.Contains(snapshot.Ranks, rank => rank.SystemId == "ln-dan" && rank.Value == "LN 6");
+    }
+
+    [Fact]
+    public void LnDanFallbackFromDifficultyLabelIsSuppressedForZeroLn()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("difficulty.label", "3.77 SR || LN 5"),
+                Metric("difficulty.star", 3.77),
+                Metric("difficulty.lnPercent", 0)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.DoesNotContain(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
+        Assert.Single(snapshot.Ranks, rank => rank.SystemId == "rc-dan");
     }
 
     [Fact]

@@ -39,13 +39,15 @@ public partial class MainWindow : Window
     private readonly FullscreenOverlayService _fullscreen = new();
     private readonly UpdateService _updates = new();
     private readonly WindowsOverlayController _windowsOverlay;
-    private readonly DispatcherTimer _overlayResizeDebounceTimer;
     private readonly DispatcherTimer _overlayGameplayPollTimer;
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
+    private readonly SemaphoreSlim _overlayScaleGate = new(1, 1);
     private readonly AnalyzerEngineCatalog _analyzerEngineCatalog = new();
     private readonly AnalyzerEnginePackageDeployer _analyzerEngineDeployer = new();
     private readonly EffectiveAnalysisConfigurationStore _effectiveAnalysisStore = new();
     private readonly ReplayAnalysisSession _replayAnalysisSession = new();
+    private readonly OverlayDragSession _overlayDragSession = new();
+    private NativeWebView Browser { get; set; } = null!;
     private MainViewModel? _model;
     private CancellationTokenSource? _previewPresentationCancellation;
     private CancellationTokenSource? _overlayGameplayPollCancellation;
@@ -56,6 +58,11 @@ public partial class MainWindow : Window
     private bool _initialized;
     private bool _overlayMode;
     private bool _overlayWidgetSized;
+    private bool _overlayUsesAuthoritativeSize;
+    private double? _overlayRenderedBaseHeight;
+    private bool _overlayScaleUpdateInProgress;
+    private int _queuedOverlayScaleDelta;
+    private int _overlayScaleQueueRunning;
     private bool _overlayPlayStateKnown;
     private bool _overlayNativePlayStateKnown;
     private bool _overlayIsPlaying;
@@ -63,17 +70,14 @@ public partial class MainWindow : Window
     private bool _overlaySuppressedByPolicy;
     private string _overlayVisibilityPolicy = OverlayVisibilityPolicy.Always;
     private bool _overlayInteractive;
-    private bool _suppressOverlayResizeFeedback;
-    private bool _overlayResizeScaleUpdateRunning;
-    private bool _overlayResizeScaleUpdatePending;
-    private bool _overlayNativeResizePending;
+    // WebView callbacks can arrive while the native window is processing an
+    // input message. Keep native drag startup serialized and defer it to the
+    // Avalonia UI queue so WM_NCLBUTTONDOWN is never entered re-entrantly.
+    private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
     private bool _componentPreparationFailed;
     private bool _updatingLanguageSelector;
     private readonly Dictionary<string, string> _lastGameplayTraceBySource = new(StringComparer.OrdinalIgnoreCase);
-    private int? _overlayExpectedWidgetPhysicalWidth;
-    private DateTime _overlayResizeGuardUntilUtc;
-    private Size? _ignoredProgrammaticOverlaySize;
     private bool _showingLoggedError;
     private bool _overlayWindowVisible = true;
     private PixelPoint _normalPosition;
@@ -83,6 +87,8 @@ public partial class MainWindow : Window
     {
         AppLogger.ErrorRaised += AppLogger_ErrorRaised;
         InitializeComponent();
+        Browser = CreateBrowser(new SolidColorBrush(Color.Parse("#0E1016")));
+        BrowserHost.Child = Browser;
         _presentation = new OverlayPresentationService(_presetCatalog, _analyzerCatalog);
         _windowsOverlay = new WindowsOverlayController(this);
         _windowsOverlay.ExitRequested += (_, _) => LeaveOverlayMode();
@@ -90,9 +96,17 @@ public partial class MainWindow : Window
         _windowsOverlay.InteractionChanged += interactive =>
         {
             _overlayInteractive = interactive;
+            if (!interactive)
+            {
+                CancelOverlayGestures();
+            }
+
             if (_overlayMode)
             {
-                CanResize = interactive;
+                // Mouse edge/corner resizing is intentionally disabled for
+                // the overlay. Its size is controlled by Ctrl+wheel scale
+                // changes and by the rendered widget's own size reports.
+                CanResize = false;
             }
 
             UpdateOverlayVisibility();
@@ -110,11 +124,17 @@ public partial class MainWindow : Window
                     "status.osu_closed");
             });
         };
-        _overlayResizeDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
-        _overlayResizeDebounceTimer.Tick += OverlayResizeDebounceTimer_Tick;
+        _windowsOverlay.OsuWindowMinimizedChanged += minimized =>
+        {
+            if (_overlayMode)
+            {
+                ApplyOverlayWindowAppearance(minimized);
+                UpdateOverlayVisibility();
+            }
+        };
         _overlayGameplayPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         _overlayGameplayPollTimer.Tick += OverlayGameplayPollTimer_Tick;
-        SizeChanged += MainWindow_SizeChanged;
+        Deactivated += (_, _) => CancelOverlayGestures();
         Opened += async (_, _) =>
         {
             try
@@ -131,7 +151,6 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         AppLogger.ErrorRaised -= AppLogger_ErrorRaised;
-        _overlayResizeDebounceTimer.Stop();
         StopOverlayGameplayPolling();
         _previewPresentationCancellation?.Cancel();
         _previewPresentationCancellation?.Dispose();
@@ -153,6 +172,36 @@ public partial class MainWindow : Window
 
         _model?.Dispose();
         base.OnClosed(e);
+    }
+
+    private NativeWebView CreateBrowser(IBrush background)
+    {
+        var browser = new NativeWebView { Background = background };
+        // A WebView2 child HWND cannot be composed reliably into a transparent,
+        // click-through top-level window.  Keep the browser in Avalonia's surface
+        // instead, so the overlay remains visible and can switch hit testing
+        // without exposing the desktop through the whole window.
+        browser.EnvironmentRequested += (_, args) =>
+        {
+            if (args is WindowsWebView2EnvironmentRequestedEventArgs webView2)
+            {
+                webView2.ExperimentalOffscreen = true;
+            }
+        };
+        browser.NavigationCompleted += Browser_NavigationCompleted;
+        browser.WebMessageReceived += Browser_WebMessageReceived;
+        browser.NewWindowRequested += Browser_NewWindowRequested;
+        return browser;
+    }
+
+    private void ReplaceBrowser(IBrush background)
+    {
+        var previous = Browser;
+        previous.NavigationCompleted -= Browser_NavigationCompleted;
+        previous.WebMessageReceived -= Browser_WebMessageReceived;
+        previous.NewWindowRequested -= Browser_NewWindowRequested;
+        BrowserHost.Child = null;
+        Browser = CreateBrowser(background);
     }
 
     private static async Task ObserveControllerDisposeAsync(Task disposeTask)
@@ -260,8 +309,13 @@ public partial class MainWindow : Window
         {
             var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
             var beatmapSource = new TosuBeatmapSource(httpClient, _tosuBaseUri);
-            var scriptHostFactory = () => new WebViewAnalyzerScriptHost(Browser);
-            var presenter = new WebViewAnalysisSnapshotPresenter(Browser);
+            var scriptHostFactory = () => new WebViewAnalyzerScriptHost(() => Browser);
+            // Resolve the current control for every snapshot. Leaving overlay
+            // mode recreates the NativeWebView, so a presenter that captured
+            // the detached overlay instance can otherwise keep flooding the
+            // UI queue with InvokeScript failures while the launcher is being
+            // restored.
+            var presenter = new WebViewAnalysisSnapshotPresenter(() => Browser);
 
             _headlessAnalysisController = new HeadlessAnalysisController(
                 new HeadlessEngineServices(_analyzerEngineCatalog, _analyzerEngineDeployer, scriptHostFactory),
@@ -742,6 +796,10 @@ public partial class MainWindow : Window
             if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
             {
                 await ApplyPresentationAsync();
+                if (_overlayMode)
+                {
+                    await FitOverlayWindowToRenderedWidgetAsync();
+                }
             }
 
             if (_headlessAnalysisController is not null)
@@ -781,6 +839,19 @@ public partial class MainWindow : Window
 
         var message = e.Body;
 
+        if (string.Equals(message, "overlay:native-drag", StringComparison.Ordinal))
+        {
+            HandleNativeOverlayDrag();
+            return;
+        }
+
+        if (message.StartsWith("overlay:runtime-ready:", StringComparison.Ordinal) ||
+            message.StartsWith("overlay:pointerdown:", StringComparison.Ordinal))
+        {
+            HandleOverlayDiagnostic(message);
+            return;
+        }
+
         if (message.StartsWith(AnalyzerEngineScriptBridge.NativeMessagePrefix, StringComparison.Ordinal))
         {
             // WebViewAnalyzerScriptHost already subscribes to Browser.WebMessageReceived and forwards
@@ -808,20 +879,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (string.Equals(message, "overlay:bridge-self-test", StringComparison.Ordinal))
+        {
+            AppLogger.Info("Overlay bridge self-test", "Received overlay bridge self-test message.");
+            return;
+        }
+
         if (!_overlayMode)
         {
             return;
         }
 
-        if (message == "overlay:drag")
+        const string dragPrefix = "overlay:drag:";
+        if (message.StartsWith(dragPrefix, StringComparison.Ordinal))
         {
-            _windowsOverlay.BeginDrag();
-            return;
-        }
-        const string resizePrefix = "overlay:resize:";
-        if (message.StartsWith(resizePrefix, StringComparison.Ordinal))
-        {
-            _windowsOverlay.BeginResize(message[resizePrefix.Length..]);
+            HandleOverlayDragMessage(message[dragPrefix.Length..]);
             return;
         }
         if (message == "overlay:play:1")
@@ -874,7 +946,7 @@ public partial class MainWindow : Window
         if (message.StartsWith(scalePrefix, StringComparison.Ordinal) &&
             int.TryParse(message[scalePrefix.Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var delta))
         {
-            _ = AdjustScaleAsync(delta);
+            QueueOverlayScaleAdjustment(delta);
             return;
         }
         const string sizePrefix = "overlay:size:";
@@ -889,6 +961,187 @@ public partial class MainWindow : Window
         {
             ResizeOverlayToWidget(width, height);
         }
+    }
+
+    private void HandleOverlayDragMessage(string message)
+    {
+        var separator = message.IndexOf(':');
+        if (separator <= 0 || separator == message.Length - 1)
+        {
+            AppLogger.Warning(
+                "Reading overlay drag message",
+                "The overlay drag bridge sent a message without a valid action or payload.");
+            return;
+        }
+
+        var action = message[..separator];
+        if (action is not ("start" or "move" or "end"))
+        {
+            AppLogger.Warning("Reading overlay drag message", $"Unknown overlay drag action '{action}'.");
+            return;
+        }
+
+        if (!TryReadOverlayDragPayload(message[(separator + 1)..], out var gestureId, out var pointerId,
+                out var sequence, out var screenX, out var screenY))
+        {
+            return;
+        }
+
+        AppLogger.Debug(
+            "Overlay drag bridge",
+            $"Received {action} gesture={gestureId} pointer={pointerId} sequence={sequence} screen=({screenX:0.##},{screenY:0.##}) active={_overlayDragSession.IsActive}.");
+
+        switch (action)
+        {
+            case "start":
+                if (!_windowsOverlay.IsInteractionAllowed)
+                {
+                    CancelOverlayGestures();
+                    return;
+                }
+
+                if (!_overlayDragSession.Start(gestureId, pointerId, sequence, screenX, screenY, Position, RenderScaling))
+                {
+                    AppLogger.Warning("Overlay drag bridge", $"Rejected start gesture={gestureId} pointer={pointerId} sequence={sequence}.");
+                }
+                break;
+            case "move":
+                if (!_windowsOverlay.IsInteractionAllowed)
+                {
+                    CancelOverlayGestures();
+                    return;
+                }
+
+                if (_overlayDragSession.TryMove(
+                        gestureId,
+                        pointerId,
+                        sequence,
+                        screenX,
+                        screenY,
+                        out var position))
+                {
+                    // Deliberately update Position only. Changing ClientSize
+                    // here would feed the browser's size observer back into
+                    // the overlay scale debounce path.
+                    Position = position;
+                }
+                else
+                {
+                    AppLogger.Debug("Overlay drag bridge", $"Ignored move gesture={gestureId} pointer={pointerId} sequence={sequence}.");
+                }
+
+                break;
+            case "end":
+                if (_overlayDragSession.End(gestureId, pointerId, sequence))
+                {
+                    SaveOverlayBounds();
+                }
+                else
+                {
+                    AppLogger.Debug("Overlay drag bridge", $"Ignored end gesture={gestureId} pointer={pointerId} sequence={sequence}.");
+                }
+
+                break;
+        }
+    }
+
+    private void HandleNativeOverlayDrag()
+    {
+        if (Volatile.Read(ref _overlayNativeDragPending) != 0 ||
+            Interlocked.Exchange(ref _overlayNativeDragPending, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    // The pointer event may have been queued just before the
+                    // overlay was left or input protection was re-enabled.
+                    // Re-check both states on the UI thread before touching
+                    // the native HWND.
+                    if (!_overlayMode || !_windowsOverlay.IsInteractionAllowed)
+                    {
+                        return;
+                    }
+
+                    CancelOverlayGestures();
+                    _windowsOverlay.BeginDrag();
+                }
+                catch (Exception exception)
+                {
+                    AppLogger.Error("Starting native overlay drag", exception, userVisible: false);
+                }
+                finally
+                {
+                    Volatile.Write(ref _overlayNativeDragPending, 0);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(ref _overlayNativeDragPending, 0);
+            AppLogger.Error("Queueing native overlay drag", exception, userVisible: false);
+        }
+    }
+
+    private static void HandleOverlayDiagnostic(string message)
+    {
+        var separator = message.IndexOf(':', "overlay:".Length);
+        if (separator < 0 || separator == message.Length - 1)
+        {
+            return;
+        }
+
+        var kind = message["overlay:".Length..separator];
+        try
+        {
+            using var document = JsonDocument.Parse(message[(separator + 1)..]);
+            AppLogger.Info("Overlay runtime diagnostic", $"{kind}: {document.RootElement}");
+        }
+        catch (JsonException exception)
+        {
+            AppLogger.Warning("Overlay runtime diagnostic", $"Malformed {kind} diagnostic.", exception);
+        }
+    }
+
+    private static bool TryReadOverlayDragPayload(
+        string payload,
+        out long gestureId,
+        out long pointerId,
+        out long sequence,
+        out double screenX,
+        out double screenY)
+    {
+        gestureId = 0;
+        pointerId = 0;
+        sequence = 0;
+        screenX = 0;
+        screenY = 0;
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object &&
+                   root.TryGetProperty("gestureId", out var gestureElement) && gestureElement.TryGetInt64(out gestureId) &&
+                   root.TryGetProperty("pointerId", out var pointerElement) && pointerElement.TryGetInt64(out pointerId) &&
+                   root.TryGetProperty("sequence", out var sequenceElement) && sequenceElement.TryGetInt64(out sequence) &&
+                   root.TryGetProperty("screenX", out var screenXElement) && screenXElement.TryGetDouble(out screenX) &&
+                   root.TryGetProperty("screenY", out var screenYElement) && screenYElement.TryGetDouble(out screenY);
+        }
+        catch (JsonException exception)
+        {
+            AppLogger.Warning("Reading overlay drag message", "The overlay drag bridge sent malformed JSON.", exception);
+            return false;
+        }
+    }
+
+    private void CancelOverlayGestures()
+    {
+        _overlayDragSession.Cancel();
     }
 
     private bool TryHandleGameplayStateTrace(string message)
@@ -1043,6 +1296,33 @@ public partial class MainWindow : Window
             var scripts = _presentation.Build(settings, presentationOverlayMode);
             await Browser.InvokeScript(scripts.SetupScript);
             await Browser.InvokeScript(scripts.ObserverScript);
+            if (presentationOverlayMode && _overlayMode)
+            {
+                await ApplyOverlayDocumentAppearanceScriptAsync(_windowsOverlay.IsOsuMinimized);
+            }
+            try
+            {
+                var bridgeCapability = await Browser.InvokeScript(
+                    "JSON.stringify({chrome:typeof chrome !== 'undefined',webview:typeof chrome !== 'undefined' && !!chrome.webview,postMessage:typeof chrome !== 'undefined' && !!chrome.webview && typeof chrome.webview.postMessage === 'function',hostRuntime:!!window.__overlayHostRuntime,hostSend:typeof window.__overlayHostSend === 'function',resizeHandles:document.querySelectorAll('.overlay-resize-handle').length,pointerEvents:typeof window.PointerEvent === 'function'})");
+                AppLogger.Debug(
+                    "Overlay bridge capability",
+                    bridgeCapability ?? "The WebView returned no bridge capability.");
+            }
+            catch (Exception exception)
+            {
+                AppLogger.Warning("Probing overlay bridge capability", exception.Message, exception);
+            }
+
+            try
+            {
+                await Browser.InvokeScript(
+                    "if (typeof chrome !== 'undefined' && chrome.webview && typeof chrome.webview.postMessage === 'function') { chrome.webview.postMessage('overlay:bridge-self-test'); }");
+            }
+            catch (Exception exception)
+            {
+                AppLogger.Warning("Invoking overlay bridge self-test", exception.Message, exception);
+            }
+
             var presentationState = await Browser.InvokeScript(
                 "JSON.stringify({layout:document.documentElement.className,replayNode:!!document.getElementById('overlay-replay'),card:!!document.querySelector('.main-card')})");
             AppLogger.Info(
@@ -1091,44 +1371,79 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RequestOverlayWidgetSizeReportAsync()
+    private void ApplyOverlayWindowAppearance(bool osuMinimized)
     {
-        var entered = false;
+        if (!_overlayMode)
+        {
+            return;
+        }
+
+        // Keep the top-level surface transparent so only the widget card is
+        // visible over osu!. The WebView uses the offscreen composition mode
+        // requested in CreateBrowser, which keeps its transparent backing
+        // surface paintable instead of exposing a solid HWND rectangle.
+        IBrush background = Brushes.Transparent;
+        Background = background;
+        BrowserHost.Background = background;
+        Browser.Background = background;
+        TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+        Opacity = _overlayWindowVisible ? GetOverlayOpacity() : 0;
+
+        _ = ApplyOverlayDocumentAppearanceScriptAsync(osuMinimized);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_overlayMode && _windowsOverlay.IsOsuMinimized == osuMinimized)
+            {
+                try
+                {
+                    _windowsOverlay.ReapplyNativeState(_overlayWindowVisible);
+                }
+                catch (Exception exception)
+                {
+                    AppLogger.Error("Reapplying overlay native state after osu! window change", exception, userVisible: false);
+                }
+            }
+        });
+    }
+
+    private async Task ApplyOverlayDocumentAppearanceScriptAsync(bool osuMinimized)
+    {
+        if (!_overlayMode)
+        {
+            return;
+        }
+
         try
         {
-            await _presentationGate.WaitAsync();
-            entered = true;
-            await Browser.InvokeScript("window.dispatchEvent(new Event('resize'));");
+            await Browser.InvokeScript(
+                "(function(){var root=document.documentElement;root.classList.toggle('launcher-osu-minimized'," +
+                (osuMinimized ? "true" : "false") + ");})();");
         }
         catch (Exception exception)
         {
-            AppLogger.Error("Requesting overlay size report", exception, userVisible: false);
-        }
-        finally
-        {
-            if (entered)
-            {
-                _presentationGate.Release();
-            }
+            // Navigation can recreate the WebView between the native state
+            // change and this script. ApplyPresentationAsync retries the class
+            // after the next successful navigation.
+            AppLogger.Debug("Applying minimized overlay document appearance", exception.Message);
         }
     }
 
     private async Task AdjustScaleAsync(int delta)
     {
+        var entered = false;
         try
         {
+            await _overlayScaleGate.WaitAsync();
+            entered = true;
+            _overlayScaleUpdateInProgress = true;
             if (_model is null)
             {
                 return;
             }
 
-            _overlayResizeDebounceTimer.Stop();
-            _overlayResizeScaleUpdatePending = false;
-            _overlayNativeResizePending = false;
-            _overlayExpectedWidgetPhysicalWidth = null;
-            _overlayResizeGuardUntilUtc = default;
-            var next = Math.Clamp(_model.Settings.OverlayScalePercent + delta, 50, 180);
-            if (next == _model.Settings.OverlayScalePercent)
+            var currentPercent = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180);
+            var next = Math.Clamp(currentPercent + delta, 50, 180);
+            if (next == currentPercent)
             {
                 return;
             }
@@ -1136,11 +1451,76 @@ public partial class MainWindow : Window
             _model.Settings.OverlayScalePercent = next;
             _model.SaveSettings();
             UpdatePreviewScaleText();
+            if (_overlayMode)
+            {
+                // Give WebView the target viewport before replacing the
+                // presentation scripts. Otherwise CSS zoom is applied while
+                // the old viewport is still active and the first layout pass
+                // can clip the rightmost column.
+                PrepareOverlayClientSizeForScale(currentPercent, next);
+            }
             await ApplyPresentationAsync();
+            if (_overlayMode)
+            {
+                await FitOverlayWindowToRenderedWidgetAsync();
+                SaveOverlayBounds();
+            }
         }
         catch (Exception exception)
         {
             AppLogger.Error("Adjusting overlay scale", exception);
+        }
+        finally
+        {
+            _overlayScaleUpdateInProgress = false;
+            if (entered)
+            {
+                _overlayScaleGate.Release();
+            }
+        }
+    }
+
+    private void QueueOverlayScaleAdjustment(int delta)
+    {
+        if (delta == 0)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _queuedOverlayScaleDelta, delta);
+        if (Interlocked.Exchange(ref _overlayScaleQueueRunning, 1) == 0)
+        {
+            _ = DrainOverlayScaleAdjustmentsAsync();
+        }
+    }
+
+    private async Task DrainOverlayScaleAdjustmentsAsync()
+    {
+        try
+        {
+            while (_overlayMode)
+            {
+                var delta = Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
+                if (delta == 0)
+                {
+                    break;
+                }
+
+                await AdjustScaleAsync(delta);
+            }
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Applying queued overlay scale", exception);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _overlayScaleQueueRunning, 0);
+            if (_overlayMode && Volatile.Read(ref _queuedOverlayScaleDelta) != 0 &&
+                Interlocked.Exchange(ref _overlayScaleQueueRunning, 1) == 0)
+            {
+                _ = DrainOverlayScaleAdjustmentsAsync();
+            }
         }
     }
 
@@ -1309,6 +1689,7 @@ public partial class MainWindow : Window
         _model.Settings.OverlayLayoutMode = dialog.LayoutMode;
         _model.Settings.OverlayPresetId = dialog.PresetId;
         _model.Settings.OverlayScalePercent = dialog.ScalePercent;
+        _model.Settings.OverlayOpacityPercent = dialog.OpacityPercent;
         UpdatePreviewScaleText();
         var restartForFullscreen = false;
         if (_model.Settings.FullscreenOverlayEnabled && !ActiveAnalyzer.Descriptor.SupportsFullscreen)
@@ -1502,50 +1883,58 @@ public partial class MainWindow : Window
         _normalPosition = Position;
         _normalClientSize = ClientSize;
         _overlayMode = true;
-        SetOverlayWindowVisibility(false);
         _overlayWidgetSized = false;
+        _overlayRenderedBaseHeight = null;
         _overlayPlayStateKnown = false;
         _overlayNativePlayStateKnown = false;
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
         _overlaySuppressedByPolicy = false;
+        _overlayScaleUpdateInProgress = false;
+        Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
         _overlayVisibilityPolicy = ResolveOverlayVisibilityPolicy();
         _overlayInteractive = false;
-        _suppressOverlayResizeFeedback = false;
-        _overlayResizeScaleUpdatePending = false;
-        _overlayNativeResizePending = false;
-        _overlayExpectedWidgetPhysicalWidth = null;
-        _overlayResizeGuardUntilUtc = default;
-        _ignoredProgrammaticOverlaySize = null;
-        _overlayResizeDebounceTimer.Stop();
+        CancelOverlayGestures();
         Opacity = 1;
         Toolbar.IsVisible = false;
         RootGrid.RowDefinitions[0].Height = new GridLength(0);
         SystemDecorations = SystemDecorations.None;
         CanResize = false;
         // The normal launcher has a much larger minimum size. In overlay
-        // editing mode keep the widget's native resize range independent of
-        // that launcher constraint.
+        // editing mode keep the widget's programmatic size range independent
+        // of that launcher constraint.
         MinWidth = 120;
         MinHeight = 80;
         Topmost = true;
-        ShowInTaskbar = false;
-        Background = Brushes.Transparent;
-        Browser.Background = Brushes.Transparent;
-        TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+        // Keep Avalonia from permanently forcing WS_EX_TOOLWINDOW. The native
+        // controller adds that style while osu! is protected and removes it in
+        // the safe edit state, where an activatable/task-switchable HWND is
+        // required for reliable WebView2 pointer input.
+        ShowInTaskbar = true;
+        ApplyOverlayWindowAppearance(_windowsOverlay.IsOsuMinimized);
 
         var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        _overlayUsesAuthoritativeSize = layout != "custom";
         var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
         var width = (layout == "horizontal" ? 920 : layout is "companella" or "companella-replay" ? 760 : 475) * scale;
         var height = (layout == "horizontal" ? 360 : layout is "companella" or "companella-replay" ? 340 : 540) * scale;
         ClientSize = new Size(width, height);
+        _overlayWidgetSized = _overlayUsesAuthoritativeSize;
         var working = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
         var savedVisible = _model.Settings.OverlayX > -30000 && _model.Settings.OverlayY > -30000;
         Position = savedVisible
             ? new PixelPoint(_model.Settings.OverlayX, _model.Settings.OverlayY)
             : new PixelPoint(working.Right - (int)Math.Ceiling(width * RenderScaling) - 18, working.Y + 18);
+        // Keep the native HWND alive while applying Avalonia chrome/size changes
+        // that may recreate it. Synchronize visibility and native state only on
+        // the final handle so a hidden window is not lost during recreation.
         _windowsOverlay.Enter();
+        // Keep the final HWND visible until a real gameplay state says the
+        // selected preset should be hidden. Hiding here can leave a permanently
+        // invisible overlay when tosu is unavailable or still starting.
+        _windowsOverlay.ReapplyNativeState(visible: true);
+        UpdateOverlayVisibility();
         Navigate(AnalysisUrl);
         StartOverlayGameplayPolling();
     }
@@ -1560,21 +1949,40 @@ public partial class MainWindow : Window
         SaveOverlayBounds();
         _overlayInteractive = false;
         StopOverlayGameplayPolling();
-        _overlayResizeDebounceTimer.Stop();
-        _overlayResizeScaleUpdatePending = false;
-        _overlayNativeResizePending = false;
-        _overlayExpectedWidgetPhysicalWidth = null;
-        _overlayResizeGuardUntilUtc = default;
-        _ignoredProgrammaticOverlaySize = null;
-        _windowsOverlay.Leave();
+        CancelOverlayGestures();
+        // Mark the Avalonia side as launcher mode before native teardown so
+        // controller callbacks from clearing minimized/focus state cannot
+        // re-enter overlay visibility or transparency logic.
         _overlayMode = false;
+        // Release the native click-through/disabled state before detaching the
+        // overlay WebView. Detaching a protected child HWND can otherwise leave
+        // the restored launcher top-level HWND disabled until the next native
+        // state transition.
+        _windowsOverlay.Leave();
+        Browser.IsHitTestVisible = true;
+        BrowserHost.IsHitTestVisible = true;
+        var launcherBackground = new SolidColorBrush(Color.Parse("#0E1016"));
+        Background = launcherBackground;
+        BrowserHost.Background = launcherBackground;
+        // NativeWebView retains its composition adapter across a normal visual
+        // detach. Replace the control itself so the launcher cannot inherit the
+        // transparent WebView2 adapter used by overlay mode.
+        ReplaceBrowser(launcherBackground);
+        Browser.IsHitTestVisible = true;
+        BrowserHost.IsHitTestVisible = true;
+        TransparencyLevelHint = new[] { WindowTransparencyLevel.None };
         _overlayWidgetSized = false;
+        _overlayUsesAuthoritativeSize = false;
+        _overlayRenderedBaseHeight = null;
         _overlayPlayStateKnown = false;
         _overlayNativePlayStateKnown = false;
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
         _overlaySuppressedByPolicy = false;
+        _overlayScaleUpdateInProgress = false;
+        Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
+        Volatile.Write(ref _overlayNativeDragPending, 0);
         _overlayVisibilityPolicy = OverlayVisibilityPolicy.Always;
         Opacity = 1;
         Toolbar.IsVisible = true;
@@ -1583,190 +1991,242 @@ public partial class MainWindow : Window
         CanResize = true;
         Topmost = false;
         ShowInTaskbar = true;
-        Background = new SolidColorBrush(Color.Parse("#0E1016"));
-        Browser.Background = new SolidColorBrush(Color.Parse("#0E1016"));
         MinWidth = 650;
         MinHeight = 740;
         Position = _normalPosition;
         ClientSize = _normalClientSize;
         SetOverlayWindowVisibility(true);
-        Navigate(AnalysisUrl);
-        Activate();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_overlayMode || BrowserHost.Child is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                BrowserHost.Child = Browser;
+                Navigate(AnalysisUrl);
+            }
+            catch (Exception exception)
+            {
+                // A WebView recreation must not prevent the native launcher
+                // HWND from being restored or focused after osu! exits.
+                AppLogger.Error("Restoring launcher WebView", exception, userVisible: false);
+            }
+            finally
+            {
+                Browser.IsHitTestVisible = true;
+                BrowserHost.IsHitTestVisible = true;
+                try
+                {
+                    // Avalonia may have recreated the HWND while restoring
+                    // decorations. Reapply the non-overlay styles to that
+                    // final handle, otherwise a stale disabled/click-through
+                    // state can survive on the launcher window.
+                    _windowsOverlay.ReapplyNativeState(visible: true);
+                }
+                catch (Exception exception)
+                {
+                    AppLogger.Error("Restoring launcher native input", exception, userVisible: false);
+                }
+
+                try
+                {
+                    Activate();
+                }
+                catch (Exception exception)
+                {
+                    AppLogger.Error("Activating launcher window", exception, userVisible: false);
+                }
+            }
+        });
     }
 
     private void ResizeOverlayToWidget(int physicalWidth, int physicalHeight)
     {
-        if (!_overlayMode || physicalWidth is < 120 or > 2400 || physicalHeight is < 80 or > 3200)
+        if (!_overlayMode || _overlayScaleUpdateInProgress ||
+            physicalWidth is < 120 or > 2400 || physicalHeight is < 80 or > 3200)
         {
             return;
         }
 
         if (_overlayInteractive)
         {
-            if (_overlayExpectedWidgetPhysicalWidth is int expectedWidth)
+            // In the interactive overlay the size report can briefly contain
+            // the previous width while the browser is reflowing. Do not let
+            // that stale width change the native window; a report with the
+            // current width can still carry a real height change.
+            var currentPhysicalWidth = ClientSize.Width * RenderScaling;
+            if (Math.Abs(physicalWidth - currentPhysicalWidth) > 8)
             {
-                var matchesExpectedWidth = IsCloseToPhysicalWidth(physicalWidth, expectedWidth);
-                if (!matchesExpectedWidth &&
-                    (_overlayNativeResizePending || _overlayResizeScaleUpdateRunning ||
-                     DateTime.UtcNow < _overlayResizeGuardUntilUtc))
-                {
-                    return;
-                }
-
-                if (!matchesExpectedWidth || DateTime.UtcNow >= _overlayResizeGuardUntilUtc)
-                {
-                    _overlayExpectedWidgetPhysicalWidth = null;
-                    _overlayResizeGuardUntilUtc = default;
-                }
-            }
-            else if (_overlayNativeResizePending || _overlayResizeDebounceTimer.IsEnabled)
-            {
-                // The browser reports its old fixed-size card while a native
-                // resize is still being dragged. Let the debounced scale
-                // update establish the new content size first.
                 return;
             }
-        }
-        var position = Position;
-        var targetSize = new Size(physicalWidth / RenderScaling, physicalHeight / RenderScaling);
-        var sizeChanged = !IsCloseToSize(ClientSize, targetSize);
-        if (sizeChanged)
-        {
-            _ignoredProgrammaticOverlaySize = targetSize;
-        }
-        else
-        {
-            _ignoredProgrammaticOverlaySize = null;
+
+            physicalWidth = (int)Math.Round(currentPhysicalWidth);
         }
 
-        _suppressOverlayResizeFeedback = true;
-        try
+        var position = Position;
+        var targetSize = new Size(physicalWidth / RenderScaling, physicalHeight / RenderScaling);
+        if (_model is not null)
         {
-            ClientSize = targetSize;
-            Position = position;
+            var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
+            _overlayRenderedBaseHeight = targetSize.Height / scale;
         }
-        finally
+
+        if (Math.Abs(ClientSize.Width - targetSize.Width) <= 0.5 &&
+            Math.Abs(ClientSize.Height - targetSize.Height) <= 0.5)
         {
-            _suppressOverlayResizeFeedback = false;
+            _overlayWidgetSized = true;
+            UpdateOverlayVisibility();
+            return;
         }
+
+        ClientSize = targetSize;
+        Position = position;
         _overlayWidgetSized = true;
         UpdateOverlayVisibility();
         SaveOverlayBounds();
     }
 
-    private void MainWindow_SizeChanged(object? sender, SizeChangedEventArgs e)
+    private void PrepareOverlayClientSizeForScale(int currentScalePercent, int nextScalePercent)
     {
-        if (!_overlayMode)
+        if (!_overlayMode || _model is null || ClientSize.Width <= 0 || ClientSize.Height <= 0)
         {
             return;
         }
 
-        if (!_overlayInteractive || _suppressOverlayResizeFeedback)
+        var currentScale = Math.Clamp(currentScalePercent, 50, 180) / 100d;
+        var nextScale = Math.Clamp(nextScalePercent, 50, 180) / 100d;
+        var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        var baseWidth = layout switch
+        {
+            "horizontal" => 920d,
+            "companella" or "companella-replay" => 760d,
+            "default" => 475d,
+            _ => ClientSize.Width / currentScale
+        };
+        var baseHeight = _overlayRenderedBaseHeight ?? ClientSize.Height / currentScale;
+        var targetSize = new Size(
+            Math.Ceiling(baseWidth * nextScale),
+            Math.Ceiling(baseHeight * nextScale));
+        if (Math.Abs(ClientSize.Width - targetSize.Width) < 0.5 &&
+            Math.Abs(ClientSize.Height - targetSize.Height) < 0.5)
         {
             return;
         }
 
-        if (_ignoredProgrammaticOverlaySize is Size programmaticSize && IsCloseToSize(ClientSize, programmaticSize))
-        {
-            _ignoredProgrammaticOverlaySize = null;
-            return;
-        }
-        _ignoredProgrammaticOverlaySize = null;
-        _overlayNativeResizePending = true;
-        _overlayExpectedWidgetPhysicalWidth = null;
-        QueueOverlayScaleUpdate();
+        var position = Position;
+        ClientSize = targetSize;
+        Position = position;
     }
 
-    private void QueueOverlayScaleUpdate()
+    private async Task FitOverlayWindowToRenderedWidgetAsync()
     {
-        if (!_overlayMode || !_overlayInteractive || _suppressOverlayResizeFeedback)
+        if (!_overlayMode || _model is null)
         {
             return;
         }
 
-        _overlayResizeDebounceTimer.Stop();
-        _overlayResizeDebounceTimer.Start();
-    }
-
-    private async void OverlayResizeDebounceTimer_Tick(object? sender, EventArgs e)
-    {
-        _overlayResizeDebounceTimer.Stop();
-        if (_overlayResizeScaleUpdateRunning)
-        {
-            _overlayResizeScaleUpdatePending = true;
-            return;
-        }
-
-        _overlayResizeScaleUpdateRunning = true;
+        var entered = false;
         try
         {
-            await ApplyOverlayScaleFromWindowAsync();
+            await _presentationGate.WaitAsync();
+            entered = true;
+            // A scale change can leave the browser one layout frame behind the
+            // Avalonia SizeChanged event. Force a reflow and measure twice: the
+            // second pass observes the final width after the first ClientSize
+            // update, preventing the rightmost widget from being clipped.
+            for (var pass = 0; pass < 2; pass++)
+            {
+                await Browser.InvokeScript("window.dispatchEvent(new Event('resize'));");
+                await Task.Delay(pass == 0 ? 50 : 40);
+                var result = await Browser.InvokeScript(
+                    "(function(){var card=document.querySelector('[data-overlay-host-root]');" +
+                    "if(!card)return null;var r=card.getBoundingClientRect();" +
+                    "return JSON.stringify({width:r.width,height:r.height});})()");
+                if (!TryReadRenderedOverlaySize(result, out var targetSize))
+                {
+                    return;
+                }
+
+                var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
+                _overlayRenderedBaseHeight = targetSize.Height / scale;
+                var position = Position;
+                if (Math.Abs(ClientSize.Width - targetSize.Width) > 0.5 ||
+                    Math.Abs(ClientSize.Height - targetSize.Height) > 0.5)
+                {
+                    ClientSize = targetSize;
+                    Position = position;
+                }
+
+                _overlayWidgetSized = true;
+                UpdateOverlayVisibility();
+            }
         }
         catch (Exception exception)
         {
-            AppLogger.Error("Applying overlay scale from window", exception);
+            AppLogger.Error("Fitting overlay window to rendered widget", exception, userVisible: false);
         }
         finally
         {
-            _overlayResizeScaleUpdateRunning = false;
-            if (_overlayResizeScaleUpdatePending)
+            if (entered)
             {
-                _overlayResizeScaleUpdatePending = false;
-                QueueOverlayScaleUpdate();
+                _presentationGate.Release();
             }
         }
     }
 
-    private async Task ApplyOverlayScaleFromWindowAsync()
+    private static bool TryReadRenderedOverlaySize(string? json, out Size size)
     {
-        if (!_overlayMode || !_overlayInteractive || _suppressOverlayResizeFeedback || _model is null)
+        size = default;
+        if (string.IsNullOrWhiteSpace(json))
         {
-            return;
+            return false;
         }
 
-        var baseWidth = GetOverlayBaseWidth(_model.Settings.OverlayLayoutMode);
-        if (baseWidth <= 0 || ClientSize.Width <= 0)
-        {
-            return;
-        }
-
-        var next = Math.Clamp((int)Math.Round(ClientSize.Width / baseWidth * 100d), 50, 180);
-        if (next == _model.Settings.OverlayScalePercent)
-        {
-            _overlayNativeResizePending = false;
-            _overlayExpectedWidgetPhysicalWidth = null;
-            _overlayResizeGuardUntilUtc = default;
-            await RequestOverlayWidgetSizeReportAsync();
-            return;
-        }
-        _overlayExpectedWidgetPhysicalWidth = (int)Math.Round(baseWidth * next / 100d * RenderScaling);
-        _overlayResizeGuardUntilUtc = DateTime.UtcNow.AddMilliseconds(600);
-        _model.Settings.OverlayScalePercent = next;
-        _model.SaveSettings();
         try
         {
-            await ApplyPresentationAsync();
-            await RequestOverlayWidgetSizeReportAsync();
+            using var outer = JsonDocument.Parse(json);
+            if (outer.RootElement.ValueKind == JsonValueKind.String)
+            {
+                var innerJson = outer.RootElement.GetString();
+                if (string.IsNullOrWhiteSpace(innerJson))
+                {
+                    return false;
+                }
+
+                using var inner = JsonDocument.Parse(innerJson);
+                return TryReadRenderedOverlaySize(inner.RootElement, out size);
+            }
+
+            return TryReadRenderedOverlaySize(outer.RootElement, out size);
         }
-        finally
+        catch (JsonException)
         {
-            _overlayNativeResizePending = false;
+            return false;
         }
     }
 
-    private static double GetOverlayBaseWidth(string? layout) =>
-        OverlayPresentationService.NormalizeLayout(layout) switch
+    private static bool TryReadRenderedOverlaySize(JsonElement root, out Size size)
+    {
+        size = default;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("width", out var widthElement) ||
+            !root.TryGetProperty("height", out var heightElement) ||
+            !widthElement.TryGetDouble(out var width) ||
+            !heightElement.TryGetDouble(out var height) ||
+            !double.IsFinite(width) || !double.IsFinite(height) ||
+            width is < 120 or > 2400 || height is < 80 or > 3200)
         {
-            "horizontal" => 920,
-            "companella" => 760,
-            "companella-replay" => 760,
-            _ => 475
-        };
+            return false;
+        }
+
+        size = new Size(Math.Ceiling(width), Math.Ceiling(height));
+        return true;
+    }
 
     private static bool IsCloseToPhysicalWidth(int actual, int expected) => Math.Abs(actual - expected) <= 3;
-
-    private static bool IsCloseToSize(Size actual, Size expected) =>
-        Math.Abs(actual.Width - expected.Width) <= 1.5 && Math.Abs(actual.Height - expected.Height) <= 1.5;
 
     private void SetOverlaySuppressedByPlay(bool isPlaying, bool? isPaused)
     {
@@ -1864,24 +2324,35 @@ public partial class MainWindow : Window
         // window bounds, not a prerequisite for visibility. If WebView has
         // not reported its first measurement yet, the saved/default client
         // size is still a valid widget surface and must be shown in menu.
-        var visible = _overlayPlayStateKnown && !_overlaySuppressedByPolicy;
+        var visible = _overlayPlayStateKnown
+            ? OverlayVisibilityPolicy.ShouldShow(
+                _overlayVisibilityPolicy,
+                _overlayIsPlaying,
+                _overlayIsPaused,
+                _windowsOverlay.IsOsuMinimized)
+            : _windowsOverlay.IsOsuMinimized || OverlayVisibilityPolicy.ShouldShowBeforeGameplayStateIsKnown(_overlayVisibilityPolicy);
         SetOverlayWindowVisibility(visible);
     }
 
     private void SetOverlayWindowVisibility(bool visible)
     {
-        if (_overlayWindowVisible == visible)
+        // The cached value is only a requested state.  It starts before the
+        // native HWND exists and can also become stale when Avalonia or
+        // Windows hides/shows the top-level window.  Skipping the native call
+        // based on that cache can leave the launcher HWND permanently hidden
+        // when entering overlay mode.
+        var actualVisible = OperatingSystem.IsWindows()
+            ? _windowsOverlay.IsWindowShown
+            : IsVisible;
+        var expectedOpacity = visible ? GetOverlayOpacity() : 0d;
+        if (_overlayWindowVisible == visible && actualVisible == visible && Math.Abs(Opacity - expectedOpacity) < 0.001)
         {
             return;
         }
 
+        var previousOpacity = Opacity;
         try
         {
-            if (visible)
-            {
-                Opacity = 1;
-            }
-
             if (OperatingSystem.IsWindows())
             {
                 _windowsOverlay.SetWindowVisible(visible);
@@ -1895,11 +2366,7 @@ public partial class MainWindow : Window
                 Hide();
             }
 
-            if (!visible)
-            {
-                Opacity = 0;
-            }
-
+            Opacity = visible ? GetOverlayOpacity() : 0;
             _overlayWindowVisible = visible;
         }
         catch (Exception exception)
@@ -1907,8 +2374,29 @@ public partial class MainWindow : Window
             AppLogger.Error(
                 visible ? "Showing overlay window" : "Hiding overlay window",
                 exception);
+
+            // Opacity is only mutated after a successful native sync. On failure
+            // keep opacity and the cached requested state coherent with the
+            // actual native visibility so the next request retries correctly.
+            try
+            {
+                var nativeVisible = OperatingSystem.IsWindows()
+                    ? _windowsOverlay.IsWindowShown
+                    : IsVisible;
+                Opacity = nativeVisible ? GetOverlayOpacity() : 0;
+                _overlayWindowVisible = nativeVisible;
+            }
+            catch
+            {
+                Opacity = previousOpacity;
+            }
         }
     }
+
+    private double GetOverlayOpacity() =>
+        !_overlayMode
+            ? 1d
+            : Math.Clamp(_model?.Settings.OverlayOpacityPercent ?? 100, 10, 100) / 100d;
 
     private void LogOverlayGameplayState(string visibilityPolicy, bool isPlaying, bool? isPaused)
     {
@@ -1919,6 +2407,7 @@ public partial class MainWindow : Window
             "Overlay gameplay state",
             $"visibilityPolicy={visibilityPolicy}; " +
             $"isPlaying={isPlaying}; paused={isPaused?.ToString() ?? "null"}; " +
+            $"osuMinimized={_windowsOverlay.IsOsuMinimized}; " +
             $"requestedVisible={_overlayWindowVisible}; " +
             $"nativeVisible={nativeVisible}; opacity={Opacity:0.##}");
     }

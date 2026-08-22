@@ -23,6 +23,11 @@ public sealed record AnalysisSnapshot
         get; init;
     }
 
+    public PauseCoachSnapshot? PauseCoach
+    {
+        get; init;
+    }
+
     [JsonExtensionData]
     public IDictionary<string, object?> Extensions { get; init; } = new Dictionary<string, object?>();
 }

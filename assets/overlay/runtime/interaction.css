@@ -5,6 +5,10 @@ html.launcher-overlay-host [data-overlay-host-root] * {
   -webkit-user-drag: none !important;
 }
 
+html.launcher-overlay-host [data-overlay-host-root] {
+  touch-action: none !important;
+}
+
 html.launcher-transparent-overlay,
 html.launcher-transparent-overlay body,
 html.launcher-transparent-overlay [data-overlay-host-root],
@@ -12,9 +16,21 @@ html.launcher-transparent-overlay [data-overlay-host-root] * {
   cursor: auto !important;
 }
 
+html.launcher-transparent-overlay,
+html.launcher-transparent-overlay body {
+  background: transparent !important;
+}
+
 html.launcher-transparent-overlay.overlay-osu-focused,
 html.launcher-transparent-overlay.overlay-osu-focused body,
 html.launcher-transparent-overlay.overlay-osu-focused [data-overlay-host-root],
 html.launcher-transparent-overlay.overlay-osu-focused [data-overlay-host-root] * {
   cursor: none !important;
+}
+
+/* Keep the document backing transparent while osu! is minimized as well; the
+   native top-level window remains visible and only the widget card is painted. */
+html.launcher-osu-minimized,
+html.launcher-osu-minimized body {
+  background: transparent !important;
 }

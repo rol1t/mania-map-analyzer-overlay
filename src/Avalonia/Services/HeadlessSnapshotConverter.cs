@@ -175,7 +175,10 @@ public static class HeadlessSnapshotConverter
             });
         }
 
-        if (!string.IsNullOrWhiteSpace(lnLabel))
+        var lnPercent = TryGetDouble(composed, "difficulty.lnPercent") ?? TryGetDouble(composed, "pattern.lnPercent");
+        var hasLn = lnPercent.HasValue && lnPercent.Value > 0;
+
+        if (!string.IsNullOrWhiteSpace(lnLabel) && hasLn)
         {
             ranks.Add(new RankEstimate
             {

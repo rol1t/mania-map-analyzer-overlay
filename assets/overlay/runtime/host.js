@@ -5,25 +5,38 @@
     window.__overlayHostRuntime.dispose();
   }
 
-  const config = window.__overlayHostConfig || {};
+  const config = window.__overlayHostConfig || window._overlayHostConfig || {};
   const overlayMode = config.overlayMode === true;
   const card = document.querySelector(config.hostSelector || "body");
   const disposers = [];
   let resizeObserver = null;
   let mutationObserver = null;
   let reportFrame = 0;
-  let resizeGestureTimer = 0;
+  let delayedReportTimer = 0;
+  let lastReportedWidth = 0;
+  let lastReportedHeight = 0;
+  let dragGesture = null;
+  let lastPointerEndAt = 0;
+  let lastPointerDownAt = 0;
+  let nextDragGestureId = 1;
+  const pointerEventsSupported = typeof window.PointerEvent === "function";
+  const dragDownEventName = pointerEventsSupported ? "pointerdown" : "mousedown";
+  const dragMoveEventName = pointerEventsSupported ? "pointermove" : "mousemove";
+  const dragEndEventNames = pointerEventsSupported ? ["pointerup", "pointercancel"] : ["mouseup"];
 
   function send(message) {
     try {
-      if (typeof invokeCSharpAction === "function") {
-        invokeCSharpAction(message);
-      } else if (window.chrome && window.chrome.webview) {
+      if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {
         window.chrome.webview.postMessage(message);
+        return true;
+      } else if (typeof invokeCSharpAction === "function") {
+        invokeCSharpAction(message);
+        return true;
       }
     } catch (exception) {
       console.error("Overlay native bridge message failed", exception);
     }
+    return false;
   }
 
   window.__overlayHostSend = send;
@@ -41,16 +54,146 @@
     catch (exception) { console.error("Reporting overlay runtime error failed", exception); }
   });
 
-  function clearResizeGesture() {
-    window.__overlayResizeGestureUntil = 0;
-    if (resizeGestureTimer) clearTimeout(resizeGestureTimer);
-    resizeGestureTimer = 0;
+  function getPointerId(event) {
+    const pointerId = Number(event.pointerId);
+    return pointerEventsSupported && Number.isInteger(pointerId) ? pointerId : 1;
   }
 
-  function markResizeGesture() {
-    window.__overlayResizeGestureUntil = Date.now() + 500;
-    if (resizeGestureTimer) clearTimeout(resizeGestureTimer);
-    resizeGestureTimer = window.setTimeout(clearResizeGesture, 550);
+  // WebView2 exposes screenX/screenY in CSS pixels, just like clientX/clientY.
+  // They are therefore converted to Avalonia physical pixels by the host using
+  // RenderScaling. Unlike client coordinates, they do not move when this HWND
+  // is repositioned underneath the pointer.
+  function getScreenPoint(event) {
+    const screenX = Number(event.screenX);
+    const screenY = Number(event.screenY);
+    return Number.isFinite(screenX) && Number.isFinite(screenY)
+      ? { screenX: screenX, screenY: screenY }
+      : null;
+  }
+
+  function getNextDragGestureId() {
+    const id = nextDragGestureId;
+    nextDragGestureId = nextDragGestureId >= Number.MAX_SAFE_INTEGER ? 1 : nextDragGestureId + 1;
+    return id;
+  }
+
+  function dragPayload(gesture, sequence, point) {
+    return JSON.stringify({
+      gestureId: gesture.gestureId,
+      pointerId: gesture.pointerId,
+      sequence: sequence,
+      screenX: point.screenX,
+      screenY: point.screenY,
+    });
+  }
+
+  function releaseDragCapture(gesture) {
+    if (!gesture || !gesture.captureTarget || !pointerEventsSupported ||
+      typeof gesture.captureTarget.releasePointerCapture !== "function") return;
+    try {
+      if (!gesture.captureTarget.hasPointerCapture || gesture.captureTarget.hasPointerCapture(gesture.pointerId)) {
+        gesture.captureTarget.releasePointerCapture(gesture.pointerId);
+      }
+    } catch (exception) {
+      console.warn("Overlay pointer capture release failed", exception);
+    }
+  }
+
+  function cancelLocalDrag() {
+    releaseDragCapture(dragGesture);
+    dragGesture = null;
+  }
+
+  function captureDragPointer(event) {
+    if (!pointerEventsSupported || !event.target || typeof event.target.setPointerCapture !== "function") {
+      return null;
+    }
+    try {
+      event.target.setPointerCapture(event.pointerId);
+      return event.target;
+    } catch (exception) {
+      console.warn("Overlay pointer capture failed", exception);
+      return null;
+    }
+  }
+
+  function endDrag(event) {
+    const gesture = dragGesture;
+    if (!gesture) return;
+    if (event && getPointerId(event) !== gesture.pointerId) return;
+    const point = event && getScreenPoint(event) || { screenX: gesture.screenX, screenY: gesture.screenY };
+    const sequence = gesture.sequence + 1;
+    gesture.sequence = sequence;
+    gesture.screenX = point.screenX;
+    gesture.screenY = point.screenY;
+    send("overlay:drag:end:" + dragPayload(gesture, sequence, point));
+    if (pointerEventsSupported && event && event.type.indexOf("pointer") === 0) lastPointerEndAt = Date.now();
+    cancelLocalDrag();
+  }
+
+  function beginDrag(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const isMouse = event.type.indexOf("mouse") === 0;
+    if (isMouse && Date.now() - lastPointerDownAt < 500) return;
+    if (!isMouse) lastPointerDownAt = Date.now();
+    const bounds = card && card.getBoundingClientRect();
+    const reason = !card ? "missing-card" : !card.contains(event.target) ? "outside-card" : "accepted";
+    send("overlay:pointerdown:" + JSON.stringify({
+      eventType: event.type,
+      reason: reason,
+      target: event.target && event.target.nodeName || "unknown",
+      cardLeft: bounds ? bounds.left : null,
+      cardTop: bounds ? bounds.top : null,
+      cardRight: bounds ? bounds.right : null,
+      cardBottom: bounds ? bounds.bottom : null,
+      screenX: Number(event.screenX),
+      screenY: Number(event.screenY),
+    }));
+    if (event.type.indexOf("mouse") === 0 && dragGesture) return;
+    if (event.type.indexOf("mouse") === 0 && Date.now() - lastPointerEndAt < 500) return;
+    if (reason !== "accepted") return;
+    const point = getScreenPoint(event);
+    const pointerId = getPointerId(event);
+    if (!point || !Number.isInteger(pointerId) || pointerId < 0) return;
+    if (dragGesture) endDrag(null);
+
+    const gesture = {
+      gestureId: getNextDragGestureId(),
+      pointerId: pointerId,
+      sequence: 0,
+      screenX: point.screenX,
+      screenY: point.screenY,
+      captureTarget: null,
+    };
+    if (!send("overlay:drag:start:" + dragPayload(gesture, 0, point))) return;
+    dragGesture = gesture;
+    dragGesture.captureTarget = captureDragPointer(event);
+    event.preventDefault();
+  }
+
+  function moveDrag(event) {
+    const gesture = dragGesture;
+    if (!gesture || getPointerId(event) !== gesture.pointerId) return;
+    const point = getScreenPoint(event);
+    if (!point) return;
+    const sequence = gesture.sequence + 1;
+    gesture.sequence = sequence;
+    gesture.screenX = point.screenX;
+    gesture.screenY = point.screenY;
+    if (!send("overlay:drag:move:" + dragPayload(gesture, sequence, point))) {
+      cancelLocalDrag();
+      return;
+    }
+    event.preventDefault();
+  }
+
+  function beginNativeDrag(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (!card || !card.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    send("overlay:native-drag");
   }
 
   function reportSize() {
@@ -59,78 +202,29 @@
     const bounds = card.getBoundingClientRect();
     const style = getComputedStyle(card);
     const scaling = Math.max(1, window.devicePixelRatio || 1);
+    const width = Math.ceil(bounds.width * scaling);
+    const height = Math.ceil(bounds.height * scaling);
+    if (width === lastReportedWidth && height === lastReportedHeight) return;
+    lastReportedWidth = width;
+    lastReportedHeight = height;
     send("overlay:size:"
-      + Math.ceil(bounds.width * scaling) + ","
-      + Math.ceil(bounds.height * scaling) + ","
+      + width + ","
+      + height + ","
       + ((Number.parseFloat(style.borderTopLeftRadius) || 0) * scaling));
   }
 
   function queueSizeReport() {
-    if (reportFrame) return;
-    reportFrame = requestAnimationFrame(reportSize);
-  }
-
-  function resizeDirection(event) {
-    if (!card || event.target && event.target.closest && event.target.closest(".overlay-resize-handle")) return "";
-    const bounds = card.getBoundingClientRect();
-    const scaling = Math.max(1, window.devicePixelRatio || 1);
-    const edge = Math.max(10, Math.min(14, 12 / scaling));
-    if (event.clientX < bounds.left || event.clientX > bounds.right
-      || event.clientY < bounds.top || event.clientY > bounds.bottom) return "";
-    const north = event.clientY - bounds.top <= edge;
-    const south = bounds.bottom - event.clientY <= edge;
-    const west = event.clientX - bounds.left <= edge;
-    const east = bounds.right - event.clientX <= edge;
-    return (north ? "n" : south ? "s" : "") + (west ? "w" : east ? "e" : "");
-  }
-
-  function removeResizeHandles() {
-    document.querySelectorAll(".overlay-resize-handle").forEach(function (handle) { handle.remove(); });
-    const style = document.getElementById("overlay-resize-handle-style");
-    if (style) style.remove();
-  }
-
-  function ensureResizeHandles() {
-    if (!overlayMode) {
-      removeResizeHandles();
+    if (reportFrame || delayedReportTimer) return;
+    const scaleAt = Number(window.__overlayScaleWheelAt || 0);
+    const remaining = scaleAt > 0 ? 550 - (Date.now() - scaleAt) : 0;
+    if (remaining > 0) {
+      delayedReportTimer = window.setTimeout(function () {
+        delayedReportTimer = 0;
+        queueSizeReport();
+      }, remaining);
       return;
     }
-
-    const root = document.body || document.documentElement;
-    if (!root) return;
-    let style = document.getElementById("overlay-resize-handle-style");
-    if (!style) {
-      style = document.createElement("style");
-      style.id = "overlay-resize-handle-style";
-      style.textContent = config.resizeHandleCss || "";
-      (document.head || root).appendChild(style);
-    }
-
-    ["n", "s", "e", "w", "nw", "ne", "se", "sw"].forEach(function (direction) {
-      let handle = document.querySelector(`.overlay-resize-handle[data-direction="${direction}"]`);
-      if (!handle) {
-        handle = document.createElement("div");
-        handle.className = "overlay-resize-handle";
-        handle.setAttribute("data-direction", direction);
-        handle.setAttribute("aria-hidden", "true");
-        root.appendChild(handle);
-      }
-      if (handle.__overlayResizeBound) return;
-      handle.__overlayResizeBound = true;
-      const begin = function (event) {
-        if (event.button !== undefined && event.button !== 0) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-        const now = Date.now();
-        if (now - (handle.__overlayResizeLast || 0) < 120) return;
-        handle.__overlayResizeLast = now;
-        markResizeGesture();
-        send(`overlay:resize:${direction}`);
-      };
-      listen(handle, "pointerdown", begin, { capture: true, passive: false });
-      listen(handle, "mousedown", begin, { capture: true, passive: false });
-    });
+    reportFrame = requestAnimationFrame(reportSize);
   }
 
   if (card) {
@@ -139,22 +233,7 @@
     card.onselectstart = function () { return false; };
 
     if (overlayMode) {
-      ensureResizeHandles();
-      listen(document, "mousedown", function (event) {
-        if (event.button !== 0) return;
-        const resizeHandle = event.target && event.target.closest && event.target.closest(".overlay-resize-handle");
-        if (resizeHandle || Date.now() < (window.__overlayResizeGestureUntil || 0)) {
-          event.preventDefault();
-          return;
-        }
-        const direction = resizeDirection(event);
-        if (direction) {
-          markResizeGesture();
-          send(`overlay:resize:${direction}`);
-        } else {
-          send("overlay:drag");
-        }
-      }, true);
+      listen(window, dragDownEventName, beginNativeDrag, { capture: true, passive: false });
       listen(document, "wheel", function (event) {
         if (!event.ctrlKey) return;
         event.preventDefault();
@@ -163,12 +242,16 @@
         window.__overlayScaleWheelAt = now;
         send(`overlay:scale:${event.deltaY < 0 ? "5" : "-5"}`);
       }, { capture: true, passive: false });
-      ["pointerup", "pointercancel", "mouseup"].forEach(function (eventName) {
-        listen(document, eventName, clearResizeGesture, true);
-      });
-      listen(window, "blur", clearResizeGesture, true);
-    } else {
-      removeResizeHandles();
+       const bounds = card.getBoundingClientRect();
+       send("overlay:runtime-ready:" + JSON.stringify({
+         overlayMode: overlayMode,
+         pointerEventsSupported: pointerEventsSupported,
+         cardLeft: bounds.left,
+         cardTop: bounds.top,
+         cardRight: bounds.right,
+         cardBottom: bounds.bottom,
+         devicePixelRatio: Number(window.devicePixelRatio || 1),
+       }));
     }
 
     listen(window, "resize", queueSizeReport);
@@ -194,6 +277,7 @@
 
   window.__overlayHostRuntime = {
     dispose: function () {
+      endDrag(null);
       disposers.splice(0).forEach(function (dispose) {
         try { dispose(); }
         catch (exception) { console.error("Disposing overlay event listener failed", exception); }
@@ -201,8 +285,7 @@
       if (resizeObserver) resizeObserver.disconnect();
       if (mutationObserver) mutationObserver.disconnect();
       if (reportFrame) cancelAnimationFrame(reportFrame);
-      clearResizeGesture();
-      removeResizeHandles();
+      if (delayedReportTimer) clearTimeout(delayedReportTimer);
       if (window.__overlayHostSend === send) delete window.__overlayHostSend;
     },
   };

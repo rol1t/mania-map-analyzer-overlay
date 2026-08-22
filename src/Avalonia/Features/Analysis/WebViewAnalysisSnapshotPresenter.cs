@@ -17,11 +17,22 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresenter
 {
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly NativeWebView _webView;
+    private readonly Func<NativeWebView> _webViewProvider;
 
     public WebViewAnalysisSnapshotPresenter(NativeWebView webView)
+        : this(CreateProvider(webView))
     {
-        _webView = webView ?? throw new ArgumentNullException(nameof(webView));
+    }
+
+    public WebViewAnalysisSnapshotPresenter(Func<NativeWebView> webViewProvider)
+    {
+        _webViewProvider = webViewProvider ?? throw new ArgumentNullException(nameof(webViewProvider));
+    }
+
+    private static Func<NativeWebView> CreateProvider(NativeWebView webView)
+    {
+        ArgumentNullException.ThrowIfNull(webView);
+        return () => webView;
     }
 
     public async Task PresentAsync(AnalysisSnapshot snapshot, CancellationToken cancellationToken = default)
@@ -36,7 +47,7 @@ public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresente
 
         if (Dispatcher.UIThread.CheckAccess())
         {
-            await InvokeOnUiAsync(script, cancellationToken).ConfigureAwait(false);
+            await InvokeOnUiAsync(_webViewProvider(), script, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -45,7 +56,11 @@ public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresente
             {
                 try
                 {
-                    await InvokeOnUiAsync(script, cancellationToken).ConfigureAwait(false);
+                    // The launcher replaces the NativeWebView when leaving
+                    // overlay mode. Resolve it on the UI thread so headless
+                    // analysis never keeps invoking the detached overlay
+                    // control after osu! exits.
+                    await InvokeOnUiAsync(_webViewProvider(), script, cancellationToken).ConfigureAwait(false);
                     completion.TrySetResult(null);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -67,9 +82,9 @@ public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresente
             $"Pushed headless snapshot for beatmap {snapshot.Beatmap.Title} [{snapshot.Beatmap.Version}] to WebView.");
     }
 
-    private async Task InvokeOnUiAsync(string script, CancellationToken cancellationToken)
+    private static async Task InvokeOnUiAsync(NativeWebView webView, string script, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await _webView.InvokeScript(script).ConfigureAwait(false);
+        await webView.InvokeScript(script).ConfigureAwait(false);
     }
 }

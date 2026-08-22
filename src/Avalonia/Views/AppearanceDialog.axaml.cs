@@ -34,6 +34,7 @@ public partial class AppearanceDialog : Window
         LayoutLabel.Text = L("appearance.layout");
         AnalyzerLabel.Text = L("appearance.analyzer");
         ScaleLabel.Text = L("appearance.size");
+        OpacityLabel.Text = L("appearance.opacity");
         EditCssButton.Content = L("appearance.open_css");
         AnalyzerSettingsButton.Content = L("appearance.analyzer_settings");
         CancelButton.Content = L("appearance.cancel");
@@ -104,6 +105,7 @@ public partial class AppearanceDialog : Window
 
         ApplyButton.IsEnabled = _resourcesAvailable && _analyzerResourcesAvailable;
         ScaleSlider.Value = settings.OverlayScalePercent;
+        OpacitySlider.Value = Math.Clamp(settings.OverlayOpacityPercent, 10, 100);
         UpdateDescription();
         UpdateAnalyzerSettingsState();
     }
@@ -113,6 +115,7 @@ public partial class AppearanceDialog : Window
     public string AnalyzerProviderId =>
         (AnalyzerBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "mania-map-analyser";
     public int ScalePercent => (int)ScaleSlider.Value;
+    public int OpacityPercent => (int)OpacitySlider.Value;
 
     private string L(string key) => ManiaMapAnalyzerOverlay.UiText.Get(key);
 
@@ -141,6 +144,16 @@ public partial class AppearanceDialog : Window
         RaisePreviewChanged();
     }
 
+    private void OpacitySlider_ValueChanged(object? sender, global::Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (OpacityValueText is not null)
+        {
+            OpacityValueText.Text = ((int)e.NewValue) + "%";
+        }
+
+        RaisePreviewChanged();
+    }
+
     private void ScaleDown_Click(object? sender, RoutedEventArgs e) =>
         ScaleSlider.Value = Math.Max(50, ScaleSlider.Value - 5);
 
@@ -159,6 +172,7 @@ public partial class AppearanceDialog : Window
         preview.OverlayPresetId = PresetId;
         preview.AnalyzerProviderId = AnalyzerProviderId;
         preview.OverlayScalePercent = ScalePercent;
+        preview.OverlayOpacityPercent = OpacityPercent;
         PreviewChanged?.Invoke(preview);
     }
 

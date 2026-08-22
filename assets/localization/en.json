@@ -66,6 +66,7 @@
   "appearance.layout": "Layout",
   "appearance.analyzer": "Analyzer",
   "appearance.size": "Size",
+  "appearance.opacity": "Opacity",
   "appearance.open_css": "Open CSS",
   "appearance.analyzer_settings": "Analyser settings",
   "appearance.cancel": "Cancel",
