@@ -23,6 +23,10 @@
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
   let pauseCoach = null;
+  // HTTP polling is the authoritative state source for the native game. Keep
+  // a confirmed pause through a stale websocket `paused:false` delta until
+  // HTTP confirms that gameplay actually resumed.
+  let httpPauseState = null;
   // Presentation changes re-inject this adapter while the WebView stays
   // alive. Keep the current-attempt coach across those re-initializations so
   // resizing or changing a preset does not erase the paused snapshot.
@@ -86,6 +90,15 @@
     if (value == null || String(value).trim() === "") return null;
     const number = Number(String(value).replace(",", "."));
     return Number.isFinite(number) ? number : null;
+  }
+
+  function booleanValue(value) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && (value === 0 || value === 1)) return value === 1;
+    const token = clean(value).toLowerCase();
+    if (["true", "1", "yes", "paused", "pause"].includes(token)) return true;
+    if (["false", "0", "no", "playing", "play"].includes(token)) return false;
+    return null;
   }
 
   function firstNumber(value) {
@@ -690,7 +703,25 @@
     const hasState = Boolean(stateToken) || stateNumber !== null;
     const nextState = hasState ? stateName : gameplay.state;
     const nextIsPlaying = hasState ? isPlaying : gameplay.isPlaying;
-    const nextIsPaused = game && typeof game.paused === "boolean" ? game.paused : gameplay.isPaused;
+    const pauseCandidates = [
+      game && game.paused,
+      game && game.isPaused,
+      state && state.paused,
+      state && state.isPaused,
+      payload && payload.paused,
+      payload && payload.isPaused,
+    ];
+    const explicitPause = pauseCandidates.map(booleanValue).find(value => value !== null);
+    if (source === "browser-http" && explicitPause !== undefined) {
+      httpPauseState = explicitPause;
+    }
+    const websocketPauseStale = source !== "browser-http"
+      && explicitPause === false
+      && httpPauseState === true;
+    const nextIsPaused = stateToken === "pause" || stateToken === "paused" || stateToken === "break"
+      ? true
+      : websocketPauseStale ? true
+      : explicitPause !== undefined ? explicitPause : gameplay.isPaused;
     const isFocused = game && typeof game.focused === "boolean" ? game.focused : gameplay.isFocused;
     gameplay = {
       state: nextState,
@@ -762,6 +793,7 @@
       }
     } finally {
       statePollInFlight = false;
+      httpPauseState = null;
     }
   }
 

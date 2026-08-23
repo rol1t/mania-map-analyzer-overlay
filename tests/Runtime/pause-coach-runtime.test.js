@@ -170,6 +170,9 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   const adapter = fs.readFileSync(path.join(root, "assets/analyzers/mania-map-analyser/adapter.js"), "utf8");
   const renderer = fs.readFileSync(path.join(root, "assets/overlay/runtime/renderer.js"), "utf8");
   assert.match(adapter, /__overlayPauseCoachRuntime/);
+  assert.match(adapter, /function booleanValue/);
+  assert.match(adapter, /stateToken === "pause"/);
+  assert.match(adapter, /httpPauseState/);
   assert.doesNotMatch(adapter, /pauseCoachRuntime\.dispose\(\)/);
   assert.match(renderer, /overlay-layout-companella-replay/);
   for (const preset of ["pause-coach-card", "pause-coach-minimal", "pause-coach-signal"]) {
