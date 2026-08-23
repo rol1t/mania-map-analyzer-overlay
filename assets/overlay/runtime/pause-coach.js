@@ -109,7 +109,11 @@
     const raw = play && play.mods;
     if (Array.isArray(raw)) return raw.map(clean).filter(Boolean).map(value => value.toUpperCase());
     if (raw && typeof raw === "object") {
-      const values = Array.isArray(raw.array) ? raw.array : (raw.acronym || raw.name ? [raw] : []);
+      const values = Array.isArray(raw.array)
+        ? raw.array
+        : (raw.acronym || raw.name
+          ? [raw]
+          : Object.keys(raw).filter(key => raw[key] === true));
       return values.map(entry => entry && typeof entry === "object" ? clean(entry.acronym || entry.name) : clean(entry))
         .filter(Boolean).map(value => value.toUpperCase());
     }
