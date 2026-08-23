@@ -793,7 +793,6 @@
       }
     } finally {
       statePollInFlight = false;
-      httpPauseState = null;
     }
   }
 
@@ -885,6 +884,7 @@
       reconnectTimer = 0;
       statePollTimer = 0;
       statePollInFlight = false;
+      httpPauseState = null;
     },
   };
 })();
