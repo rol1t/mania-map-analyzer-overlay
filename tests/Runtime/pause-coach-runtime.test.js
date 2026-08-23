@@ -197,6 +197,8 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.match(adapter, /function booleanValue/);
   assert.match(adapter, /stateToken === "pause"/);
   assert.match(adapter, /httpPauseState/);
+  assert.match(adapter, /function mergePlayPayload/);
+  assert.match(adapter, /stateOnly: true/);
   assert.doesNotMatch(adapter, /pauseCoachRuntime\.dispose\(\)/);
   assert.match(renderer, /overlay-layout-companella-replay/);
   for (const preset of ["pause-coach-card", "pause-coach-minimal", "pause-coach-signal"]) {

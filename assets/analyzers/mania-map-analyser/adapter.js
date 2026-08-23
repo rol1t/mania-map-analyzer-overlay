@@ -22,6 +22,7 @@
   let beatmap = emptyBeatmap();
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
+  let lastPlayPayload = {};
   let pauseCoach = null;
   // HTTP polling is the authoritative state source for the native game. Keep
   // a confirmed pause through a stale websocket `paused:false` delta until
@@ -123,22 +124,30 @@
     const sourceTime = sourceBeatmap.time && typeof sourceBeatmap.time === "object"
       ? sourceBeatmap.time
       : {};
-    const mapProgressMs = finiteNumber(sourceTime.live);
-    const score = finiteNumber(sourcePlay.score);
-    const accuracy = finiteNumber(sourcePlay.accuracy);
-    const aggregateUr = finiteNumber(sourcePlay.unstableRate);
-    const offsets = Array.isArray(sourcePlay.hitErrorArray)
+    const hasLiveTime = Object.prototype.hasOwnProperty.call(sourceTime, "live");
+    const hasScore = Object.prototype.hasOwnProperty.call(sourcePlay, "score");
+    const hasAccuracy = Object.prototype.hasOwnProperty.call(sourcePlay, "accuracy");
+    const hasUnstableRate = Object.prototype.hasOwnProperty.call(sourcePlay, "unstableRate");
+    const hasOffsets = Object.prototype.hasOwnProperty.call(sourcePlay, "hitErrorArray")
+      && Array.isArray(sourcePlay.hitErrorArray);
+    const mapProgressMs = hasLiveTime ? finiteNumber(sourceTime.live) : replay.mapProgressMs;
+    const score = hasScore ? finiteNumber(sourcePlay.score) : replay.score;
+    const accuracy = hasAccuracy ? finiteNumber(sourcePlay.accuracy) : replay.accuracy;
+    const aggregateUr = hasUnstableRate ? finiteNumber(sourcePlay.unstableRate) : null;
+    const offsets = hasOffsets
       ? sourcePlay.hitErrorArray.map(finiteNumber).filter(value => value !== null)
-      : [];
-    const meanMs = offsets.length ? offsets.reduce((sum, value) => sum + value, 0) / offsets.length : null;
-    const medianMs = median(offsets);
-    const variance = offsets.length
+      : (replay.recentOffsets || []);
+    const meanMs = hasOffsets
+      ? (offsets.length ? offsets.reduce((sum, value) => sum + value, 0) / offsets.length : null)
+      : replay.meanMs;
+    const medianMs = hasOffsets ? median(offsets) : replay.medianMs;
+    const variance = hasOffsets && offsets.length
       ? offsets.reduce((sum, value) => sum + Math.pow(value - meanMs, 2), 0) / offsets.length
       : null;
-    const sdMs = variance === null ? null : Math.sqrt(variance);
-    const ur = aggregateUr !== null && (aggregateUr !== 0 || offsets.length > 0)
-      ? aggregateUr
-      : (sdMs === null ? null : sdMs * 10);
+    const sdMs = hasOffsets ? (variance === null ? null : Math.sqrt(variance)) : replay.sdMs;
+    const ur = hasOffsets
+      ? (aggregateUr !== null && (aggregateUr !== 0 || offsets.length > 0) ? aggregateUr : (sdMs === null ? null : sdMs * 10))
+      : (hasUnstableRate ? aggregateUr : replay.ur);
 
     return {
       ...replay,
@@ -149,12 +158,23 @@
       meanMs,
       medianMs,
       sdMs,
-      earlyCount: offsets.filter(value => value < 0).length,
-      lateCount: offsets.filter(value => value > 0).length,
-      sampleCount: offsets.length,
-      recentOffsets: offsets.slice(-20),
-      hasData: mapProgressMs !== null || score !== null || offsets.length > 0,
+      earlyCount: hasOffsets ? offsets.filter(value => value < 0).length : replay.earlyCount,
+      lateCount: hasOffsets ? offsets.filter(value => value > 0).length : replay.lateCount,
+      sampleCount: hasOffsets ? offsets.length : replay.sampleCount,
+      recentOffsets: hasOffsets ? offsets.slice(-20) : replay.recentOffsets,
+      hasData: replay.hasData || mapProgressMs !== null || score !== null || offsets.length > 0,
     };
+  }
+
+  function mergePlayPayload(previous, incoming) {
+    const source = incoming && typeof incoming === "object" ? incoming : {};
+    const merged = { ...(previous || {}), ...source };
+    for (const key of ["hits", "combo", "healthBar"]) {
+      if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+        merged[key] = { ...((previous && previous[key]) || {}), ...source[key] };
+      }
+    }
+    return merged;
   }
 
   function text(id) {
@@ -645,10 +665,11 @@
     return numeric !== null && numeric > 0 ? String(numeric) : "";
   }
 
-  function applyTosuPayload(payload, source) {
+  function applyTosuPayload(payload, source, options) {
+    const stateOnly = options && options.stateOnly === true;
     const previousGameplay = { ...gameplay };
     let beatmapIdentityChanged = false;
-    const sourceBeatmap = payload && payload.beatmap;
+    const sourceBeatmap = stateOnly ? null : payload && payload.beatmap;
     if (sourceBeatmap) {
       const metadata = sourceBeatmap.metadata || {};
       const stats = sourceBeatmap.stats || {};
@@ -656,6 +677,7 @@
       const setId = String(sourceBeatmap.set || sourceBeatmap.setId || sourceBeatmap.beatmapSetId || "");
       if (id && beatmap.id && id !== beatmap.id) {
         replay = emptyReplay();
+        lastPlayPayload = {};
         beatmapIdentityChanged = true;
         pauseCoach = null;
         lastPlayingHits = null;
@@ -677,9 +699,13 @@
       };
     }
 
-    replay = readLiveReplay(payload);
-    const sourcePlayForCoach = payload && payload.play && typeof payload.play === "object" ? payload.play : {};
-    const currentHits = parsePlayHits(sourcePlayForCoach);
+    if (!stateOnly) {
+      replay = readLiveReplay(payload);
+    }
+    const incomingPlay = !stateOnly && payload && payload.play && typeof payload.play === "object" ? payload.play : null;
+    let sourcePlayForCoach = mergePlayPayload(lastPlayPayload, incomingPlay);
+    if (incomingPlay) lastPlayPayload = sourcePlayForCoach;
+    let currentHits = parsePlayHits(sourcePlayForCoach);
 
     const rawState = payload && payload.state;
     const state = rawState && typeof rawState === "object" ? rawState : null;
@@ -732,6 +758,11 @@
 
     const isNewPlayingAttempt = gameplay.isPlaying === true && gameplay.isPaused !== true && previousGameplay.isPlaying !== true;
     if (beatmapIdentityChanged || isNewPlayingAttempt) {
+      if (isNewPlayingAttempt) {
+        lastPlayPayload = mergePlayPayload({}, incomingPlay);
+        sourcePlayForCoach = lastPlayPayload;
+        currentHits = parsePlayHits(sourcePlayForCoach);
+      }
       pauseCoach = null;
       lastPlayingHits = null;
     }
@@ -784,7 +815,7 @@
         cache: "no-store",
       });
       if (!response.ok) return;
-      applyTosuPayload(await response.json(), "browser-http");
+      applyTosuPayload(await response.json(), "browser-http", { stateOnly: true });
     } catch (exception) {
       const now = Date.now();
       if (now - lastStatePollWarningAt >= 5000) {
