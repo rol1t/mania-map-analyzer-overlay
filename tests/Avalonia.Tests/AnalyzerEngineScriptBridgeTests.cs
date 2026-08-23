@@ -134,7 +134,14 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
 
         var firstResult = await firstTask;
         Assert.Equal(AnalysisOutcome.Failed, firstResult.Outcome);
-        Assert.Contains(firstResult.Diagnostics, diagnostic => diagnostic.Code == "WORKER_CRASHED");
+        Assert.Contains(
+            firstResult.Diagnostics,
+            diagnostic => diagnostic.Code == "WORKER_CRASHED" &&
+                          diagnostic.Severity == AnalysisDiagnosticSeverity.Warning);
+        Assert.Contains(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "WORKER_CRASHED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Warning);
 
         var secondTask = _bridge.AnalyzeAsync(CreateRequest());
         await _host.WaitForScriptAsync();

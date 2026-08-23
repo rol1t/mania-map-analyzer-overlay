@@ -346,8 +346,25 @@ internal sealed class AppLoggerAnalyzerEngineDiagnosticSink : IAnalyzerEngineDia
 {
     public void Report(string operation, AnalyzerEngineDiagnostic diagnostic, Exception? exception = null)
     {
-        ManiaMapAnalyzerOverlay.Avalonia.Services.AppLogger.Error(
-            operation,
-            exception ?? diagnostic.Exception ?? new InvalidDataException(diagnostic.Message));
+        var loggedException = exception ?? diagnostic.Exception;
+        switch (diagnostic.Severity)
+        {
+            case AnalyzerEngineDiagnosticSeverity.Warning:
+                ManiaMapAnalyzerOverlay.Avalonia.Services.AppLogger.Warning(
+                    operation,
+                    diagnostic.Message,
+                    loggedException);
+                break;
+            case AnalyzerEngineDiagnosticSeverity.Information:
+                ManiaMapAnalyzerOverlay.Avalonia.Services.AppLogger.Info(
+                    operation,
+                    diagnostic.Message);
+                break;
+            default:
+                ManiaMapAnalyzerOverlay.Avalonia.Services.AppLogger.Error(
+                    operation,
+                    loggedException ?? new InvalidDataException(diagnostic.Message));
+                break;
+        }
     }
 }

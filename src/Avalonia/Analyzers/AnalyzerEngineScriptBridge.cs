@@ -147,10 +147,14 @@ public sealed partial class AnalyzerEngineScriptBridge : IAnalyzerEngine, IAsync
         }
         catch (AnalyzerEngineBridgeException exception)
         {
-            var diagnostic = AnalysisDiagnostic.Error(
+            // Preserve the structured severity from the runtime boundary. A
+            // worker termination is recoverable after a fresh bootstrap and
+            // must not be promoted back to a fatal, user-visible error here.
+            var diagnostic = new AnalysisDiagnostic(
+                exception.Diagnostic.Severity,
                 exception.Diagnostic.Code,
                 exception.Diagnostic.Message,
-                exception,
+                exception.ToString(),
                 exception.Diagnostic.Properties);
             Report(diagnostic, exception);
             return AnalysisResult.Failure(request, Descriptor, diagnostic);
