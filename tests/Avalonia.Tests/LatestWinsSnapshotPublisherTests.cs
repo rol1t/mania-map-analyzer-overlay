@@ -26,6 +26,40 @@ public sealed class LatestWinsSnapshotPublisherTests
     }
 
     [Fact]
+    public async Task HiddenPlayingFrameFollowedByPauseFlushesPauseFrameFirst()
+    {
+        var published = new List<string>();
+        var publisher = CreatePublisher(published);
+
+        publisher.BeginPresentationSession();
+        publisher.SetBrowserReady(true);
+        publisher.Submit("Playing@29000");
+        publisher.Submit("Paused@30000");
+        publisher.SetPresentationVisible(true);
+
+        await EventuallyAsync(() => published.Count == 1);
+
+        Assert.Equal(["Paused@30000"], published);
+    }
+
+    [Fact]
+    public async Task HiddenPlayingFrameFollowedByResultsFlushesResultsFrameFirst()
+    {
+        var published = new List<string>();
+        var publisher = CreatePublisher(published);
+
+        publisher.BeginPresentationSession();
+        publisher.SetBrowserReady(true);
+        publisher.Submit("Playing@29000");
+        publisher.Submit("Results@30000");
+        publisher.SetPresentationVisible(true);
+
+        await EventuallyAsync(() => published.Count == 1);
+
+        Assert.Equal(["Results@30000"], published);
+    }
+
+    [Fact]
     public async Task SlowPublishRetainsNewestFrameAndPublishesItAfterCurrentCall()
     {
         var published = new List<string>();

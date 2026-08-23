@@ -293,7 +293,10 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             ["headlessReplay"] = true
         };
         await _presenter.PresentAsync(
-            snapshot with { Extensions = replayExtensions },
+            snapshot with
+            {
+                Extensions = replayExtensions
+            },
             cancellationToken).ConfigureAwait(false);
     }
 

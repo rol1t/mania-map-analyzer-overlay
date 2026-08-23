@@ -136,7 +136,6 @@ Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extr
 
 ## Manual acceptance and release
 
-- [ ] Known issue: immediately after opening or reloading the widget, telemetry values may briefly jump (typically for up to ~300 ms) while the native, browser, and cached headless snapshots converge. This is cosmetic and does not affect the ongoing session once the initial render settles.
 - [ ] Manually test osu! stable and lazer in windowed, borderless, and fullscreen modes.
 - [ ] Verify map-start/menu/pause visibility, osu! focus/input blocking, dragging, resizing, and DPI scaling.
 - [ ] Verify clean shutdown of Tosu and the overlay when the application exits.

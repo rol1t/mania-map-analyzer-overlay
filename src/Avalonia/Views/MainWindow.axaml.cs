@@ -39,7 +39,7 @@ public partial class MainWindow : Window
     private readonly FullscreenOverlayService _fullscreen = new();
     private readonly UpdateService _updates = new();
     private readonly WindowsOverlayController _windowsOverlay;
-    private readonly DispatcherTimer _overlayGameplayPollTimer;
+    private DispatcherTimer? _overlayGameplayPollTimer;
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
     private readonly SemaphoreSlim _overlayScaleGate = new(1, 1);
     private readonly AnalyzerEngineCatalog _analyzerEngineCatalog = new();
@@ -78,6 +78,7 @@ public partial class MainWindow : Window
     // Avalonia UI queue so WM_NCLBUTTONDOWN is never entered re-entrantly.
     private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
+    private long _overlayGameplayPollGeneration;
     private string _lastNativePauseCoachDiagnostic = string.Empty;
     private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
     private string _lastNativePollBoundaryDiagnostic = string.Empty;
@@ -142,8 +143,6 @@ public partial class MainWindow : Window
                 UpdateOverlayVisibility();
             }
         };
-        _overlayGameplayPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-        _overlayGameplayPollTimer.Tick += OverlayGameplayPollTimer_Tick;
         Deactivated += (_, _) => CancelOverlayGestures();
         Opened += async (_, _) =>
         {
@@ -2445,30 +2444,37 @@ public partial class MainWindow : Window
         }
 
         LogNativePollBoundary("started");
-        _overlayGameplayPollCancellation = new CancellationTokenSource();
-        _overlayGameplayPollTimer.Start();
-        _ = PollOverlayGameplayStateAsync();
+        var pollingCancellation = new CancellationTokenSource();
+        var generation = Interlocked.Increment(ref _overlayGameplayPollGeneration);
+        _overlayGameplayPollCancellation = pollingCancellation;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        timer.Tick += (_, _) => _ = PollOverlayGameplayStateAsync(generation, pollingCancellation);
+        _overlayGameplayPollTimer = timer;
+        timer.Start();
+        _ = PollOverlayGameplayStateAsync(generation, pollingCancellation);
     }
 
     private void StopOverlayGameplayPolling()
     {
-        _overlayGameplayPollTimer.Stop();
-        _overlayGameplayPollCancellation?.Cancel();
-        _overlayGameplayPollCancellation?.Dispose();
+        Interlocked.Increment(ref _overlayGameplayPollGeneration);
+        var timer = _overlayGameplayPollTimer;
+        _overlayGameplayPollTimer = null;
+        timer?.Stop();
+        var pollingCancellation = _overlayGameplayPollCancellation;
         _overlayGameplayPollCancellation = null;
+        pollingCancellation?.Cancel();
+        pollingCancellation?.Dispose();
     }
 
-    private async void OverlayGameplayPollTimer_Tick(object? sender, EventArgs e) =>
-        await PollOverlayGameplayStateAsync();
-
-    private async Task PollOverlayGameplayStateAsync()
+    private async Task PollOverlayGameplayStateAsync(long generation, CancellationTokenSource pollingCancellation)
     {
-        if (_model is null || Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
+        if (_model is null || !IsActiveOverlayGameplayPoll(generation, pollingCancellation) ||
+            Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
         {
             return;
         }
 
-        var cancellationToken = _overlayGameplayPollCancellation?.Token ?? CancellationToken.None;
+        var cancellationToken = pollingCancellation.Token;
         try
         {
             var payload = await _model.Tosu.GetGameplayPayloadAsync(cancellationToken);
@@ -2487,7 +2493,8 @@ public partial class MainWindow : Window
                     // not deliver a stale response into the new WebView
                     // session, but do feed both visible launcher and overlay
                     // presentations from the same collector.
-                    if (!cancellationToken.IsCancellationRequested)
+                    if (!cancellationToken.IsCancellationRequested &&
+                        IsActiveOverlayGameplayPoll(generation, pollingCancellation))
                     {
                         ApplyNativeRealtimeTelemetry(telemetry);
                     }
@@ -2511,6 +2518,11 @@ public partial class MainWindow : Window
             Interlocked.Exchange(ref _overlayGameplayPollInFlight, 0);
         }
     }
+
+    private bool IsActiveOverlayGameplayPoll(long generation, CancellationTokenSource pollingCancellation) =>
+        generation == Volatile.Read(ref _overlayGameplayPollGeneration) &&
+        ReferenceEquals(_overlayGameplayPollCancellation, pollingCancellation) &&
+        !pollingCancellation.IsCancellationRequested;
 
     private void LogNativePollBoundary(string reason)
     {
@@ -2543,14 +2555,16 @@ public partial class MainWindow : Window
             : telemetry.Snapshot.State == RealtimePlayState.Playing
                 ? false
                 : null;
+        TraceGameplayState("native-http", telemetry.RawStateName, telemetry.RawStateNumber, isPlaying, isPaused, telemetry.Sample.Focused);
+        LogNativePauseCoachTelemetry(telemetry);
+        // Submit before changing visibility. A paused/results frame must be
+        // the snapshot flushed when the hidden overlay becomes visible; if
+        // visibility changes first, the publisher can flush stale Playing.
+        _nativePauseCoachPublisher.Submit(telemetry.Snapshot);
         if (isPlaying is bool playing)
         {
             SetOverlaySuppressedByPlay(playing, isPaused);
         }
-
-        TraceGameplayState("native-http", telemetry.RawStateName, telemetry.RawStateNumber, isPlaying, isPaused, telemetry.Sample.Focused);
-        LogNativePauseCoachTelemetry(telemetry);
-        _nativePauseCoachPublisher.Submit(telemetry.Snapshot);
     }
 
     private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
@@ -2663,7 +2677,11 @@ public partial class MainWindow : Window
                 Reason = "Native Tosu v2 realtime telemetry."
             },
             PauseCoach = pauseCoach,
-            Extensions = new Dictionary<string, object?> { ["nativePauseCoach"] = true }
+            Extensions = new Dictionary<string, object?>
+            {
+                ["nativePauseCoach"] = true,
+                ["realtimeProducer"] = "native"
+            }
         };
         string json = JsonSerializer.Serialize(analysis, _overlaySnapshotJsonOptions);
         // The renderer handles the event and performs one render. Calling its

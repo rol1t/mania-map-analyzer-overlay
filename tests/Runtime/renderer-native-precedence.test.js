@@ -58,22 +58,23 @@ publish({
   beatmap: { id: "674175" },
   gameplay: { state: "Paused", isPlaying: true, isPaused: true },
   replay: { mapProgressMs: 30000, score: 123456 },
-  pauseCoach: { state: "Paused", sessionId: "A", mapProgressMs: 30000, hasData: true },
-  extensions: { nativePauseCoach: true },
+  pauseCoach: { state: "Paused", sessionId: "native-A", mapProgressMs: 30000, hasData: true },
+  extensions: { nativePauseCoach: true, realtimeProducer: "native" },
 });
 
 publish({
   schemaVersion: 1,
-  sourceId: "browser-adapter",
+  sourceId: "mania-map-analyser",
   beatmap: {},
   gameplay: { state: "Playing", isPlaying: true, isPaused: false },
   replay: { mapProgressMs: 1000, score: 1 },
-  pauseCoach: { state: "Playing", sessionId: "", mapProgressMs: 1000, hasData: true },
+  pauseCoach: { state: "Playing", sessionId: "browser-B", mapProgressMs: 1000, hasData: true },
+  realtimeProducer: "browser",
 });
 
 const finalSnapshot = window.__overlayLatestAnalysisSnapshot;
 assert.equal(finalSnapshot.pauseCoach.state, "Paused");
-assert.equal(finalSnapshot.pauseCoach.sessionId, "A");
+assert.equal(finalSnapshot.pauseCoach.sessionId, "native-A");
 assert.equal(finalSnapshot.pauseCoach.mapProgressMs, 30000);
 assert.equal(finalSnapshot.gameplay.state, "Paused");
 assert.equal(finalSnapshot.replay.mapProgressMs, 30000);
@@ -85,16 +86,17 @@ assert.equal(finalSnapshot.beatmap.id, "674175");
 // sample windows and the card visibly jumps every few hundred milliseconds.
 publish({
   schemaVersion: 1,
-  sourceId: "browser-adapter",
+  sourceId: "mania-map-analyser",
   beatmap: { id: "674175" },
   gameplay: { state: "Playing", isPlaying: true, isPaused: false },
   replay: { mapProgressMs: 31000, score: 124000 },
-  pauseCoach: { state: "Playing", sessionId: "browser-session", mapProgressMs: 31000, hasData: true },
+  pauseCoach: { state: "Playing", sessionId: "browser-B", mapProgressMs: 31000, hasData: true },
+  realtimeProducer: "browser",
 });
 
 const updatedSnapshot = window.__overlayLatestAnalysisSnapshot;
 assert.equal(updatedSnapshot.pauseCoach.state, "Paused");
-assert.equal(updatedSnapshot.pauseCoach.sessionId, "A");
+assert.equal(updatedSnapshot.pauseCoach.sessionId, "native-A");
 assert.equal(updatedSnapshot.pauseCoach.mapProgressMs, 30000);
 assert.equal(updatedSnapshot.gameplay.state, "Paused");
 assert.equal(updatedSnapshot.replay.mapProgressMs, 30000);
@@ -112,7 +114,7 @@ publish({
 
 const afterPartialUpdate = window.__overlayLatestAnalysisSnapshot;
 assert.equal(afterPartialUpdate.pauseCoach.state, "Paused");
-assert.equal(afterPartialUpdate.pauseCoach.sessionId, "A");
+assert.equal(afterPartialUpdate.pauseCoach.sessionId, "native-A");
 assert.equal(afterPartialUpdate.pauseCoach.mapProgressMs, 30000);
 assert.equal(afterPartialUpdate.gameplay.state, "Paused");
 assert.equal(afterPartialUpdate.replay.mapProgressMs, 30000);

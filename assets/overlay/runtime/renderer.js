@@ -101,6 +101,15 @@
       || snapshot.extensions && snapshot.extensions.nativePauseCoach === true));
   }
 
+  function realtimeProducer(snapshot) {
+    if (!snapshot) return "";
+    if (isNativePauseCoachSnapshot(snapshot)) return "native";
+    const extensions = snapshot.extensions || {};
+    return String(snapshot.realtimeProducer || extensions.realtimeProducer || "")
+      .trim()
+      .toLowerCase();
+  }
+
   function isRealtimeSnapshot(snapshot) {
     if (!snapshot) return false;
     if (isNativePauseCoachSnapshot(snapshot)) return true;
@@ -128,9 +137,15 @@
       const currentId = String(snapshot.beatmap && snapshot.beatmap.id || "").trim().toLowerCase();
       const nativeSession = String(nativeSnapshot.pauseCoach.sessionId || "").trim();
       const currentSession = String(snapshot.pauseCoach && snapshot.pauseCoach.sessionId || "").trim();
-      const nativeSource = String(nativeSnapshot.sourceId || "").trim().toLowerCase();
-      const currentSource = String(snapshot.sourceId || "").trim().toLowerCase();
-      const sessionsAreComparable = nativeSource && currentSource && nativeSource === currentSource;
+      const nativeProducer = realtimeProducer(nativeSnapshot);
+      const currentProducer = realtimeProducer(snapshot);
+      // sourceId identifies the analyzer, not the producer. Native C# and
+      // browser adapter sessions are generated independently even though both
+      // production snapshots use sourceId=mania-map-analyser. Only a newer
+      // native snapshot may establish a different native attempt.
+      const sessionsAreComparable = currentProducer === "native"
+        && nativeProducer === "native"
+        && isNativePauseCoachSnapshot(snapshot);
       const positiveDifferentBeatmap = (nativeId && currentId && nativeId !== currentId)
         || (!nativeId && !currentId && nativeKey && currentKey && nativeKey !== currentKey);
       const positiveDifferentAttempt = positiveDifferentBeatmap

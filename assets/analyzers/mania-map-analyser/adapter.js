@@ -553,6 +553,7 @@
     return {
       schemaVersion: SCHEMA_VERSION,
       sourceId: SOURCE_ID,
+      realtimeProducer: "browser",
       beatmap,
       gameplay,
       difficulty: readDifficulty(),
