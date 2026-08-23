@@ -80,6 +80,8 @@ public partial class MainWindow : Window
     private int _nativePauseCoachPublishInFlight;
     private string _lastNativePauseCoachDiagnostic = string.Empty;
     private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
+    private string _lastNativePollBoundaryDiagnostic = string.Empty;
+    private DateTimeOffset _lastNativePollBoundaryDiagnosticAt;
     private bool _componentPreparationFailed;
     private bool _updatingLanguageSelector;
     private readonly Dictionary<string, string> _lastGameplayTraceBySource = new(StringComparer.OrdinalIgnoreCase);
@@ -1948,6 +1950,8 @@ public partial class MainWindow : Window
         _overlayRealtimeCollector.Reset();
         _lastNativePauseCoachDiagnostic = string.Empty;
         _lastNativePauseCoachDiagnosticAt = default;
+        _lastNativePollBoundaryDiagnostic = string.Empty;
+        _lastNativePollBoundaryDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
@@ -2062,6 +2066,8 @@ public partial class MainWindow : Window
         _overlayRealtimeCollector.Reset();
         _lastNativePauseCoachDiagnostic = string.Empty;
         _lastNativePauseCoachDiagnosticAt = default;
+        _lastNativePollBoundaryDiagnostic = string.Empty;
+        _lastNativePollBoundaryDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
@@ -2343,9 +2349,11 @@ public partial class MainWindow : Window
         StopOverlayGameplayPolling();
         if (_model is null)
         {
+            LogNativePollBoundary("not-started:model-null");
             return;
         }
 
+        LogNativePollBoundary("started");
         _overlayGameplayPollCancellation = new CancellationTokenSource();
         _overlayGameplayPollTimer.Start();
         _ = PollOverlayGameplayStateAsync();
@@ -2378,6 +2386,7 @@ public partial class MainWindow : Window
                 TosuRealtimeTelemetry? telemetry = _overlayRealtimeCollector.Process(rawPayload, "native-http");
                 if (telemetry is null)
                 {
+                    LogNativePollBoundary("payload-normalization-failed");
                     return;
                 }
 
@@ -2388,6 +2397,10 @@ public partial class MainWindow : Window
                         ApplyNativeRealtimeTelemetry(telemetry);
                     }
                 });
+            }
+            else
+            {
+                LogNativePollBoundary("payload-null");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2402,6 +2415,23 @@ public partial class MainWindow : Window
         {
             Interlocked.Exchange(ref _overlayGameplayPollInFlight, 0);
         }
+    }
+
+    private void LogNativePollBoundary(string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(reason, _lastNativePollBoundaryDiagnostic, StringComparison.Ordinal) &&
+            now - _lastNativePollBoundaryDiagnosticAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastNativePollBoundaryDiagnostic = reason;
+        _lastNativePollBoundaryDiagnosticAt = now;
+        AppLogger.Info(
+            "PauseCoach native polling",
+            $"source=native-http; boundary={reason}; overlayMode={_overlayMode}; modelReady={_model is not null}; " +
+            $"pollInFlight={Volatile.Read(ref _overlayGameplayPollInFlight)}; cancellation={_overlayGameplayPollCancellation?.IsCancellationRequested ?? false}");
     }
 
     private void ApplyNativeRealtimeTelemetry(TosuRealtimeTelemetry telemetry)
