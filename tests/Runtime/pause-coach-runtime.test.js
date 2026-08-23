@@ -92,7 +92,7 @@ function runWindow(pollTimes) {
   assert.equal(paused.overall.judgements.countKatu, 6);
 }
 
-for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acronym: "nc" }] }]) {
+for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acronym: "nc" }] }, { DT: true, NC: true }]) {
   const runtime = createRuntime({ minimumTimingSamples: 1 });
   runtime.process(fixture(0, 0, counts(1, 0, 1), { mods }));
   const result = runtime.process(fixture(20_000, 20_000, counts(2, 0, 2), { mods, state: { name: "Pause", isPaused: true } }));
