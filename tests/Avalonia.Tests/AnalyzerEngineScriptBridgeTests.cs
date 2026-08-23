@@ -114,6 +114,41 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RecoversAfterWorkerBootstrapFailureOnNextRequest()
+    {
+        var firstTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(AnalyzerEngineScriptBridge.NativeMessagePrefix + JsonSerializer.Serialize(new
+        {
+            protocol = "test.headless",
+            protocolVersion = 1,
+            type = "runtime.ready",
+            status = "error",
+            error = new
+            {
+                code = "WORKER_CRASHED",
+                message = "Headless analyzer worker crashed.",
+                stage = "worker"
+            }
+        }));
+
+        var firstResult = await firstTask;
+        Assert.Equal(AnalysisOutcome.Failed, firstResult.Outcome);
+        Assert.Contains(firstResult.Diagnostics, diagnostic => diagnostic.Code == "WORKER_CRASHED");
+
+        var secondTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(ReadyMessage());
+        var requestScript = await _host.WaitForScriptAsync();
+        var correlationId = ReadCorrelationId(requestScript);
+        _host.Publish(ResultMessage(correlationId, "ok", """{"difficulty.star":{"id":"difficulty.star","value":4.5}}"""));
+
+        var secondResult = await secondTask;
+        Assert.Equal(AnalysisOutcome.Success, secondResult.Outcome);
+        Assert.Equal(4.5, secondResult.Metrics["difficulty.star"].Value.GetDouble());
+    }
+
+    [Fact]
     public async Task CancellationIsCorrelationScopedAndDispatchesCancelScript()
     {
         using var cancellation = new CancellationTokenSource();

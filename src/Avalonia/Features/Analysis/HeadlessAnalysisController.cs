@@ -853,6 +853,25 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
         LogSceneResult(sceneSnapshot);
 
+        // A WebView2 worker can terminate while a navigation or Tosu restart
+        // is in flight. The scene runner still returns a valid failed
+        // snapshot, so the polling key would otherwise mark this beatmap as
+        // complete forever and no later request could recreate the runtime.
+        // Let the next poll retry transient worker/bootstrap failures while
+        // keeping ordinary beatmap parse failures cached as before.
+        if (sceneSnapshot.OrderedSnapshots.Any(HasTransientEngineFailure))
+        {
+            lock (_sync)
+            {
+                _lastAnalysisKey = null;
+                _lastSceneKey = null;
+            }
+
+            AppLogger.Warning(
+                "Headless scene",
+                $"Transient analyzer failure for beatmap {snapshot.Identity.StableKey}; retrying on the next poll.");
+        }
+
         var firstWidget = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
         if (firstWidget is null)
         {
@@ -870,6 +889,15 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             firstWidget.Diagnostics,
             headlessSnapshot,
             isSceneResult: true));
+    }
+
+    private static bool HasTransientEngineFailure(ComposedWidgetSnapshot widget)
+    {
+        return widget.Diagnostics.Any(diagnostic =>
+            diagnostic.Code.Equals("WORKER_CRASHED", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.bootstrap_failed", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.request_dispatch_failed", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.analysis_bridge_failed", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task PushAnalysisResultSnapshotAsync(
