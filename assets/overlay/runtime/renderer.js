@@ -32,8 +32,13 @@
 
   function beatmapKey(snapshot) {
     const beatmap = snapshot && snapshot.beatmap || {};
-    const values = [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version]
-      .map(function (value) { return String(value || "").trim().toLowerCase(); })
+    const id = String(beatmap.id || "").trim().toLowerCase();
+    if (id) return `id:${id}`;
+    const setId = String(beatmap.setId || "").trim().toLowerCase();
+    const version = String(beatmap.version || "").trim().toLowerCase();
+    if (setId) return `set:${setId}|${version}`;
+    const values = [beatmap.artist, beatmap.title, beatmap.version]
+      .map(function (value) { return String(value || "").trim().toLowerCase(); });
     return values.some(Boolean) ? values.join("|") : "";
   }
 
@@ -52,28 +57,27 @@
 
     const previousRanks = Array.isArray(previous.ranks) ? previous.ranks : [];
     const currentRanks = Array.isArray(snapshot.ranks) ? snapshot.ranks : [];
-    if (previousRanks.length === 0 && currentRanks.length === 0) {
-      return snapshot;
+    const merged = Object.assign({}, snapshot);
+    if (previousRanks.length > 0 || currentRanks.length > 0) {
+      const ranks = new Map();
+      previousRanks.forEach(function (entry) {
+        const id = String(entry && entry.systemId || "").toLowerCase();
+        if (id) ranks.set(id, entry);
+      });
+      currentRanks.forEach(function (entry) {
+        const id = String(entry && entry.systemId || "").toLowerCase();
+        if (id && (!ranks.has(id) || rankHasValue(entry))) ranks.set(id, entry);
+      });
+
+      // Suppress stale LN DAN for maps without long notes.
+      var currentLnPercent = snapshot && snapshot.difficulty ? snapshot.difficulty.lnPercent : null;
+      var hasCurrentLn = currentLnPercent != null && Number(currentLnPercent) > 0;
+      if (!hasCurrentLn) {
+        ranks.delete("ln-dan");
+      }
+      merged.ranks = Array.from(ranks.values());
     }
 
-    const ranks = new Map();
-    previousRanks.forEach(function (entry) {
-      const id = String(entry && entry.systemId || "").toLowerCase();
-      if (id) ranks.set(id, entry);
-    });
-    currentRanks.forEach(function (entry) {
-      const id = String(entry && entry.systemId || "").toLowerCase();
-      if (id && (!ranks.has(id) || rankHasValue(entry))) ranks.set(id, entry);
-    });
-
-    // Suppress stale LN DAN for maps without long notes.
-    var currentLnPercent = snapshot && snapshot.difficulty ? snapshot.difficulty.lnPercent : null;
-    var hasCurrentLn = currentLnPercent != null && Number(currentLnPercent) > 0;
-    if (!hasCurrentLn) {
-      ranks.delete("ln-dan");
-    }
-
-    const merged = Object.assign({}, snapshot, { ranks: Array.from(ranks.values()) });
     // The adapter may publish provisional tosu telemetry before the headless
     // snapshot arrives. MMA does not know replay data, so preserve the live
     // block for the same beatmap instead of flashing it off.

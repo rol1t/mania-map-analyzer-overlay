@@ -1914,11 +1914,33 @@ public partial class MainWindow : Window
         ShowInTaskbar = true;
         ApplyOverlayWindowAppearance(_windowsOverlay.IsOsuMinimized);
 
-        var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
+                              (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
+            ? _model.Settings.OverlayLayoutMode
+            : _model.Settings.OverlayPresetId;
+        var layout = OverlayPresentationService.NormalizeLayout(requestedPreset);
         _overlayUsesAuthoritativeSize = layout != "custom";
         var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
-        var width = (layout == "horizontal" ? 920 : layout is "companella" or "companella-replay" ? 760 : 475) * scale;
-        var height = (layout == "horizontal" ? 360 : layout is "companella" or "companella-replay" ? 340 : 540) * scale;
+        var baseWidth = layout switch
+        {
+            "horizontal" => 920d,
+            "companella" or "companella-replay" => 760d,
+            "pause-coach-card" => 620d,
+            "pause-coach-minimal" => 560d,
+            "pause-coach-signal" => 680d,
+            _ => 475d
+        };
+        var baseHeight = layout switch
+        {
+            "horizontal" => 360d,
+            "companella" or "companella-replay" => 340d,
+            "pause-coach-card" => 300d,
+            "pause-coach-minimal" => 180d,
+            "pause-coach-signal" => 270d,
+            _ => 540d
+        };
+        var width = baseWidth * scale;
+        var height = baseHeight * scale;
         ClientSize = new Size(width, height);
         _overlayWidgetSized = _overlayUsesAuthoritativeSize;
         var working = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
@@ -2098,11 +2120,18 @@ public partial class MainWindow : Window
 
         var currentScale = Math.Clamp(currentScalePercent, 50, 180) / 100d;
         var nextScale = Math.Clamp(nextScalePercent, 50, 180) / 100d;
-        var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
+                              (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
+            ? _model.Settings.OverlayLayoutMode
+            : _model.Settings.OverlayPresetId;
+        var layout = OverlayPresentationService.NormalizeLayout(requestedPreset);
         var baseWidth = layout switch
         {
             "horizontal" => 920d,
             "companella" or "companella-replay" => 760d,
+            "pause-coach-card" => 620d,
+            "pause-coach-minimal" => 560d,
+            "pause-coach-signal" => 680d,
             "default" => 475d,
             _ => ClientSize.Width / currentScale
         };

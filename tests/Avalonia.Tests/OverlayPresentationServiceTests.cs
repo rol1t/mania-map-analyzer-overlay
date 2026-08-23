@@ -38,5 +38,6 @@ public sealed class OverlayPresentationServiceTests
 
         Assert.Contains("overlay-pause-coach-card", scripts.SetupScript, StringComparison.Ordinal);
         Assert.Contains("overlay-pause-coach-primary", scripts.SetupScript, StringComparison.Ordinal);
+        Assert.Contains("[data-overlay-preset-node],.overlay-pause-coach", scripts.SetupScript, StringComparison.Ordinal);
     }
 }
