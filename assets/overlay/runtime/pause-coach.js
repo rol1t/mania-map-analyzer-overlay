@@ -487,9 +487,11 @@
       const widgetState = sample.state === "paused" ? (hasEnough ? STATES.PAUSED : STATES.INSUFFICIENT)
         : sample.state === "results" ? (hasEnough ? STATES.READY : STATES.INSUFFICIENT)
           : sample.state === "playing" ? STATES.PLAYING : STATES.WAITING;
-      const insights = sample.state === "paused" || sample.state === "results"
-        ? buildInsights(sample, recent, baseline, recentStats, baselineStats, recentMisses, section, hasEnough, recentAccuracy)
-        : [];
+      // Keep the diagnosis live throughout the attempt. Pause/results are
+      // still lifecycle boundaries, but they no longer gate calculation: the
+      // same deterministic windowing runs for every gameplay sample.
+      const insights = sample.state === "menu" ? []
+        : buildInsights(sample, recent, baseline, recentStats, baselineStats, recentMisses, section, hasEnough, recentAccuracy);
       const diagnostics = [];
       if (recent.length < config.minimumTimingSamples) diagnostics.push(`pausecoach.insufficient_timing: need ${config.minimumTimingSamples} timing samples, have ${recent.length}.`);
       diagnostics.push("pausecoach.columns.unavailable: Tosu v2 does not expose reliable key-to-note correlation in this adapter.");

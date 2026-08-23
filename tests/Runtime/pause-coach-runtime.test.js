@@ -120,6 +120,17 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.equal(paused.recent.windowSeconds, 20);
 }
 
+// Diagnosis is updated while the map is still playing, not only after pause.
+{
+  const runtime = createRuntime({ minimumTimingSamples: 1 });
+  const first = runtime.process(fixture(0, 0, counts(0, 0, 1), { offsets: [1] }));
+  const live = runtime.process(fixture(20_000, 20_000, counts(20, 3, 2), { offsets: [1, 2], state: { name: "Playing", isPlaying: true } }));
+  assert.equal(first.state, "Playing");
+  assert.equal(live.state, "Playing");
+  assert.ok(live.insights.length > 0);
+  assert.equal(live.performance.recentMisses, 3);
+}
+
 // Sparse and dense publication rates use the same gameplay-time counters.
 {
   const sparse = runWindow([0, 10_000, 20_000, 30_000, 40_000]);

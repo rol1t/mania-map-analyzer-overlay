@@ -155,4 +155,17 @@ public sealed class RealtimePauseCoachTests
         Assert.Equal(paused.Performance.RecentMisses, laterPaused.Performance.RecentMisses);
         Assert.Equal(paused.Timing.SampleCount, laterPaused.Timing.SampleCount);
     }
+
+    [Fact]
+    public void InsightsUpdateDuringGameplayBeforePause()
+    {
+        var analyzer = new RealtimePlayAnalyzer(new PauseCoachOptions { MinimumTimingSamples = 1 });
+        RealtimeAnalysisSnapshot first = analyzer.Process(Sample(0, RealtimePlayState.Playing, [1], hits: 1));
+        RealtimeAnalysisSnapshot live = analyzer.Process(Sample(20, RealtimePlayState.Playing, [1, 2], hits: 2, misses: 3));
+
+        Assert.Equal(PauseCoachWidgetState.Playing, first.WidgetState);
+        Assert.Equal(PauseCoachWidgetState.Playing, live.WidgetState);
+        Assert.NotEmpty(live.Insights);
+        Assert.Equal(3, live.Performance.RecentMisses);
+    }
 }

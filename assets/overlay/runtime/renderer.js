@@ -351,7 +351,7 @@
       primary.textContent = "";
       const insights = Array.isArray(pc.insights) ? pc.insights : [];
       const first = insights[0];
-      primary.hidden = legacyInsightsLayout || !first || state === "playing" || state === "waitingforgame";
+      primary.hidden = legacyInsightsLayout || !first || state === "waitingforgame";
       if (first) {
         primary.dataset.severity = String(first.severity || "info").toLowerCase();
         const title = document.createElement("strong");

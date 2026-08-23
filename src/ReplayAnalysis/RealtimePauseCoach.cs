@@ -414,9 +414,9 @@ public sealed class RealtimePlayAnalyzer
         }
 
         RealtimeAnalysisSnapshot baseSnapshot = BuildSnapshot(sample);
-        IReadOnlyList<PauseCoachInsightSnapshot> insights = sample.State is RealtimePlayState.Paused or RealtimePlayState.Results
-            ? PauseCoachInsightEngine.Generate(baseSnapshot, _options)
-            : Array.Empty<PauseCoachInsightSnapshot>();
+        IReadOnlyList<PauseCoachInsightSnapshot> insights = sample.State == RealtimePlayState.Menu
+            ? Array.Empty<PauseCoachInsightSnapshot>()
+            : PauseCoachInsightEngine.Generate(baseSnapshot, _options);
         var snapshot = baseSnapshot with
         {
             Insights = insights
