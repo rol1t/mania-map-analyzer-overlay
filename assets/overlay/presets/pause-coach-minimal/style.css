@@ -14,7 +14,7 @@ html.overlay-pause-coach-minimal .pause-coach-minimal-primary { padding:7px!impo
 html.overlay-pause-coach-minimal .pause-coach-minimal-primary[data-severity='critical'] { border-left-color:#ef5d72!important; background:rgba(239,93,114,.12)!important; }
 html.overlay-pause-coach-minimal .pause-coach-minimal-primary strong { display:block!important; font-size:10px!important; }
 html.overlay-pause-coach-minimal .pause-coach-minimal-primary span,html.overlay-pause-coach-minimal .pause-coach-minimal-primary small { display:block!important; overflow:hidden!important; color:#aeb7c2!important; font-size:8px!important; text-overflow:ellipsis!important; white-space:nowrap!important; }
-html.overlay-pause-coach-minimal .pause-coach-minimal-stats { display:grid!important; grid-template-columns:repeat(4,1fr)!important; gap:5px!important; }
+html.overlay-pause-coach-minimal .pause-coach-minimal-stats { display:grid!important; grid-template-columns:repeat(6,1fr)!important; gap:5px!important; }
 html.overlay-pause-coach-minimal .pause-coach-minimal-stats span { color:#84909f!important; font-size:8px!important; }
 html.overlay-pause-coach-minimal .pause-coach-minimal-stats b { margin-left:3px!important; color:#f1f3f6!important; font-size:11px!important; }
 html.overlay-pause-coach-minimal .pause-coach-minimal-secondary,html.overlay-pause-coach-minimal .pause-coach-minimal-insights { display:grid!important; gap:3px!important; color:#aab3bf!important; font-size:8px!important; }

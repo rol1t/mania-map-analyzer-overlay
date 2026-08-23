@@ -324,6 +324,8 @@
 
     const accuracyValue = recent.accuracy ?? performance.recentAccuracy ?? performance.wholeAccuracy ?? overall.accuracy ?? pc.accuracy;
     text("overlay-pause-accuracy", accuracyValue != null ? fmt(Number(accuracyValue) * (Number(accuracyValue) <= 1 ? 100 : 1), 2) + "%" : "—", "—");
+    text("overlay-pause-score", pc.score ?? overall.score, "—");
+    text("overlay-pause-combo", pc.combo ?? overall.combo, "—");
 
     const section = pc.section || {};
     text("overlay-pause-section", section.label || section.dominantPatternKind || "—", "—");

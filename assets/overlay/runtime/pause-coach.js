@@ -52,7 +52,12 @@
     const name = clean(source.state || source.name).toLowerCase().replace(/[^a-z]/g, "");
     if (source.isSpectating === true || name === "spectating") return "spectating";
     if (source.isReplay === true || ["replay", "watchingreplay"].includes(name)) return "replay";
-    if (source.isPaused === true && source.isPlaying !== false) return "paused";
+    // Tosu may report the pause menu as `isPlaying: false` while retaining
+    // `game.paused: true`. The pause flag is the stronger signal here; using
+    // it unconditionally prevents the widget from falling back to Waiting
+    // with only the last accuracy value visible.
+    if (source.isPaused === true) return "paused";
+    if (["pause", "paused", "break"].includes(name)) return "paused";
     if (source.isPlaying === true || ["play", "gameplay", "playing"].includes(name)) return "playing";
     if (["result", "results", "resultscreen"].includes(name)) return "results";
     if (["menu", "songselect", "selectplay", "edit", "options"].includes(name)) return "menu";

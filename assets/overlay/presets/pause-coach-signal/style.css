@@ -19,7 +19,7 @@ html.overlay-pause-coach-signal .pause-coach-signal-primary small { display:bloc
 html.overlay-pause-coach-signal .pause-coach-signal-meter { display:grid!important; grid-template-columns:auto 1fr auto!important; gap:10px!important; align-items:center!important; color:#8d96a3!important; font-size:9px!important; }
 html.overlay-pause-coach-signal .pause-coach-signal-meter strong { color:#f5f7fa!important; font-size:18px!important; }
 html.overlay-pause-coach-signal .pause-coach-signal-meter i { height:4px!important; background:linear-gradient(90deg,#69ced1 0 45%,#ef5d72 45% 55%,#69ced1 55%)!important; opacity:.65!important; }
-html.overlay-pause-coach-signal .pause-coach-signal-grid { display:grid!important; grid-template-columns:repeat(4,1fr)!important; gap:6px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-grid { display:grid!important; grid-template-columns:repeat(6,1fr)!important; gap:6px!important; }
 html.overlay-pause-coach-signal .pause-coach-signal-grid > div { display:grid!important; gap:4px!important; padding:8px!important; border:1px solid rgba(255,255,255,.12)!important; }
 html.overlay-pause-coach-signal .pause-coach-signal-grid small { color:#7e8795!important; font-size:8px!important; text-transform:uppercase!important; }
 html.overlay-pause-coach-signal .pause-coach-signal-grid b { overflow:hidden!important; font-size:13px!important; text-overflow:ellipsis!important; white-space:nowrap!important; }

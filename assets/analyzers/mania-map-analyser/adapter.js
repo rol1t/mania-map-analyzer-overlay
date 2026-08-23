@@ -23,8 +23,11 @@
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
   let pauseCoach = null;
+  // Presentation changes re-inject this adapter while the WebView stays
+  // alive. Keep the current-attempt coach across those re-initializations so
+  // resizing or changing a preset does not erase the paused snapshot.
   let pauseCoachRuntime = typeof window.__createRealtimePauseCoachRuntime === "function"
-    ? window.__createRealtimePauseCoachRuntime()
+    ? (window.__overlayPauseCoachRuntime || (window.__overlayPauseCoachRuntime = window.__createRealtimePauseCoachRuntime()))
     : null;
   let lastPlayingHits = null;
 
@@ -838,7 +841,10 @@
       if (socket) {
         try { socket.close(); } catch (exception) { reportRuntimeError("Disposing analyzer websocket", exception); }
       }
-      if (pauseCoachRuntime && typeof pauseCoachRuntime.dispose === "function") pauseCoachRuntime.dispose();
+      // Do not dispose the singleton coach here: setup/resize re-injects the
+      // adapter without navigating the WebView, and its bounded session must
+      // survive that lifecycle event. A full document navigation recreates
+      // the window and releases it naturally.
       pauseCoachRuntime = null;
       observer = null;
       socket = null;

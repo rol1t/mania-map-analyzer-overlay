@@ -15,7 +15,7 @@ html.overlay-pause-coach-card .pause-coach-primary[data-severity='critical'] { b
 html.overlay-pause-coach-card .pause-coach-primary strong { font-size:15px!important; }
 html.overlay-pause-coach-card .pause-coach-primary span { color:#d4e0e3!important; font-size:11px!important; }
 html.overlay-pause-coach-card .pause-coach-primary small { color:#8fa5ac!important; font-size:9px!important; }
-html.overlay-pause-coach-card .pause-coach-stats { display:grid!important; grid-template-columns:repeat(5,minmax(0,1fr))!important; gap:6px!important; }
+html.overlay-pause-coach-card .pause-coach-stats { display:grid!important; grid-template-columns:repeat(7,minmax(0,1fr))!important; gap:6px!important; }
 html.overlay-pause-coach-card .pause-coach-stats > div { display:grid!important; gap:4px!important; min-width:0!important; padding:8px!important; background:rgba(255,255,255,.055)!important; border:1px solid rgba(255,255,255,.08)!important; border-radius:6px!important; }
 html.overlay-pause-coach-card .pause-coach-stats small { color:#81959c!important; font-size:9px!important; text-transform:uppercase!important; letter-spacing:.08em!important; }
 html.overlay-pause-coach-card .pause-coach-stats strong { overflow:hidden!important; font-size:15px!important; text-overflow:ellipsis!important; white-space:nowrap!important; }
