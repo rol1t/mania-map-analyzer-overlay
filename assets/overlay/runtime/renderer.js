@@ -48,6 +48,24 @@
   }
 
   function mergeSnapshot(snapshot) {
+    if (snapshot && snapshot.nativePauseCoach === true) {
+      window.__overlayNativePauseCoachSnapshot = snapshot;
+    }
+    const nativeSnapshot = window.__overlayNativePauseCoachSnapshot;
+    if (nativeSnapshot && nativeSnapshot.pauseCoach && snapshot && snapshot !== nativeSnapshot) {
+      const nativeKey = beatmapKey(nativeSnapshot);
+      const currentKey = beatmapKey(snapshot);
+      // The native collector is authoritative for realtime coaching. Keep its
+      // session/rolling-window state when the presentation WebView publishes
+      // its own adapter snapshot, but never cross-contaminate another map.
+      if (nativeKey && currentKey && nativeKey === currentKey) {
+        snapshot = Object.assign({}, snapshot, {
+          pauseCoach: nativeSnapshot.pauseCoach,
+          replay: nativeSnapshot.replay || snapshot.replay,
+          gameplay: nativeSnapshot.gameplay || snapshot.gameplay,
+        });
+      }
+    }
     const previous = window.__overlayLatestAnalysisSnapshot;
     const previousKey = beatmapKey(previous);
     const currentKey = beatmapKey(snapshot);

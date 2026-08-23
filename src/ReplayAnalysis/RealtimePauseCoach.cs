@@ -86,7 +86,8 @@ public sealed record RealtimeTelemetrySample
         AnalysisDataQuality timingQuality = AnalysisDataQuality.Reconstructed,
         PauseCoachSectionSnapshot? currentSection = null,
         IReadOnlyList<PauseCoachColumnSnapshot>? columns = null,
-        DateTimeOffset? receivedAt = null)
+        DateTimeOffset? receivedAt = null,
+        double? unstableRate = null)
     {
         BeatmapId = beatmapId ?? string.Empty;
         BeatmapHash = beatmapHash;
@@ -98,6 +99,7 @@ public sealed record RealtimeTelemetrySample
         Combo = combo;
         MaxCombo = maxCombo;
         Health = health;
+        UnstableRate = unstableRate;
         HitErrorArray = hitErrorArray?.ToImmutableArray() ?? ImmutableArray<double>.Empty;
         Mods = mods?.ToImmutableArray() ?? ImmutableArray<string>.Empty;
         Focused = focused;
@@ -157,6 +159,11 @@ public sealed record RealtimeTelemetrySample
     }
 
     public double? Health
+    {
+        get;
+    }
+
+    public double? UnstableRate
     {
         get;
     }
@@ -341,7 +348,42 @@ public sealed record RealtimeAnalysisSnapshot(
     AnalysisDataQuality DataQuality,
     PauseCoachWidgetState WidgetState,
     bool HasEnoughData,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics)
+{
+    public int? Score
+    {
+        get; init;
+    }
+
+    public double? Accuracy
+    {
+        get; init;
+    }
+
+    public double? Health
+    {
+        get; init;
+    }
+
+    public int? Combo
+    {
+        get; init;
+    }
+
+    public int? MaxCombo
+    {
+        get; init;
+    }
+
+    public double? UnstableRate
+    {
+        get; init;
+    }
+
+    public IReadOnlyList<string> Mods { get; init; } = Array.Empty<string>();
+
+    public IReadOnlyList<double> RecentOffsets { get; init; } = Array.Empty<double>();
+};
 
 /// <summary>
 /// Incremental, single-owner analyzer for one active attempt. It never reruns
@@ -655,7 +697,17 @@ public sealed class RealtimePlayAnalyzer
             quality,
             widgetState,
             enough,
-            diagnostics);
+            diagnostics)
+        {
+            Score = sample.Score,
+            Accuracy = sample.Accuracy,
+            Health = sample.Health,
+            Combo = sample.Combo,
+            MaxCombo = sample.MaxCombo,
+            UnstableRate = sample.UnstableRate,
+            Mods = sample.Mods,
+            RecentOffsets = recentOffsets.TakeLast(20).ToArray()
+        };
     }
 
     private LiveJudgementCounts FindPreviousCounts(int cutoffMapTimeMs)
@@ -687,7 +739,17 @@ public sealed class RealtimePlayAnalyzer
             AnalysisDataQuality.Unavailable,
             PauseCoachWidgetState.WaitingForGame,
             false,
-            ["pausecoach.waiting: start a mania play to collect realtime telemetry."]);
+            ["pausecoach.waiting: start a mania play to collect realtime telemetry."])
+        {
+            Score = sample.Score,
+            Accuracy = sample.Accuracy,
+            Health = sample.Health,
+            Combo = sample.Combo,
+            MaxCombo = sample.MaxCombo,
+            UnstableRate = sample.UnstableRate,
+            Mods = sample.Mods,
+            RecentOffsets = sample.HitErrorArray.TakeLast(20).ToArray()
+        };
         _lastSnapshot = snapshot;
         return snapshot;
     }
@@ -709,7 +771,17 @@ public sealed class RealtimePlayAnalyzer
             AnalysisDataQuality.Unavailable,
             PauseCoachWidgetState.Unavailable,
             false,
-            [reason]);
+            [reason])
+        {
+            Score = sample.Score,
+            Accuracy = sample.Accuracy,
+            Health = sample.Health,
+            Combo = sample.Combo,
+            MaxCombo = sample.MaxCombo,
+            UnstableRate = sample.UnstableRate,
+            Mods = sample.Mods,
+            RecentOffsets = sample.HitErrorArray.TakeLast(20).ToArray()
+        };
         _lastSnapshot = snapshot;
         return snapshot;
     }
@@ -954,6 +1026,13 @@ public static class PauseCoachSnapshotMapper
             IsProvisional = true,
             Reason = "Realtime Tosu v2 telemetry. Exact per-column and per-object information requires an .osr replay.",
             MapProgressMs = snapshot.MapTimeMs,
+            Score = snapshot.Score,
+            Accuracy = snapshot.Accuracy,
+            Health = snapshot.Health,
+            Combo = snapshot.Combo,
+            MaxCombo = snapshot.MaxCombo,
+            Failed = false,
+            Mods = snapshot.Mods,
             Timing = new PauseCoachTimingSnapshot
             {
                 SampleCount = snapshot.Timing.SampleCount,
@@ -964,12 +1043,15 @@ public static class PauseCoachSnapshotMapper
                 DriftMs = snapshot.Timing.MeanMs,
                 PreviousBaselineMs = snapshot.Timing.BaselineMeanMs,
                 TimingMargin = snapshot.Timing.SampleCount == 0 ? "unknown" : "observed",
-                RecentOffsets = Array.Empty<double>(),
+                RecentOffsets = snapshot.RecentOffsets,
                 DataQuality = snapshot.Timing.Quality.ToString()
             },
             Overall = new PauseCoachOverallSnapshot
             {
-                Accuracy = snapshot.Performance.RecentAccuracy,
+                Accuracy = snapshot.Accuracy,
+                Combo = snapshot.Combo,
+                MaxCombo = snapshot.MaxCombo,
+                Score = snapshot.Score,
                 Hits = snapshot.Performance.Hits,
                 Misses = snapshot.Performance.Misses,
                 DataQuality = snapshot.Performance.Quality.ToString()
@@ -977,7 +1059,7 @@ public static class PauseCoachSnapshotMapper
             Recent = new PauseCoachRecentSnapshot
             {
                 WindowSeconds = 20,
-                Accuracy = snapshot.Performance.Accuracy,
+                Accuracy = snapshot.Accuracy,
                 MeanTimingMs = snapshot.Timing.MeanMs,
                 TimingDeviationMs = snapshot.Timing.StandardDeviationMs,
                 Hits = snapshot.Performance.RecentHits,
@@ -988,7 +1070,7 @@ public static class PauseCoachSnapshotMapper
             {
                 WholeHits = snapshot.Performance.Hits,
                 WholeMisses = snapshot.Performance.Misses,
-                WholeAccuracy = snapshot.Performance.Accuracy,
+                WholeAccuracy = snapshot.Accuracy,
                 RecentAccuracy = snapshot.Performance.RecentAccuracy,
                 RecentHits = snapshot.Performance.RecentHits,
                 RecentMisses = snapshot.Performance.RecentMisses

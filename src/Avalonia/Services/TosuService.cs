@@ -24,6 +24,41 @@ public sealed class TosuService : IDisposable
     public bool IsRunning => _process is { HasExited: false };
 
     /// <summary>
+    /// Reads a complete Tosu v2 snapshot for the native realtime analyzer.
+    /// This call intentionally remains independent from the presentation
+    /// WebView, which may be hidden while osu! is playing.
+    /// </summary>
+    public async Task<JsonElement?> GetGameplayPayloadAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        try
+        {
+            using var response = await _httpClient.GetAsync(
+                ServerUrl + "json/v2?overlay_realtime=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            return document.RootElement.Clone();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidOperationException)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "The full gameplay payload could not be read.", exception);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Reads the authoritative osu! gameplay state from tosu. The overlay uses
     /// this as a native fallback because a browser websocket can miss a
     /// state-only update while the game is switching screens.

@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private readonly EffectiveAnalysisConfigurationStore _effectiveAnalysisStore = new();
     private readonly ReplayAnalysisSession _replayAnalysisSession = new();
     private readonly OverlayDragSession _overlayDragSession = new();
+    private readonly TosuRealtimeCollector _overlayRealtimeCollector = new();
+    private static readonly JsonSerializerOptions _overlaySnapshotJsonOptions = new(JsonSerializerDefaults.Web);
     private NativeWebView Browser { get; set; } = null!;
     private MainViewModel? _model;
     private CancellationTokenSource? _previewPresentationCancellation;
@@ -75,6 +77,9 @@ public partial class MainWindow : Window
     // Avalonia UI queue so WM_NCLBUTTONDOWN is never entered re-entrantly.
     private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
+    private int _nativePauseCoachPublishInFlight;
+    private string _lastNativePauseCoachDiagnostic = string.Empty;
+    private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
     private bool _componentPreparationFailed;
     private bool _updatingLanguageSelector;
     private readonly Dictionary<string, string> _lastGameplayTraceBySource = new(StringComparer.OrdinalIgnoreCase);
@@ -1890,6 +1895,9 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
+        _overlayRealtimeCollector.Reset();
+        _lastNativePauseCoachDiagnostic = string.Empty;
+        _lastNativePauseCoachDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
@@ -2001,6 +2009,9 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
+        _overlayRealtimeCollector.Reset();
+        _lastNativePauseCoachDiagnostic = string.Empty;
+        _lastNativePauseCoachDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
@@ -2311,20 +2322,20 @@ public partial class MainWindow : Window
         var cancellationToken = _overlayGameplayPollCancellation?.Token ?? CancellationToken.None;
         try
         {
-            var state = await _model.Tosu.GetGameplayStateAsync(cancellationToken);
-            if (state is not null)
+            var payload = await _model.Tosu.GetGameplayPayloadAsync(cancellationToken);
+            if (payload is JsonElement rawPayload)
             {
+                TosuRealtimeTelemetry? telemetry = _overlayRealtimeCollector.Process(rawPayload, "native-http");
+                if (telemetry is null)
+                {
+                    return;
+                }
+
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (_overlayMode)
                     {
-                        _overlayNativePlayStateKnown = true;
-                        if (state.IsPlaying is bool isPlaying)
-                        {
-                            SetOverlaySuppressedByPlay(isPlaying, state.IsPaused);
-                        }
-
-                        TraceGameplayState("native-http", state.Name, state.Number, state.IsPlaying, state.IsPaused, null);
+                        ApplyNativeRealtimeTelemetry(telemetry);
                     }
                 });
             }
@@ -2340,6 +2351,127 @@ public partial class MainWindow : Window
         finally
         {
             Interlocked.Exchange(ref _overlayGameplayPollInFlight, 0);
+        }
+    }
+
+    private void ApplyNativeRealtimeTelemetry(TosuRealtimeTelemetry telemetry)
+    {
+        _overlayNativePlayStateKnown = true;
+        bool? isPlaying = telemetry.Snapshot.State switch
+        {
+            RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+            _ => null
+        };
+        bool? isPaused = telemetry.Snapshot.State == RealtimePlayState.Paused
+            ? true
+            : telemetry.Snapshot.State == RealtimePlayState.Playing
+                ? false
+                : null;
+        if (isPlaying is bool playing)
+        {
+            SetOverlaySuppressedByPlay(playing, isPaused);
+        }
+
+        TraceGameplayState("native-http", telemetry.RawStateName, telemetry.RawStateNumber, isPlaying, isPaused, telemetry.Sample.Focused);
+        LogNativePauseCoachTelemetry(telemetry);
+        _ = PublishNativePauseCoachSnapshotAsync(telemetry.Snapshot);
+    }
+
+    private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
+    {
+        var snapshot = telemetry.Snapshot;
+        string signature = string.Join(
+            '|',
+            telemetry.RawStateName,
+            telemetry.RawStateNumber?.ToString(CultureInfo.InvariantCulture) ?? "null",
+            telemetry.RawPaused?.ToString() ?? "null",
+            snapshot.State,
+            snapshot.SessionId,
+            snapshot.WidgetState,
+            snapshot.BeatmapId);
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(signature, _lastNativePauseCoachDiagnostic, StringComparison.Ordinal) &&
+            now - _lastNativePauseCoachDiagnosticAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastNativePauseCoachDiagnostic = signature;
+        _lastNativePauseCoachDiagnosticAt = now;
+        AppLogger.Info(
+            "PauseCoach telemetry",
+            $"source=native-http; rawState={telemetry.RawStateName}; number={telemetry.RawStateNumber?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"paused={telemetry.RawPaused?.ToString() ?? "null"}; normalized={snapshot.State}; map={snapshot.BeatmapId}; " +
+            $"mapTime={snapshot.MapTimeMs}; score={snapshot.Score?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"hits={telemetry.JudgementTotal}; timingSamples={telemetry.HitErrorSampleCount}; " +
+            $"session={snapshot.SessionId}; coach={snapshot.WidgetState}");
+    }
+
+    private async Task PublishNativePauseCoachSnapshotAsync(RealtimeAnalysisSnapshot snapshot)
+    {
+        if (!_overlayMode || Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var pauseCoach = PauseCoachSnapshotMapper.ToSnapshot(snapshot);
+            bool? isPlaying = snapshot.State switch
+            {
+                RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+                RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+                _ => null
+            };
+            bool? isPaused = snapshot.State == RealtimePlayState.Paused
+                ? true
+                : snapshot.State == RealtimePlayState.Playing
+                    ? false
+                    : null;
+            var analysis = new AnalysisSnapshot
+            {
+                SchemaVersion = AnalysisSnapshot.CurrentSchemaVersion,
+                SourceId = "mania-map-analyser",
+                Beatmap = new BeatmapSnapshot { Id = snapshot.BeatmapId },
+                Gameplay = new GameplaySnapshot
+                {
+                    State = snapshot.State.ToString(),
+                    IsPlaying = isPlaying,
+                    IsPaused = isPaused,
+                    IsFocused = null
+                },
+                Replay = new ReplayOverlaySnapshot
+                {
+                    MapProgressMs = snapshot.MapTimeMs,
+                    Score = snapshot.Score,
+                    Accuracy = snapshot.Accuracy,
+                    Ur = snapshot.UnstableRate,
+                    MeanMs = snapshot.Timing.MeanMs,
+                    MedianMs = snapshot.Timing.MedianMs,
+                    SdMs = snapshot.Timing.StandardDeviationMs,
+                    SampleCount = snapshot.Timing.SampleCount,
+                    RecentOffsets = snapshot.RecentOffsets,
+                    IsProvisional = true,
+                    Fidelity = "provisional",
+                    Reason = "Native Tosu v2 realtime telemetry."
+                },
+                PauseCoach = pauseCoach,
+                Extensions = new Dictionary<string, object?> { ["nativePauseCoach"] = true }
+            };
+            string json = JsonSerializer.Serialize(analysis, _overlaySnapshotJsonOptions);
+            string script = "window.__overlayNativePauseCoachSnapshot=" + json + ";" +
+                            "window.dispatchEvent(new CustomEvent('analysis:snapshot',{detail:" + json + "}));" +
+                            "if(typeof window.__overlayRenderAnalysisSnapshot==='function')window.__overlayRenderAnalysisSnapshot(" + json + ");";
+            await Browser.InvokeScript(script).ConfigureAwait(true);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Publishing native Pause Coach snapshot", exception, userVisible: false);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 0);
         }
     }
 

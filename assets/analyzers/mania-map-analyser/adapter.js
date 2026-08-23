@@ -24,6 +24,9 @@
   let replay = emptyReplay();
   let lastPlayPayload = {};
   let pauseCoach = null;
+  // In native overlay mode the C# TosuRealtimeCollector is authoritative for
+  // Pause Coach. This browser adapter remains a compatibility fallback for
+  // preview/fullscreen documents and continues publishing the same contract.
   // HTTP polling is the authoritative state source for the native game. Keep
   // a confirmed pause through a stale websocket `paused:false` delta until
   // HTTP confirms that gameplay actually resumed.
@@ -682,17 +685,23 @@
         pauseCoach = null;
         lastPlayingHits = null;
       }
-      const identity = id || setId || `${metadata.artist || sourceBeatmap.artist || ""}-${metadata.title || sourceBeatmap.title || ""}-${sourceBeatmap.version || metadata.difficulty || metadata.version || ""}`;
+      const effectiveId = id || beatmap.id;
+      const effectiveSetId = setId || beatmap.setId;
+      const effectiveArtist = clean(sourceBeatmap.artist || metadata.artist) || beatmap.artist;
+      const effectiveTitle = clean(sourceBeatmap.title || metadata.title) || beatmap.title;
+      const effectiveVersion = clean(sourceBeatmap.version || metadata.difficulty || metadata.version) || beatmap.version;
+      const effectiveMapper = clean(sourceBeatmap.mapper || metadata.mapper || metadata.creator) || beatmap.mapper;
+      const identity = effectiveId || effectiveSetId || `${effectiveArtist}-${effectiveTitle}-${effectiveVersion}`;
       beatmap = {
-        id,
-        setId,
-        artist: clean(sourceBeatmap.artist || metadata.artist),
-        title: clean(sourceBeatmap.title || metadata.title),
-        version: clean(sourceBeatmap.version || metadata.difficulty || metadata.version),
-        mapper: clean(sourceBeatmap.mapper || metadata.mapper || metadata.creator),
-        bpmLabel: bpmLabel(sourceBeatmap, stats),
-        overallDifficulty: readObjectNumber(stats, ["OD", "od", "overallDifficulty"]),
-        healthDrain: readObjectNumber(stats, ["HP", "hp", "drainRate"]),
+        id: effectiveId,
+        setId: effectiveSetId,
+        artist: effectiveArtist,
+        title: effectiveTitle,
+        version: effectiveVersion,
+        mapper: effectiveMapper,
+        bpmLabel: bpmLabel(sourceBeatmap, stats) || beatmap.bpmLabel,
+        overallDifficulty: readObjectNumber(stats, ["OD", "od", "overallDifficulty"]) ?? beatmap.overallDifficulty,
+        healthDrain: readObjectNumber(stats, ["HP", "hp", "drainRate"]) ?? beatmap.healthDrain,
         backgroundUrl: identity
           ? `http://${location.host}/files/beatmap/background?ts=${encodeURIComponent(identity)}`
           : "",
@@ -815,7 +824,11 @@
         cache: "no-store",
       });
       if (!response.ok) return;
-      applyTosuPayload(await response.json(), "browser-http", { stateOnly: true });
+      // The native collector is authoritative in overlay mode, but keep the
+      // browser fallback fully populated for normal/preview presentation too.
+      // applyTosuPayload deep-merges partial fields instead of discarding the
+      // last known gameplay telemetry.
+      applyTosuPayload(await response.json(), "browser-http");
     } catch (exception) {
       const now = Date.now();
       if (now - lastStatePollWarningAt >= 5000) {

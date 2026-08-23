@@ -198,9 +198,10 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.match(adapter, /stateToken === "pause"/);
   assert.match(adapter, /httpPauseState/);
   assert.match(adapter, /function mergePlayPayload/);
-  assert.match(adapter, /stateOnly: true/);
+  assert.match(adapter, /applyTosuPayload\(await response\.json\(\), "browser-http"\)/);
   assert.doesNotMatch(adapter, /pauseCoachRuntime\.dispose\(\)/);
   assert.match(renderer, /overlay-layout-companella-replay/);
+  assert.match(renderer, /nativePauseCoach/);
   for (const preset of ["pause-coach-card", "pause-coach-minimal", "pause-coach-signal"]) {
     const css = fs.readFileSync(path.join(root, "assets/overlay/presets", preset, "style.css"), "utf8");
     const manifest = JSON.parse(fs.readFileSync(path.join(root, "assets/overlay/presets", preset, "manifest.json"), "utf8"));
