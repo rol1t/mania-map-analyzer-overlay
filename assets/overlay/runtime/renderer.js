@@ -51,7 +51,11 @@
     const previous = window.__overlayLatestAnalysisSnapshot;
     const previousKey = beatmapKey(previous);
     const currentKey = beatmapKey(snapshot);
-    if (!previous || !previousKey || !currentKey || previousKey !== currentKey) {
+    // Headless snapshots can arrive without beatmap metadata while the Tosu
+    // adapter still owns the live identity. Preserve live blocks during that
+    // short gap; only discard them when both snapshots identify different
+    // maps.
+    if (!previous || (previousKey && currentKey && previousKey !== currentKey)) {
       return snapshot;
     }
 
@@ -284,6 +288,7 @@
 
     const timing = pc.timing || {};
     const performance = pc.performance || {};
+    const overall = pc.overall || {};
     const recent = pc.recent || {};
     const state = String(pc.state || "").toLowerCase();
     const hasMeaningfulData = pc.hasData !== false || timing.sampleCount || (pc.insights || []).length;
@@ -317,7 +322,8 @@
 
     text("overlay-pause-ur", timing.unstableRate == null ? "—" : fmt(timing.unstableRate, 1), "—");
 
-    text("overlay-pause-accuracy", recent.accuracy != null ? fmt(Number(recent.accuracy) * (Number(recent.accuracy) <= 1 ? 100 : 1), 2) + "%" : "—", "—");
+    const accuracyValue = recent.accuracy ?? performance.recentAccuracy ?? performance.wholeAccuracy ?? overall.accuracy ?? pc.accuracy;
+    text("overlay-pause-accuracy", accuracyValue != null ? fmt(Number(accuracyValue) * (Number(accuracyValue) <= 1 ? 100 : 1), 2) + "%" : "—", "—");
 
     const section = pc.section || {};
     text("overlay-pause-section", section.label || section.dominantPatternKind || "—", "—");
