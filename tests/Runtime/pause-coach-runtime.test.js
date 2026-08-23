@@ -131,6 +131,19 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.equal(live.performance.recentMisses, 3);
 }
 
+// Opening the overlay while osu! is already paused bootstraps the active
+// attempt from the map/telemetry packet instead of staying in WaitingForGame.
+{
+  const runtime = createRuntime({ minimumTimingSamples: 1 });
+  const paused = runtime.process(fixture(20_000, 20_000, counts(20, 2, 2), {
+    offsets: [1, 2],
+    state: { name: "Pause", isPlaying: false, isPaused: true },
+  }));
+  assert.equal(paused.state, "Paused");
+  assert.notEqual(paused.sessionId, "");
+  assert.equal(paused.performance.wholeMisses, 2);
+}
+
 // Sparse and dense publication rates use the same gameplay-time counters.
 {
   const sparse = runWindow([0, 10_000, 20_000, 30_000, 40_000]);

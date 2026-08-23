@@ -266,6 +266,17 @@
       return mapReset || scoreReset || missReset || hitReset;
     }
 
+    function hasAttemptTelemetry(sample) {
+      // The overlay can be opened/reinjected while osu! is already paused.
+      // In that case there is no preceding Playing packet, but an active
+      // beatmap still leaves enough evidence to reconstruct the session.
+      return Boolean(sample.beatmapId || sample.beatmapHash
+        || sample.mapTimeMs > 0
+        || sample.score != null
+        || sample.accuracy != null
+        || sample.hits.total != null);
+    }
+
     function appendOffsets(sample) {
       const current = sample.offsets;
       latestOffsets = current.slice();
@@ -444,6 +455,7 @@
       const afterFinished = sample.state === "playing" && previous && !["playing", "paused"].includes(previous.state);
       const retry = isRetry(sample);
       if (sample.state === "playing" && (!session || changedBeatmap || retry || afterFinished)) start(sample);
+      if (!session && ["paused", "results"].includes(sample.state) && hasAttemptTelemetry(sample)) start(sample);
 
       if (!session) {
         previous = sample;

@@ -397,6 +397,13 @@ public sealed class RealtimePlayAnalyzer
             StartSession(sample);
         }
 
+        if (_session is null
+            && (sample.State is RealtimePlayState.Paused or RealtimePlayState.Results)
+            && HasAttemptTelemetry(sample))
+        {
+            StartSession(sample);
+        }
+
         if (_session is null)
         {
             _previousSample = sample;
@@ -449,6 +456,18 @@ public sealed class RealtimePlayAnalyzer
         _session.Add(
             new RealtimeTelemetryEvent(sample.MapTimeMs, sample.ReceivedAt, RealtimeTelemetryEventType.StateChanged, null, "tosu.v2", AnalysisDataQuality.Observed),
             _options.MaxTimelineEvents);
+    }
+
+    private static bool HasAttemptTelemetry(RealtimeTelemetrySample sample)
+    {
+        // The overlay may be opened while osu! is already paused, so there
+        // may be no preceding Playing sample to create the session.
+        return !string.IsNullOrWhiteSpace(sample.BeatmapId)
+            || !string.IsNullOrWhiteSpace(sample.BeatmapHash)
+            || sample.MapTimeMs > 0
+            || sample.Score is not null
+            || sample.Accuracy is not null
+            || sample.Judgements.Total > 0;
     }
 
     private void EndCurrentSession(DateTimeOffset endedAt)
