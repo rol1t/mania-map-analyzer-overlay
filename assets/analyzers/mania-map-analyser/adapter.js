@@ -11,6 +11,8 @@
   let socket = null;
   let observer = null;
   let animationFrame = 0;
+  let publishTimer = 0;
+  let lastPublishAt = 0;
   let reconnectTimer = 0;
   let statePollTimer = 0;
   let statePollInFlight = false;
@@ -21,6 +23,9 @@
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
   let pauseCoach = null;
+  let pauseCoachRuntime = typeof window.__createRealtimePauseCoachRuntime === "function"
+    ? window.__createRealtimePauseCoachRuntime()
+    : null;
   let lastPlayingHits = null;
 
   function emptyBeatmap() {
@@ -573,6 +578,8 @@
 
   function publish() {
     animationFrame = 0;
+    publishTimer = 0;
+    lastPublishAt = Date.now();
     const snapshot = buildSnapshot();
     const json = JSON.stringify(snapshot, function (_key, value) {
       return typeof value === "number" && !Number.isFinite(value) ? null : value;
@@ -584,7 +591,17 @@
   }
 
   function queuePublish() {
-    if (animationFrame) return;
+    if (animationFrame || publishTimer) return;
+    // Telemetry processing stays event-driven, but the DOM renderer only needs
+    // a few updates per second while the player is actively playing. Pause and
+    // results snapshots bypass the throttle for immediate feedback.
+    const isActivePlay = gameplay.isPlaying === true && gameplay.isPaused !== true;
+    const minimumInterval = isActivePlay ? 250 : 0;
+    const elapsed = Date.now() - lastPublishAt;
+    if (minimumInterval > elapsed) {
+      publishTimer = window.setTimeout(queuePublish, minimumInterval - elapsed);
+      return;
+    }
     animationFrame = requestAnimationFrame(publish);
   }
 
@@ -682,9 +699,29 @@
     const isNewPlayingAttempt = gameplay.isPlaying === true && gameplay.isPaused !== true && previousGameplay.isPlaying !== true;
     if (beatmapIdentityChanged || isNewPlayingAttempt) {
       pauseCoach = null;
-      if (isNewPlayingAttempt) lastPlayingHits = null;
+      lastPlayingHits = null;
     }
-    if (gameplay.isPlaying === true && gameplay.isPaused !== true) {
+
+    if (pauseCoachRuntime) {
+      pauseCoach = pauseCoachRuntime.process({
+        beatmap: {
+          id: beatmap.id,
+          setId: beatmap.setId,
+          hash: sourceBeatmap && (sourceBeatmap.hash || sourceBeatmap.md5 || sourceBeatmap.checksum) || "",
+          time: sourceBeatmap && sourceBeatmap.time,
+        },
+        gameplay: {
+          state: nextState,
+          isPlaying: nextIsPlaying,
+          isPaused: nextIsPaused,
+          isFocused,
+          isReplay: stateToken === "replay" || stateToken === "watchingreplay",
+          isSpectating: stateToken === "spectating",
+        },
+        play: sourcePlayForCoach,
+        mapTimeMs: replay.mapProgressMs,
+      });
+    } else if (gameplay.isPlaying === true && gameplay.isPaused !== true) {
       lastPlayingHits = currentHits;
       pauseCoach = null;
     } else if (gameplay.isPaused === true && previousGameplay.isPlaying === true && previousGameplay.isPaused !== true) {
@@ -795,14 +832,18 @@
       disposed = true;
       if (observer) observer.disconnect();
       if (animationFrame) cancelAnimationFrame(animationFrame);
+      if (publishTimer) clearTimeout(publishTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (statePollTimer) window.clearInterval(statePollTimer);
       if (socket) {
         try { socket.close(); } catch (exception) { reportRuntimeError("Disposing analyzer websocket", exception); }
       }
+      if (pauseCoachRuntime && typeof pauseCoachRuntime.dispose === "function") pauseCoachRuntime.dispose();
+      pauseCoachRuntime = null;
       observer = null;
       socket = null;
       animationFrame = 0;
+      publishTimer = 0;
       reconnectTimer = 0;
       statePollTimer = 0;
       statePollInFlight = false;

@@ -41,6 +41,19 @@ For the research-backed replay-analysis implementation plan, see [docs/replay-an
 
 Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extraction to `ReplayAnalysis.Core` package can be evaluated when an external consumer appears.
 
+## Realtime Pause Coach — implementation checkpoint
+
+- [x] Add an isolated realtime session/analyzer domain with bounded timeline and timing buffers (`src/ReplayAnalysis/RealtimePauseCoach.cs`).
+- [x] Track gameplay start, pause, resume, finish, retry/reset, replay and spectator states without mixing attempts.
+- [x] Add centralized thresholds, deterministic insight ranking, confidence and data-provenance labels.
+- [x] Integrate the adapter with Tosu v2/WebSocket telemetry and throttle active-play UI publication while keeping pause/results snapshots immediate.
+- [x] Add explicit unavailable diagnostics instead of fabricating per-column or canonical live pattern claims.
+- [x] Add standalone `Pause Coach Card`, `Pause Coach Minimal`, and `Pause Coach Signal` presets; extend `Companella Replay` with the same diagnosis block.
+- [x] Document actual Tosu fields, quality categories, lifecycle, insight rules and limitations in [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md).
+- [x] Add synthetic lifecycle, retry, timing, accuracy, miss-spike, insufficient-data, provenance and bounded-buffer tests.
+- [ ] Manual Windows/WebView acceptance with a live Tosu session: verify pause/resume visibility, retry reset, result-screen snapshot and each visual preset.
+- [ ] Evaluate a future `/websocket/v2/precise` or key-state integration before enabling column-level or canonical pattern claims.
+
 ## Analyzer runtime integration
 
 - [x] Connect `AnalyzerEngineScriptBridge` to the Avalonia main window and the active Tosu/WebView host (`WebViewAnalyzerScriptHost.cs`, `MainWindow.axaml.cs:725`).
@@ -80,9 +93,9 @@ Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extr
 - [x] Document and enforce permissions/sandbox boundaries for user-provided analyzer packages and JavaScript (`README` preset security, `DocumentationService` docs, `AnalyzerEngineCatalog.ResolveContainedFile`/`IsPathContained` + `AnalyzerEnginePackageDeployer` reparse-point checks).
 - [x] Add integrity checks and clear warnings for untrusted analyzer or preset resources (`AnalyzerEngineCatalog` path-traversal/symlink diagnostics, `tests/Avalonia.Tests/PackageIntegrityTests.cs` — missing fields, path escape warnings).
 
-## Maintainability refactor — checkpoint (2026-08-22)
+## Maintainability refactor — historical checkpoint (2026-08-22)
 
-> Checkpoint appended without touching source files, without running commands/commits, to allow safe resume after an OpenCode restart. Covers current **uncommitted** working-tree state on `main` (ahead of `origin/main` by 2 commits). No commit/push was made for the current working-tree changes.
+> Historical checkpoint retained for traceability. The refactor source changes were merged into `main` in PR #7; the remaining manual acceptance and release items below are still open.
 
 ### Completed in this refactor (working tree + recent commits)
 

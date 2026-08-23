@@ -20,6 +20,23 @@ public sealed class OverlayPresentationServiceTests
 
         Assert.Contains("window.__overlayHostConfig=", scripts.ObserverScript, StringComparison.Ordinal);
         Assert.DoesNotContain("window._overlayHostConfig=", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("__createRealtimePauseCoachRuntime", scripts.ObserverScript, StringComparison.Ordinal);
         Assert.Contains("\"overlayMode\":true", scripts.ObserverScript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PauseCoachPresentationVariantsAreAvailable()
+    {
+        var settings = new LauncherSettings
+        {
+            AnalyzerProviderId = "mania-map-analyser",
+            OverlayPresetId = "pause-coach-card",
+            OverlayLayoutMode = "pause-coach-card"
+        };
+
+        var scripts = new OverlayPresentationService().Build(settings, overlayMode: true);
+
+        Assert.Contains("overlay-pause-coach-card", scripts.SetupScript, StringComparison.Ordinal);
+        Assert.Contains("overlay-pause-coach-primary", scripts.SetupScript, StringComparison.Ordinal);
     }
 }

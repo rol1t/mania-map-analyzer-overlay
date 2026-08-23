@@ -89,6 +89,11 @@
     } else if ((!snapshot.replay || !snapshot.replay.hasData) && previous.replay && previous.replay.hasData) {
       merged.replay = previous.replay;
     }
+    // Headless/map snapshots do not own the live Pause Coach state. Preserve
+    // the latest attempt diagnosis while those snapshots continue to arrive.
+    if (!snapshot.pauseCoach && previous.pauseCoach) {
+      merged.pauseCoach = previous.pauseCoach;
+    }
     return merged;
   }
 
@@ -275,43 +280,43 @@
 
     const timing = pc.timing || {};
     const performance = pc.performance || {};
-    const hasMeaningfulData = pc.hasData !== false;
-    // Hide only when object is present but completely empty (defensive).
-    if (!hasMeaningfulData && !timing.sampleCount && (!pc.insights || pc.insights.length === 0) && performance.wholeHits == null && performance.recentHits == null) {
-      // Still show provisional header when fidelity present; otherwise hide to avoid empty block.
-      const hasFidelity = pc.fidelity || pc.isProvisional;
-      if (!hasFidelity) {
-        container.hidden = true;
-        return;
-      }
-    }
-
-    container.hidden = false;
+    const recent = pc.recent || {};
+    const state = String(pc.state || "").toLowerCase();
+    const hasMeaningfulData = pc.hasData !== false || timing.sampleCount || (pc.insights || []).length;
+    container.hidden = !hasMeaningfulData && state === "unavailable";
+    container.dataset.state = state || "unknown";
+    container.dataset.quality = String(pc.dataQuality || "Unavailable").toLowerCase();
 
     function fmt(value, digits) {
       return formatNumber(value, digits) || "—";
     }
+
+    const stateLabels = {
+      waitingforgame: "Waiting for a play",
+      playing: "Analyzing current attempt",
+      paused: "Paused — diagnosis ready",
+      insufficientdata: "Paused — not enough telemetry",
+      ready: "Attempt complete",
+      unavailable: "Unavailable for this mode",
+    };
+    const statusLabel = stateLabels[state] || (pc.fidelity || "provisional");
+    text("overlay-pause-status", statusLabel, "—");
+    text("overlay-pause-coach-subtitle", pc.reason || "Deterministic, evidence-backed realtime analysis", "—");
 
     const fidelityRaw = pc.fidelity ? String(pc.fidelity) : (pc.isProvisional ? "provisional" : "");
     const fidelityLabel = fidelityRaw ? fidelityRaw.replace("replay.fidelity.", "") : "";
     const marginRaw = timing.timingMargin != null ? timing.timingMargin : timing.margin;
     const margin = String(marginRaw || "").trim().toLowerCase();
 
-    let statusText = fidelityLabel || "";
-    if (margin && margin !== "unknown") {
-      statusText = statusText ? statusText + " \u00B7 " + margin : margin;
-    } else if (margin === "unknown" && statusText) {
-      statusText = statusText + " \u00B7 " + margin;
-    } else if (!statusText && margin) {
-      statusText = margin;
-    }
-    if (!statusText) statusText = "—";
-    text("overlay-pause-status", statusText, "—");
-
     const bias = timing.meanMs != null ? timing.meanMs : timing.driftMs;
     text("overlay-pause-bias", bias == null ? "—" : fmt(bias, 1) + " ms", "—");
 
     text("overlay-pause-ur", timing.unstableRate == null ? "—" : fmt(timing.unstableRate, 1), "—");
+
+    text("overlay-pause-accuracy", recent.accuracy != null ? fmt(Number(recent.accuracy) * (Number(recent.accuracy) <= 1 ? 100 : 1), 2) + "%" : "—", "—");
+
+    const section = pc.section || {};
+    text("overlay-pause-section", section.label || section.dominantPatternKind || "—", "—");
 
     let recentText = "—";
     if (performance.recentHits != null || performance.recentMisses != null) {
@@ -325,6 +330,42 @@
     }
     text("overlay-pause-recent", recentText, "—");
 
+    const primary = byId("overlay-pause-coach-primary");
+    const secondary = byId("overlay-pause-coach-secondary");
+    if (primary) {
+      primary.textContent = "";
+      const insights = Array.isArray(pc.insights) ? pc.insights : [];
+      const first = insights[0];
+      primary.hidden = !first || state === "playing" || state === "waitingforgame";
+      if (first) {
+        primary.dataset.severity = String(first.severity || "info").toLowerCase();
+        const title = document.createElement("strong");
+        title.textContent = first.title || first.message || first.code || "Observation";
+        const description = document.createElement("span");
+        description.textContent = first.description || first.message || "";
+        const evidence = document.createElement("small");
+        evidence.textContent = first.evidence || "";
+        primary.append(title, description, evidence);
+      }
+    }
+
+    if (secondary) {
+      secondary.textContent = "";
+      const secondaryInsights = (Array.isArray(pc.insights) ? pc.insights : []).slice(1, 4);
+      secondary.hidden = secondaryInsights.length === 0;
+      secondaryInsights.forEach(function (insight) {
+        const item = document.createElement("div");
+        item.className = "overlay-pause-coach-item";
+        item.dataset.severity = String(insight.severity || "info").toLowerCase();
+        const title = document.createElement("strong");
+        title.textContent = insight.title || insight.code || "Observation";
+        const evidence = document.createElement("span");
+        evidence.textContent = insight.evidence || insight.message || "";
+        item.append(title, evidence);
+        secondary.appendChild(item);
+      });
+    }
+
     const insightsEl = byId("overlay-pause-insights");
     if (insightsEl) {
       const insights = Array.isArray(pc.insights) ? pc.insights : [];
@@ -333,9 +374,22 @@
       insights.forEach(function (insight) {
         const line = document.createElement("div");
         line.className = "overlay-replay-insight";
-        line.textContent = insight.message || String(insight.code || "");
-        line.title = insight.message || "";
+        line.dataset.severity = String(insight.severity || "info").toLowerCase();
+        line.textContent = insight.message || insight.description || String(insight.code || "");
+        line.title = [insight.evidence, insight.dataQuality, insight.confidenceLabel].filter(Boolean).join(" · ");
         insightsEl.appendChild(line);
+      });
+    }
+
+    const diagnostics = byId("overlay-pause-coach-diagnostics");
+    if (diagnostics) {
+      diagnostics.textContent = "";
+      const items = Array.isArray(pc.diagnostics) ? pc.diagnostics.filter(Boolean).slice(0, 3) : [];
+      diagnostics.hidden = items.length === 0;
+      items.forEach(function (diagnostic) {
+        const line = document.createElement("span");
+        line.textContent = String(diagnostic).replace(/^pausecoach\.[^:]+:\s*/i, "");
+        diagnostics.appendChild(line);
       });
     }
   }

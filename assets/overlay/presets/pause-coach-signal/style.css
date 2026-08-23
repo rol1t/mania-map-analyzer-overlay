@@ -1,0 +1,26 @@
+html.overlay-pause-coach-signal .main-card > *:not(.pause-coach-signal-root),html.overlay-pause-coach-signal .main-card::before,html.overlay-pause-coach-signal .main-card::after { display:none!important; }
+html.overlay-pause-coach-signal .main-card { width:var(--overlay-host-width,680px)!important; min-width:var(--overlay-host-width,680px)!important; max-width:var(--overlay-host-width,680px)!important; display:block!important; padding:14px!important; background:#090b10!important; border:1px solid rgba(255,255,255,.17)!important; border-radius:3px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-root { display:grid!important; gap:10px!important; color:#f2f4f8!important; font-family:'Segoe UI',sans-serif!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-top { display:grid!important; grid-template-columns:auto 1fr auto!important; gap:9px!important; align-items:center!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-mark { display:grid!important; place-items:center!important; width:32px!important; height:32px!important; color:#080b10!important; background:#69ced1!important; border-radius:3px!important; font-size:10px!important; font-weight:800!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-top strong { display:block!important; font-size:17px!important; letter-spacing:.04em!important; text-transform:uppercase!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-top span { display:block!important; margin-top:2px!important; color:#7e8795!important; font-size:9px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-top > b { padding:4px 7px!important; color:#69ced1!important; border:1px solid rgba(105,206,209,.5)!important; border-radius:3px!important; font-size:8px!important; text-transform:uppercase!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-primary { padding:11px!important; background:#121821!important; border:1px solid rgba(105,206,209,.55)!important; border-left:5px solid #69ced1!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-primary[data-severity='critical'] { border-color:rgba(239,93,114,.65)!important; border-left-color:#ef5d72!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-primary strong { display:block!important; font-size:15px!important; text-transform:uppercase!important; letter-spacing:.04em!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-primary span { display:block!important; margin-top:3px!important; color:#c6ced8!important; font-size:10px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-primary small { display:block!important; margin-top:5px!important; color:#7e8795!important; font-size:8px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-meter { display:grid!important; grid-template-columns:auto 1fr auto!important; gap:10px!important; align-items:center!important; color:#8d96a3!important; font-size:9px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-meter strong { color:#f5f7fa!important; font-size:18px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-meter i { height:4px!important; background:linear-gradient(90deg,#69ced1 0 45%,#ef5d72 45% 55%,#69ced1 55%)!important; opacity:.65!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-grid { display:grid!important; grid-template-columns:repeat(4,1fr)!important; gap:6px!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-grid > div { display:grid!important; gap:4px!important; padding:8px!important; border:1px solid rgba(255,255,255,.12)!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-grid small { color:#7e8795!important; font-size:8px!important; text-transform:uppercase!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-grid b { overflow:hidden!important; font-size:13px!important; text-overflow:ellipsis!important; white-space:nowrap!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-secondary,html.overlay-pause-coach-signal .pause-coach-signal-insights { display:grid!important; gap:4px!important; color:#c4ccd7!important; font-size:9px!important; }
+html.overlay-pause-coach-signal .overlay-pause-coach-item,html.overlay-pause-coach-signal .pause-coach-signal-insights > div { padding:5px 8px!important; border-left:3px solid #69ced1!important; background:#11161e!important; }
+html.overlay-pause-coach-signal .overlay-pause-coach-item[data-severity='critical'],html.overlay-pause-coach-signal .pause-coach-signal-insights > div[data-severity='critical'] { border-left-color:#ef5d72!important; }
+html.overlay-pause-coach-signal .overlay-pause-coach-item strong { margin-right:5px!important; color:#f2f4f8!important; }
+html.overlay-pause-coach-signal .overlay-pause-coach-item span { color:#8d96a3!important; }
+html.overlay-pause-coach-signal .pause-coach-signal-diagnostics { display:flex!important; gap:6px!important; color:#687180!important; font-size:8px!important; }

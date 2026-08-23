@@ -1,0 +1,14 @@
+{
+  "id": "pause-coach-signal",
+  "name": "Pause Coach Signal",
+  "nameRu": "Pause Coach — сигналы",
+  "description": "High-contrast Pause Coach view that emphasizes severity and evidence.",
+  "descriptionRu": "Контрастный Pause Coach с акцентом на severity и доказательства.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".pause-coach-signal-root",
+  "supportsFullscreen": true,
+  "minWidth": 460,
+  "minHeight": 240
+}
