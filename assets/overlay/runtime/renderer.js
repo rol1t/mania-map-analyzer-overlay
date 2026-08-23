@@ -149,8 +149,7 @@
       const positiveDifferentBeatmap = (nativeId && currentId && nativeId !== currentId)
         || (!nativeId && !currentId && nativeKey && currentKey && nativeKey !== currentKey);
       const positiveDifferentAttempt = positiveDifferentBeatmap
-        || (sessionsAreComparable && nativeSession && currentSession && nativeSession !== currentSession)
-        || (!nativeId && !currentId && nativeSession && currentSession && nativeSession !== currentSession);
+        || (sessionsAreComparable && nativeSession && currentSession && nativeSession !== currentSession);
       // The native collector is authoritative for realtime coaching for the
       // current attempt. Browser frames are still useful for map metadata,
       // but must not replace native pause/gameplay/replay values for the same

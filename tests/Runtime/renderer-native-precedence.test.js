@@ -103,6 +103,23 @@ assert.equal(updatedSnapshot.replay.mapProgressMs, 30000);
 assert.equal(updatedSnapshot.replay.score, 123456);
 assert.equal(updatedSnapshot.beatmap.id, "674175");
 
+// Even without beatmap identity, an independently generated browser session
+// must not release native authority. Only a native producer may establish a
+// different native session in this identity-poor state.
+publish({
+  schemaVersion: 1,
+  sourceId: "mania-map-analyser",
+  beatmap: {},
+  gameplay: { state: "Playing", isPlaying: true, isPaused: false },
+  replay: { mapProgressMs: 32000, score: 125000 },
+  pauseCoach: { state: "Playing", sessionId: "browser-C", mapProgressMs: 32000, hasData: true },
+  realtimeProducer: "browser",
+});
+
+const afterIdentityPoorBrowserUpdate = window.__overlayLatestAnalysisSnapshot;
+assert.equal(afterIdentityPoorBrowserUpdate.pauseCoach.sessionId, "native-A");
+assert.equal(afterIdentityPoorBrowserUpdate.pauseCoach.state, "Paused");
+
 publish({
   schemaVersion: 1,
   sourceId: "headless-analysis",
