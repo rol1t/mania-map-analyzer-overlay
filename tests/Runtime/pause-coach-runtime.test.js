@@ -205,6 +205,10 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.doesNotMatch(adapter, /pauseCoachRuntime\.dispose\(\)/);
   assert.match(renderer, /overlay-layout-companella-replay/);
   assert.match(renderer, /nativePauseCoach/);
+  assert.match(renderer, /formatAccuracyPercentage/);
+  assert.match(renderer, /mergeDifficulty/);
+  assert.match(renderer, /displaying `0 SR`/);
+  assert.match(renderer, /__overlayHostQueueSizeReport/);
   assert.match(renderer, /overlay:pause-coach-render-debug/);
   for (const preset of ["pause-coach-card", "pause-coach-minimal", "pause-coach-signal"]) {
     const css = fs.readFileSync(path.join(root, "assets/overlay/presets", preset, "style.css"), "utf8");

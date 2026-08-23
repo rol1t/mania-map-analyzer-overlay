@@ -3,7 +3,10 @@
 
   if (window.__overlaySnapshotRendererBound) {
     if (window.__overlayLatestAnalysisSnapshot && typeof window.__overlayRenderAnalysisSnapshot === "function") {
-      window.__overlayRenderAnalysisSnapshot(window.__overlayLatestAnalysisSnapshot);
+      // A preset change can replace the host DOM while keeping this runtime
+      // alive. Force one render in that case even when the data signature is
+      // unchanged.
+      window.__overlayRenderAnalysisSnapshot(window.__overlayLatestAnalysisSnapshot, true);
     }
     return;
   }
@@ -15,13 +18,24 @@
 
   function text(id, value, fallback) {
     const element = byId(id);
-    if (element) element.textContent = String(value == null || value === "" ? fallback : value);
+    if (!element) return;
+    const next = String(value == null || value === "" ? fallback : value);
+    if (element.textContent !== next) element.textContent = next;
   }
 
   function formatNumber(value, maximumFractionDigits) {
     const number = Number(value);
     if (!Number.isFinite(number)) return "";
     return number.toFixed(maximumFractionDigits).replace(/\.0+$|(?<=\.\d)0+$/g, "");
+  }
+
+  function formatAccuracyPercentage(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "";
+    // Native realtime snapshots use the canonical 0..1 fraction while some
+    // adapter/replay snapshots already contain a 0..100 percentage.
+    const percentage = Math.abs(number) <= 1.000001 ? number * 100 : number;
+    return formatNumber(percentage, 2) + "%";
   }
 
   function rank(snapshot, systemId) {
@@ -45,6 +59,41 @@
   function rankHasValue(entry) {
     const value = String(entry && entry.value || "").trim();
     return value !== "" && value !== "—" && value !== "-";
+  }
+
+  function hasText(value) {
+    return value != null && String(value).trim() !== "";
+  }
+
+  function mergeBeatmap(previous, current) {
+    if (!previous || !current) return current || previous || {};
+    const merged = Object.assign({}, previous, current);
+    ["id", "setId", "artist", "title", "version", "mapper", "bpmLabel",
+      "overallDifficulty", "healthDrain", "backgroundUrl"].forEach(function (key) {
+      if (!hasText(current[key]) && hasText(previous[key])) merged[key] = previous[key];
+    });
+    return merged;
+  }
+
+  function mergeDifficulty(previous, current) {
+    if (!previous || !current) return current || previous || {};
+    const merged = Object.assign({}, previous, current);
+    const currentStar = Number(current.starRating);
+    const previousStar = Number(previous.starRating);
+    // Tosu realtime frames do not carry headless difficulty metrics and are
+    // serialized as a zero/empty difficulty block. Keep completed analysis
+    // values for the same beatmap instead of displaying `0 SR`.
+    if ((!Number.isFinite(currentStar) || currentStar <= 0) && Number.isFinite(previousStar) && previousStar > 0) {
+      merged.starRating = previous.starRating;
+      if (!hasText(current.starLabel) && hasText(previous.starLabel)) merged.starLabel = previous.starLabel;
+    }
+    ["starLabel", "unit", "lnPercent", "keys"].forEach(function (key) {
+      const value = current[key];
+      if ((value == null || (typeof value === "string" && value.trim() === "")) && previous[key] != null) {
+        merged[key] = previous[key];
+      }
+    });
+    return merged;
   }
 
   function mergeSnapshot(snapshot) {
@@ -82,6 +131,14 @@
     const previousRanks = Array.isArray(previous.ranks) ? previous.ranks : [];
     const currentRanks = Array.isArray(snapshot.ranks) ? snapshot.ranks : [];
     const merged = Object.assign({}, snapshot);
+    merged.beatmap = mergeBeatmap(previous.beatmap, snapshot.beatmap);
+    merged.difficulty = mergeDifficulty(previous.difficulty, snapshot.difficulty);
+    if ((!Array.isArray(snapshot.skills) || snapshot.skills.length === 0) &&
+        Array.isArray(previous.skills) && previous.skills.length > 0) {
+      // Realtime Tosu frames do not include headless skill metrics. Keep the
+      // completed chart while the live Pause Coach block continues updating.
+      merged.skills = previous.skills;
+    }
     if (previousRanks.length > 0 || currentRanks.length > 0) {
       const ranks = new Map();
       previousRanks.forEach(function (entry) {
@@ -241,7 +298,7 @@
     text("overlay-replay-ur", r.ur == null ? "—" : fmt(r.ur, 1), "—");
     text("overlay-replay-score", r.score == null ? "—" : String(r.score), "—");
     text("overlay-replay-map-time", r.mapProgressMs == null ? "—" : fmt(r.mapProgressMs, 0) + " ms", "—");
-    text("overlay-replay-accuracy", r.accuracy == null ? "—" : fmt(r.accuracy, 2) + "%", "—");
+    text("overlay-replay-accuracy", r.accuracy == null ? "—" : formatAccuracyPercentage(r.accuracy), "—");
     text("overlay-replay-mean", r.meanMs == null ? "—" : fmt(r.meanMs, 1) + " ms", "—");
     text("overlay-replay-median", r.medianMs == null ? "—" : fmt(r.medianMs, 1) + " ms", "—");
     text("overlay-replay-sample", r.sampleCount == null ? "—" : String(r.sampleCount), "—");
@@ -506,15 +563,66 @@
     }
   }
 
-  function render(snapshot) {
+  function renderSignature(snapshot) {
+    const beatmap = snapshot.beatmap || {};
+    const difficulty = snapshot.difficulty || {};
+    const ranks = (Array.isArray(snapshot.ranks) ? snapshot.ranks : []).map(function (entry) {
+      return [entry.systemId, entry.value, entry.numericValue];
+    });
+    const skills = (Array.isArray(snapshot.skills) ? snapshot.skills : []).slice(0, 8).map(function (skill) {
+      return [skill.label, skill.value, skill.valueLabel, skill.normalizedValue, skill.detail];
+    });
+    const replay = snapshot.replay || {};
+    const coach = snapshot.pauseCoach || {};
+    const timing = coach.timing || {};
+    const performance = coach.performance || {};
+    const overall = coach.overall || {};
+    const recent = coach.recent || {};
+    const section = coach.section || {};
+    const insights = (Array.isArray(coach.insights) ? coach.insights : []).slice(0, 4).map(function (insight) {
+      return [insight.code, insight.title, insight.description, insight.message, insight.evidence, insight.severity];
+    });
+    const replayColumns = (Array.isArray(replay.columns) ? replay.columns : []).map(function (column) {
+      return [column.column, column.biasMs, column.ur];
+    });
+    const replayInsights = (Array.isArray(replay.insights) ? replay.insights : []).map(function (insight) {
+      return [insight.code, insight.message];
+    });
+    return JSON.stringify({
+      beatmap: [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version,
+        beatmap.mapper, beatmap.bpmLabel, beatmap.backgroundUrl],
+      difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys],
+      ranks,
+      skills,
+      replay: [replay.hasData, replay.ur, replay.score, replay.mapProgressMs, replay.accuracy,
+        replay.meanMs, replay.medianMs, replay.sampleCount, replay.earlyCount, replay.lateCount,
+        replay.fidelity, replay.reason, replayColumns, replayInsights],
+      pauseCoach: [coach.state, coach.hasData, coach.reason, coach.fidelity, coach.sessionId,
+        coach.mapProgressMs, coach.score, coach.accuracy, coach.combo,
+        timing.meanMs, timing.driftMs, timing.unstableRate, timing.sampleCount, timing.timingMargin,
+        performance.recentHits, performance.recentMisses, performance.recentAccuracy,
+        performance.wholeHits, performance.wholeMisses, overall.accuracy, overall.score, overall.combo,
+        recent.accuracy, section.label, section.dominantPatternKind, insights],
+    });
+  }
+
+  var lastRenderSignature = "";
+
+  function render(snapshot, force) {
     const effectiveSnapshot = mergeSnapshot(snapshot);
     window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
+    const signature = renderSignature(effectiveSnapshot);
+    if (!force && signature === lastRenderSignature) return;
+    lastRenderSignature = signature;
     tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
     renderReplay(effectiveSnapshot);
     renderPauseCoach(effectiveSnapshot);
     renderMainCard(effectiveSnapshot);
+    if (typeof window.__overlayHostQueueSizeReport === "function") {
+      window.__overlayHostQueueSizeReport();
+    }
   }
 
   window.__overlayRenderAnalysisSnapshot = render;

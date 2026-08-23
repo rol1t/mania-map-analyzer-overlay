@@ -78,6 +78,8 @@ public partial class MainWindow : Window
     private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
     private int _nativePauseCoachPublishInFlight;
+    private bool _overlayBrowserReady;
+    private RealtimeAnalysisSnapshot? _pendingNativePauseCoachSnapshot;
     private string _lastNativePauseCoachDiagnostic = string.Empty;
     private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
     private string _lastNativePollBoundaryDiagnostic = string.Empty;
@@ -203,12 +205,27 @@ public partial class MainWindow : Window
 
     private void ReplaceBrowser(IBrush background)
     {
+        _overlayBrowserReady = false;
+        _pendingNativePauseCoachSnapshot = null;
         var previous = Browser;
         previous.NavigationCompleted -= Browser_NavigationCompleted;
         previous.WebMessageReceived -= Browser_WebMessageReceived;
         previous.NewWindowRequested -= Browser_NewWindowRequested;
         BrowserHost.Child = null;
         Browser = CreateBrowser(background);
+    }
+
+    private void RecreateOverlayBrowser()
+    {
+        // The offscreen WebView2 compositor can retain the last launcher frame
+        // when the existing NativeWebView is moved into the transparent overlay
+        // HWND. Recreating the control gives the overlay a fresh composition
+        // surface, while the providers created by the headless controller keep
+        // resolving the current Browser instance. Keep it detached until the
+        // overlay HWND has its final size/styles; attaching a WebView2 surface
+        // while Avalonia is still resizing the transparent window can fail in
+        // SizeChangedCore and leave the first page visually blank until reload.
+        ReplaceBrowser(Brushes.Transparent);
     }
 
     private static async Task ObserveControllerDisposeAsync(Task disposeTask)
@@ -800,6 +817,11 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (!ReferenceEquals(sender, Browser))
+            {
+                return;
+            }
+
             if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
             {
                 await ApplyPresentationAsync();
@@ -807,6 +829,13 @@ public partial class MainWindow : Window
                 {
                     await FitOverlayWindowToRenderedWidgetAsync();
                 }
+
+                // Native polling starts together with navigation. Mark the
+                // document ready now, but publish the cached headless snapshot
+                // before the queued realtime frame so the latter can merge
+                // live coaching into a complete layout instead of briefly
+                // hiding the skill chart.
+                _overlayBrowserReady = true;
             }
 
             if (_headlessAnalysisController is not null)
@@ -817,6 +846,30 @@ public partial class MainWindow : Window
                     status == AnalyzerEngineSupervisorStatus.Error)
                 {
                     await _headlessAnalysisController.NotifyNavigationAsync();
+                    // A navigation creates a fresh JavaScript document. The
+                    // analyzer can already have a completed snapshot cached,
+                    // so publish it again before realtime frames arrive;
+                    // otherwise the first id-only Tosu frame leaves summary
+                    // metadata blank until the next analysis poll completes.
+                    await _headlessAnalysisController.RepublishLastSnapshotAsync();
+                    if (_overlayMode)
+                    {
+                        // Republish can reveal the replay/Pause Coach rows and
+                        // change the card's intrinsic height after the first
+                        // navigation fit. Reconcile the HWND once more after
+                        // that DOM update so no stale blank tail remains.
+                        await FitOverlayWindowToRenderedWidgetAsync();
+                    }
+                }
+            }
+
+            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            {
+                var pending = _pendingNativePauseCoachSnapshot;
+                _pendingNativePauseCoachSnapshot = null;
+                if (_overlayMode && pending is not null)
+                {
+                    await PublishNativePauseCoachSnapshotAsync(pending);
                 }
             }
         }
@@ -1974,6 +2027,7 @@ public partial class MainWindow : Window
         // the safe edit state, where an activatable/task-switchable HWND is
         // required for reliable WebView2 pointer input.
         ShowInTaskbar = true;
+        RecreateOverlayBrowser();
         ApplyOverlayWindowAppearance(_windowsOverlay.IsOsuMinimized);
 
         var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
@@ -2019,6 +2073,7 @@ public partial class MainWindow : Window
         // invisible overlay when tosu is unavailable or still starting.
         _windowsOverlay.ReapplyNativeState(visible: true);
         UpdateOverlayVisibility();
+        BrowserHost.Child = Browser;
         Navigate(AnalysisUrl);
         StartOverlayGameplayPolling();
     }
@@ -2163,8 +2218,9 @@ public partial class MainWindow : Window
             _overlayRenderedBaseHeight = targetSize.Height / scale;
         }
 
-        if (Math.Abs(ClientSize.Width - targetSize.Width) <= 0.5 &&
-            Math.Abs(ClientSize.Height - targetSize.Height) <= 0.5)
+        const double sizeTolerance = 2.0;
+        if (Math.Abs(ClientSize.Width - targetSize.Width) <= sizeTolerance &&
+            Math.Abs(ClientSize.Height - targetSize.Height) <= sizeTolerance)
         {
             _overlayWidgetSized = true;
             UpdateOverlayVisibility();
@@ -2206,8 +2262,9 @@ public partial class MainWindow : Window
         var targetSize = new Size(
             Math.Ceiling(baseWidth * nextScale),
             Math.Ceiling(baseHeight * nextScale));
-        if (Math.Abs(ClientSize.Width - targetSize.Width) < 0.5 &&
-            Math.Abs(ClientSize.Height - targetSize.Height) < 0.5)
+        const double sizeTolerance = 2.0;
+        if (Math.Abs(ClientSize.Width - targetSize.Width) <= sizeTolerance &&
+            Math.Abs(ClientSize.Height - targetSize.Height) <= sizeTolerance)
         {
             return;
         }
@@ -2249,8 +2306,9 @@ public partial class MainWindow : Window
                 var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
                 _overlayRenderedBaseHeight = targetSize.Height / scale;
                 var position = Position;
-                if (Math.Abs(ClientSize.Width - targetSize.Width) > 0.5 ||
-                    Math.Abs(ClientSize.Height - targetSize.Height) > 0.5)
+                const double sizeTolerance = 2.0;
+                if (Math.Abs(ClientSize.Width - targetSize.Width) > sizeTolerance ||
+                    Math.Abs(ClientSize.Height - targetSize.Height) > sizeTolerance)
                 {
                     ClientSize = targetSize;
                     Position = position;
@@ -2504,7 +2562,18 @@ public partial class MainWindow : Window
 
     private async Task PublishNativePauseCoachSnapshotAsync(RealtimeAnalysisSnapshot snapshot)
     {
-        if (!_overlayMode || Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 1) != 0)
+        if (!_overlayMode)
+        {
+            return;
+        }
+
+        if (!_overlayBrowserReady)
+        {
+            _pendingNativePauseCoachSnapshot = snapshot;
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 1) != 0)
         {
             return;
         }
@@ -2554,9 +2623,11 @@ public partial class MainWindow : Window
                 Extensions = new Dictionary<string, object?> { ["nativePauseCoach"] = true }
             };
             string json = JsonSerializer.Serialize(analysis, _overlaySnapshotJsonOptions);
+            // The renderer handles the event and performs one render. Calling
+            // its exported function as well causes every native poll frame to
+            // rebuild the Pause Coach DOM twice, which looks like jitter.
             string script = "window.__overlayNativePauseCoachSnapshot=" + json + ";" +
-                            "window.dispatchEvent(new CustomEvent('analysis:snapshot',{detail:" + json + "}));" +
-                            "if(typeof window.__overlayRenderAnalysisSnapshot==='function')window.__overlayRenderAnalysisSnapshot(" + json + ");";
+                            "window.dispatchEvent(new CustomEvent('analysis:snapshot',{detail:" + json + "}));";
             await Browser.InvokeScript(script).ConfigureAwait(true);
         }
         catch (Exception exception)

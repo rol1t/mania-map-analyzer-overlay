@@ -237,6 +237,28 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         return supervisor?.NotifyNavigationAsync(cancellationToken) ?? Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Replays the last completed analysis snapshot into the current WebView
+    /// document. Navigation replaces the JavaScript renderer, while the
+    /// headless engine intentionally keeps its cached result. Without this
+    /// explicit replay the first realtime adapter frame can clear the map
+    /// summary (it only contains the numeric beatmap id) until the next full
+    /// analysis run completes.
+    /// </summary>
+    public async Task RepublishLastSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        AnalysisSnapshot? snapshot;
+        lock (_sync)
+        {
+            snapshot = _lastSnapshot;
+        }
+
+        if (snapshot is not null)
+        {
+            await _presenter.PresentAsync(snapshot, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public Task NotifyTosuRestartAsync(CancellationToken cancellationToken = default)
     {
         AnalyzerEngineSupervisor? supervisor;

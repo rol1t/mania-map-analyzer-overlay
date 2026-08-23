@@ -69,6 +69,30 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
+    public void NumericBeatmapIdIsPreservedByNativePayloadNormalizer()
+    {
+        var collector = NewCollector();
+        TosuRealtimeTelemetry telemetry = collector.Process(Raw("""
+        {
+          "state": { "number": 2, "name": "Play" },
+          "game": { "paused": true },
+          "beatmap": { "id": 674175, "time": { "live": 25000 } },
+          "play": {
+            "score": 50000,
+            "accuracy": 96.2,
+            "combo": { "current": 50, "max": 50 },
+            "hits": { "0": 3, "50": 0, "100": 1, "300": 50 },
+            "hitErrorArray": [0, 1, 2, 3]
+          }
+        }
+        """), "native-http", _start)!;
+
+        Assert.Equal("674175", telemetry.Sample.BeatmapId);
+        Assert.NotEmpty(telemetry.Snapshot.SessionId);
+        Assert.Equal(PauseCoachWidgetState.Paused, telemetry.Snapshot.WidgetState);
+    }
+
+    [Fact]
     public void PauseResumeKeepsSessionAndRetryStartsNewSession()
     {
         var collector = NewCollector();

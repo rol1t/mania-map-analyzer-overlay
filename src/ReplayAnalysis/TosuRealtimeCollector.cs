@@ -281,7 +281,20 @@ public static class TosuRealtimePayloadNormalizer
         return default;
     }
 
-    private static string? StringValue(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static string? StringValue(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return value.ToString();
+        }
+
+        return null;
+    }
 
     private static int? IntValue(JsonElement value)
     {
