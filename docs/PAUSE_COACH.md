@@ -14,6 +14,12 @@ The shipped `mania-map-analyser` adapter currently uses the existing Tosu v2 Web
 
 The adapter does not assume that `/websocket/v2/precise` or key-state/object correlation is available. If a future Tosu integration supplies those fields, the realtime domain accepts column and section inputs without changing the widget contract.
 
+## Realtime source of truth
+
+`assets/overlay/runtime/pause-coach.js` is the production realtime implementation and is the source of truth for Tosu normalization, gameplay-time windows and insight thresholds. The C# `RealtimePlayAnalyzer` in `src/ReplayAnalysis/RealtimePauseCoach.cs` remains a domain/reference implementation for host-side contracts and tests; it must not be treated as validation of the WebView runtime. Direct JavaScript fixture tests exercise the shipped runtime.
+
+The direct runtime checks are in `tests/Runtime/pause-coach-runtime.test.js` and use the realistic Tosu payload at `tests/fixtures/tosu-v2-pause-coach.json`.
+
 ## Provenance
 
 Each snapshot includes an overall `dataQuality` and per-block quality labels:
@@ -26,7 +32,7 @@ Each snapshot includes an overall `dataQuality` and per-block quality labels:
 
 ## Session lifecycle
 
-`pause-coach.js` and `RealtimePlayAnalyzer` both model an attempt as a bounded session. A session starts on gameplay, survives pause/resume, ends at results/menu/failure, and is replaced when the beatmap, map time, score or cumulative counters reset. Replay playback and spectating are explicitly marked unavailable.
+`pause-coach.js` and `RealtimePlayAnalyzer` both model an attempt as a bounded session. A session starts on gameplay, survives pause/resume, ends at results/menu/failure, and is replaced when the beatmap identity or cumulative counters positively reset. Partial Tosu packets that omit beatmap id/hash do not reset the attempt. Recent and baseline windows are keyed by map/gameplay time, so wall-clock time spent paused cannot age telemetry out. Replay playback and spectating are explicitly marked unavailable.
 
 ## Insight rules
 

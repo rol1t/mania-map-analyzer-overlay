@@ -15,18 +15,19 @@ public sealed class RealtimePauseCoachTests
         int misses = 0,
         int hits = 0,
         int? score = null,
-        PauseCoachSectionSnapshot? section = null)
+        PauseCoachSectionSnapshot? section = null,
+        DateTimeOffset? receivedAt = null)
     {
         return new RealtimeTelemetrySample(
             beatmapId: "map-1",
             state: state,
             mapTimeMs: seconds * 1000,
-            judgements: new LiveJudgementCounts(count300: hits, countMiss: misses),
+            judgements: new LiveJudgementCounts(count300: hits, countMiss: misses, countGeki: 0, countKatu: 0),
             accuracy: accuracy,
             score: score,
             hitErrorArray: offsets,
             currentSection: section,
-            receivedAt: _start.AddSeconds(seconds));
+            receivedAt: receivedAt ?? _start.AddSeconds(seconds));
     }
 
     [Fact]
@@ -76,7 +77,8 @@ public sealed class RealtimePauseCoachTests
     {
         var analyzer = new RealtimePlayAnalyzer(new PauseCoachOptions { MinimumTimingSamples = 2 });
         analyzer.Process(Sample(0, RealtimePlayState.Playing, [0, 1], accuracy: .99, hits: 10));
-        RealtimeAnalysisSnapshot paused = analyzer.Process(Sample(20, RealtimePlayState.Paused, [0, 1, 2], accuracy: .90, hits: 11, misses: 4));
+        analyzer.Process(Sample(20, RealtimePlayState.Playing, [0, 1, 2], accuracy: .99, hits: 20));
+        RealtimeAnalysisSnapshot paused = analyzer.Process(Sample(40, RealtimePlayState.Paused, [0, 1, 2, 3], accuracy: .90, hits: 21, misses: 4));
 
         Assert.NotEmpty(paused.Insights);
         Assert.Equal(nameof(PauseCoachInsightType.AccuracyDrop), paused.Insights[0].Type);
@@ -134,5 +136,23 @@ public sealed class RealtimePauseCoachTests
         Assert.Equal(PauseCoachWidgetState.Unavailable, replay.WidgetState);
         Assert.Equal(PauseCoachWidgetState.Unavailable, spectator.WidgetState);
         Assert.Contains("disabled", replay.Diagnostics[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecentCountsUseGameplayWindowAndRemainStableWhilePaused()
+    {
+        var analyzer = new RealtimePlayAnalyzer(new PauseCoachOptions { MinimumTimingSamples = 1 });
+        analyzer.Process(Sample(0, RealtimePlayState.Playing, [0], hits: 1));
+        analyzer.Process(Sample(10, RealtimePlayState.Playing, [0, 1], hits: 2, misses: 1));
+        RealtimeAnalysisSnapshot paused = analyzer.Process(Sample(40, RealtimePlayState.Paused, [0, 1, 2], hits: 4, misses: 4));
+
+        // The recent window starts at map time 20s, so all three misses after
+        // the 10s sample are included; this is not a previous-packet delta.
+        Assert.Equal(3, paused.Performance.RecentMisses);
+
+        RealtimeAnalysisSnapshot laterPaused = analyzer.Process(
+            Sample(40, RealtimePlayState.Paused, [0, 1, 2], hits: 4, misses: 4, receivedAt: _start.AddSeconds(70)));
+        Assert.Equal(paused.Performance.RecentMisses, laterPaused.Performance.RecentMisses);
+        Assert.Equal(paused.Timing.SampleCount, laterPaused.Timing.SampleCount);
     }
 }

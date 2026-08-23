@@ -322,8 +322,10 @@
 
     text("overlay-pause-ur", timing.unstableRate == null ? "—" : fmt(timing.unstableRate, 1), "—");
 
-    const accuracyValue = recent.accuracy ?? performance.recentAccuracy ?? performance.wholeAccuracy ?? overall.accuracy ?? pc.accuracy;
-    text("overlay-pause-accuracy", accuracyValue != null ? fmt(Number(accuracyValue) * (Number(accuracyValue) <= 1 ? 100 : 1), 2) + "%" : "—", "—");
+    // Pause Coach owns canonical accuracy (0..1). The renderer deliberately
+    // does not infer whether a value is a fraction or a percentage.
+    const accuracyValue = recent.accuracy ?? performance.recentAccuracy ?? overall.accuracy ?? pc.accuracy;
+    text("overlay-pause-accuracy", accuracyValue != null ? fmt(Number(accuracyValue) * 100, 2) + "%" : "—", "—");
     text("overlay-pause-score", pc.score ?? overall.score, "—");
     text("overlay-pause-combo", pc.combo ?? overall.combo, "—");
 
@@ -344,11 +346,12 @@
 
     const primary = byId("overlay-pause-coach-primary");
     const secondary = byId("overlay-pause-coach-secondary");
+    const legacyInsightsLayout = document.documentElement.classList.contains("overlay-layout-companella-replay");
     if (primary) {
       primary.textContent = "";
       const insights = Array.isArray(pc.insights) ? pc.insights : [];
       const first = insights[0];
-      primary.hidden = !first || state === "playing" || state === "waitingforgame";
+      primary.hidden = legacyInsightsLayout || !first || state === "playing" || state === "waitingforgame";
       if (first) {
         primary.dataset.severity = String(first.severity || "info").toLowerCase();
         const title = document.createElement("strong");
@@ -364,7 +367,7 @@
     if (secondary) {
       secondary.textContent = "";
       const secondaryInsights = (Array.isArray(pc.insights) ? pc.insights : []).slice(1, 4);
-      secondary.hidden = secondaryInsights.length === 0;
+      secondary.hidden = legacyInsightsLayout || secondaryInsights.length === 0;
       secondaryInsights.forEach(function (insight) {
         const item = document.createElement("div");
         item.className = "overlay-pause-coach-item";
@@ -382,22 +385,31 @@
     if (insightsEl) {
       const insights = Array.isArray(pc.insights) ? pc.insights : [];
       insightsEl.textContent = "";
-      insightsEl.hidden = insights.length === 0;
-      insights.forEach(function (insight) {
-        const line = document.createElement("div");
-        line.className = "overlay-replay-insight";
-        line.dataset.severity = String(insight.severity || "info").toLowerCase();
-        line.textContent = insight.message || insight.description || String(insight.code || "");
-        line.title = [insight.evidence, insight.dataQuality, insight.confidenceLabel].filter(Boolean).join(" · ");
-        insightsEl.appendChild(line);
-      });
+      // Standalone presets already place insight #1 in Primary and the rest
+      // in Secondary. The generic list is intentionally retained only by the
+      // legacy Companella Replay layout.
+      const legacyList = legacyInsightsLayout;
+      insightsEl.hidden = !legacyList || insights.length === 0;
+      if (legacyList) insights.forEach(function (insight) {
+          const line = document.createElement("div");
+          line.className = "overlay-replay-insight";
+          line.dataset.severity = String(insight.severity || "info").toLowerCase();
+          line.textContent = insight.message || insight.description || String(insight.code || "");
+          line.title = [insight.evidence, insight.dataQuality, insight.confidenceLabel].filter(Boolean).join(" · ");
+          insightsEl.appendChild(line);
+        });
     }
 
     const diagnostics = byId("overlay-pause-coach-diagnostics");
     if (diagnostics) {
       diagnostics.textContent = "";
-      const items = Array.isArray(pc.diagnostics) ? pc.diagnostics.filter(Boolean).slice(0, 3) : [];
-      diagnostics.hidden = items.length === 0;
+      const technicalState = ["unavailable", "insufficientdata", "error"].includes(state);
+      const items = technicalState && Array.isArray(pc.diagnostics) ? pc.diagnostics.filter(Boolean).slice(0, 3) : [];
+      diagnostics.hidden = technicalState && items.length === 0;
+      if (!technicalState) {
+        diagnostics.dataset.kind = "provenance";
+        diagnostics.textContent = "Data quality: " + String(pc.dataQuality || recent.accuracyProvenance || "Observed");
+      }
       items.forEach(function (diagnostic) {
         const line = document.createElement("span");
         line.textContent = String(diagnostic).replace(/^pausecoach\.[^:]+:\s*/i, "");

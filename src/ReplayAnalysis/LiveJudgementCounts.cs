@@ -59,11 +59,11 @@ public sealed record LiveJudgementCounts
         get;
     }
 
-    public int Total => Count300 + Count200 + Count100 + Count50 + CountMiss;
+    public int Total => Count300 + Count200 + Count100 + Count50 + (CountGeki ?? 0) + (CountKatu ?? 0) + CountMiss;
 
-    public int HitTotal => Count300 + Count200 + Count100 + Count50;
+    public int HitTotal => Count300 + Count200 + Count100 + Count50 + (CountGeki ?? 0) + (CountKatu ?? 0);
 
-    public int NonMissTotal => Count300 + Count200 + Count100 + Count50;
+    public int NonMissTotal => Count300 + Count200 + Count100 + Count50 + (CountGeki ?? 0) + (CountKatu ?? 0);
 
     /// <summary>
     /// Computes the delta from an earlier cumulative count, treating a reset
@@ -80,6 +80,8 @@ public sealed record LiveJudgementCounts
             || Count200 < previous.Count200
             || Count100 < previous.Count100
             || Count50 < previous.Count50
+            || CountGeki.HasValue && previous.CountGeki.HasValue && CountGeki < previous.CountGeki
+            || CountKatu.HasValue && previous.CountKatu.HasValue && CountKatu < previous.CountKatu
             || CountMiss < previous.CountMiss;
 
         if (reset)

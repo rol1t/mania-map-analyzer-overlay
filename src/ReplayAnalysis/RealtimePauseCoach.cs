@@ -299,7 +299,13 @@ public sealed record RealtimeTimingStats(
     double? EarlyPercentage,
     double? LatePercentage,
     double? BaselineMeanMs,
-    AnalysisDataQuality Quality);
+    AnalysisDataQuality Quality)
+{
+    public double? BaselineUnstableRate
+    {
+        get; init;
+    }
+};
 
 public sealed record RealtimePerformanceStats(
     double? Accuracy,
@@ -308,7 +314,17 @@ public sealed record RealtimePerformanceStats(
     int? Misses,
     int? RecentHits,
     int? RecentMisses,
-    AnalysisDataQuality Quality);
+    AnalysisDataQuality Quality)
+{
+    public double? RecentAccuracy
+    {
+        get; init;
+    }
+    public double? BaselineWindowAccuracy
+    {
+        get; init;
+    }
+};
 
 public sealed record RealtimeAnalysisSnapshot(
     string SessionId,
@@ -335,7 +351,7 @@ public sealed class RealtimePlayAnalyzer
 {
     private readonly PauseCoachOptions _options;
     private readonly List<TimedOffset> _offsets = [];
-    private readonly List<AccuracyPoint> _accuracies = [];
+    private readonly List<JudgementPoint> _judgements = [];
     private RealtimePlaySession? _session;
     private RealtimeTelemetrySample? _previousSample;
     private ImmutableArray<double> _previousHitErrorArray = ImmutableArray<double>.Empty;
@@ -363,8 +379,10 @@ public sealed class RealtimePlayAnalyzer
 
         bool retry = _session is not null && IsRetry(sample);
         bool beatmapChanged = _session is not null &&
-            (!string.Equals(_session.BeatmapId, sample.BeatmapId, StringComparison.Ordinal) ||
-             !string.Equals(_session.BeatmapHash, sample.BeatmapHash, StringComparison.Ordinal));
+            (!string.IsNullOrWhiteSpace(sample.BeatmapId) && !string.IsNullOrWhiteSpace(_session.BeatmapId)
+                && !string.Equals(_session.BeatmapId, sample.BeatmapId, StringComparison.Ordinal)
+             || !string.IsNullOrWhiteSpace(sample.BeatmapHash) && !string.IsNullOrWhiteSpace(_session.BeatmapHash)
+                && !string.Equals(_session.BeatmapHash, sample.BeatmapHash, StringComparison.Ordinal));
         bool startsAfterFinishedState = sample.State == RealtimePlayState.Playing
             && _previousSample is not null
             && _previousSample.State is not RealtimePlayState.Playing and not RealtimePlayState.Paused;
@@ -395,7 +413,7 @@ public sealed class RealtimePlayAnalyzer
             EndCurrentSession(sample.ReceivedAt);
         }
 
-        RealtimeAnalysisSnapshot baseSnapshot = BuildSnapshot(sample, previous);
+        RealtimeAnalysisSnapshot baseSnapshot = BuildSnapshot(sample);
         IReadOnlyList<PauseCoachInsightSnapshot> insights = sample.State is RealtimePlayState.Paused or RealtimePlayState.Results
             ? PauseCoachInsightEngine.Generate(baseSnapshot, _options)
             : Array.Empty<PauseCoachInsightSnapshot>();
@@ -414,7 +432,7 @@ public sealed class RealtimePlayAnalyzer
         _previousSample = null;
         _lastSnapshot = null;
         _offsets.Clear();
-        _accuracies.Clear();
+        _judgements.Clear();
         _previousHitErrorArray = ImmutableArray<double>.Empty;
     }
 
@@ -425,7 +443,7 @@ public sealed class RealtimePlayAnalyzer
             $"{sample.BeatmapId}:{sample.ReceivedAt.UtcDateTime:yyyyMMddHHmmssfff}:{_sessionSequence}",
             sample);
         _offsets.Clear();
-        _accuracies.Clear();
+        _judgements.Clear();
         _previousHitErrorArray = ImmutableArray<double>.Empty;
         _previousSample = null;
         _session.Add(
@@ -506,8 +524,6 @@ public sealed class RealtimePlayAnalyzer
 
         if (sample.Accuracy.HasValue)
         {
-            _accuracies.Add(new AccuracyPoint(sample.ReceivedAt, sample.Accuracy.Value));
-            TrimAccuracy(sample.ReceivedAt);
             _session.Add(
                 new RealtimeTelemetryEvent(sample.MapTimeMs, sample.ReceivedAt, RealtimeTelemetryEventType.AccuracyChanged, sample.Accuracy, "tosu.v2", AnalysisDataQuality.Observed),
                 _options.MaxTimelineEvents);
@@ -516,6 +532,12 @@ public sealed class RealtimePlayAnalyzer
         if (!sample.HitErrorArray.IsDefaultOrEmpty)
         {
             AppendNewOffsets(sample.HitErrorArray, sample.ReceivedAt, sample.MapTimeMs);
+        }
+
+        _judgements.Add(new JudgementPoint(sample.MapTimeMs, sample.Judgements));
+        if (_judgements.Count > _options.MaxTimelineEvents)
+        {
+            _judgements.RemoveRange(0, _judgements.Count - _options.MaxTimelineEvents);
         }
 
         _previousHitErrorArray = sample.HitErrorArray;
@@ -542,24 +564,20 @@ public sealed class RealtimePlayAnalyzer
         }
     }
 
-    private void TrimAccuracy(DateTimeOffset now)
+    private RealtimeAnalysisSnapshot BuildSnapshot(RealtimeTelemetrySample sample)
     {
-        DateTimeOffset cutoff = now.AddSeconds(-Math.Max(10, _options.RecentWindowSeconds + _options.BaselineWindowSeconds));
-        _accuracies.RemoveAll(point => point.ReceivedAt < cutoff);
-    }
-
-    private RealtimeAnalysisSnapshot BuildSnapshot(RealtimeTelemetrySample sample, RealtimeTelemetrySample? previousSample)
-    {
-        DateTimeOffset recentCutoff = sample.ReceivedAt.AddSeconds(-_options.RecentWindowSeconds);
-        DateTimeOffset baselineCutoff = recentCutoff.AddSeconds(-_options.BaselineWindowSeconds);
-        double[] recentOffsets = _offsets.Where(offset => offset.ReceivedAt >= recentCutoff).Select(offset => offset.Value).ToArray();
-        double[] baselineOffsets = _offsets.Where(offset => offset.ReceivedAt < recentCutoff && offset.ReceivedAt >= baselineCutoff).Select(offset => offset.Value).ToArray();
+        int recentCutoff = sample.MapTimeMs - _options.RecentWindowSeconds * 1000;
+        int baselineCutoff = recentCutoff - _options.BaselineWindowSeconds * 1000;
+        double[] recentOffsets = _offsets.Where(offset => offset.MapTimeMs >= recentCutoff && offset.MapTimeMs <= sample.MapTimeMs).Select(offset => offset.Value).ToArray();
+        double[] baselineOffsets = _offsets.Where(offset => offset.MapTimeMs < recentCutoff && offset.MapTimeMs >= baselineCutoff).Select(offset => offset.Value).ToArray();
         RealtimeTimingStats timing = BuildTiming(recentOffsets, baselineOffsets, sample.TimingQuality);
 
-        LiveJudgementCounts previousCounts = FindPreviousCounts(previousSample, recentCutoff);
-        LiveJudgementCounts delta = sample.Judgements.DeltaFrom(previousCounts);
-        double? baselineAccuracy = _accuracies.Where(point => point.ReceivedAt < recentCutoff).Select(point => (double?)point.Value).LastOrDefault()
-            ?? previousSample?.Accuracy;
+        LiveJudgementCounts recentStart = FindPreviousCounts(recentCutoff);
+        LiveJudgementCounts baselineStart = FindPreviousCounts(baselineCutoff);
+        LiveJudgementCounts delta = sample.Judgements.DeltaFrom(recentStart);
+        LiveJudgementCounts baselineDelta = recentStart.DeltaFrom(baselineStart);
+        double? recentAccuracy = AccuracyFromCounts(delta);
+        double? baselineAccuracy = AccuracyFromCounts(baselineDelta);
         RealtimePerformanceStats performance = new(
             sample.Accuracy,
             baselineAccuracy,
@@ -567,13 +585,20 @@ public sealed class RealtimePlayAnalyzer
             sample.Judgements.CountMiss,
             delta.HitTotal,
             delta.CountMiss,
-            AnalysisDataQuality.Observed);
+            AnalysisDataQuality.Observed)
+        {
+            RecentAccuracy = recentAccuracy,
+            BaselineWindowAccuracy = baselineAccuracy
+        };
 
         var sections = sample.CurrentSection is null
             ? Array.Empty<PauseCoachSectionSnapshot>()
             : new[] { sample.CurrentSection };
         AnalysisDataQuality quality = DetermineQuality(timing.Quality, performance.Quality, sample.HasColumnTelemetry, sample.CurrentSection is not null);
-        bool enough = timing.SampleCount >= _options.MinimumTimingSamples || performance.RecentHits.HasValue && performance.RecentHits.Value > 0;
+        bool enough = timing.SampleCount >= _options.MinimumTimingSamples
+            || performance.RecentHits.HasValue
+            && performance.RecentHits.Value > 0
+            && sample.MapTimeMs >= _options.RecentWindowSeconds * 1000;
         PauseCoachWidgetState widgetState = sample.State switch
         {
             RealtimePlayState.Paused => enough ? PauseCoachWidgetState.Paused : PauseCoachWidgetState.InsufficientData,
@@ -614,12 +639,16 @@ public sealed class RealtimePlayAnalyzer
             diagnostics);
     }
 
-    private LiveJudgementCounts FindPreviousCounts(RealtimeTelemetrySample? previousSample, DateTimeOffset recentCutoff)
+    private LiveJudgementCounts FindPreviousCounts(int cutoffMapTimeMs)
     {
-        // The cumulative counter baseline is approximated by the first sample in
-        // the retained window. The adapter still marks the result Observed.
-        _ = recentCutoff;
-        return previousSample?.Judgements ?? new LiveJudgementCounts();
+        // Find the cumulative counter at the start of the gameplay-time window,
+        // not merely the previous websocket packet. This keeps Recent 20s
+        // stable across different Tosu publication rates and wall-clock pauses.
+        JudgementPoint? point = _judgements
+            .Where(candidate => candidate.MapTimeMs <= cutoffMapTimeMs)
+            .OrderBy(candidate => candidate.MapTimeMs)
+            .LastOrDefault();
+        return point?.Counts ?? (_judgements.Count > 0 ? _judgements[0].Counts : new LiveJudgementCounts());
     }
 
     private RealtimeAnalysisSnapshot PublishWaiting(RealtimeTelemetrySample sample)
@@ -670,7 +699,10 @@ public sealed class RealtimePlayAnalyzer
     {
         if (recent.Length == 0)
         {
-            return new RealtimeTimingStats(0, null, null, null, null, null, null, MeanOrNull(baseline), AnalysisDataQuality.Unavailable);
+            return new RealtimeTimingStats(0, null, null, null, null, null, null, MeanOrNull(baseline), AnalysisDataQuality.Unavailable)
+            {
+                BaselineUnstableRate = UnstableRate(baseline)
+            };
         }
 
         double mean = recent.Average();
@@ -687,7 +719,35 @@ public sealed class RealtimePlayAnalyzer
             earlyCount * 100d / recent.Length,
             lateCount * 100d / recent.Length,
             MeanOrNull(baseline),
-            quality == AnalysisDataQuality.Exact ? AnalysisDataQuality.Exact : AnalysisDataQuality.Reconstructed);
+            quality == AnalysisDataQuality.Exact ? AnalysisDataQuality.Exact : AnalysisDataQuality.Reconstructed)
+        {
+            BaselineUnstableRate = UnstableRate(baseline)
+        };
+    }
+
+    private static double? UnstableRate(double[] values)
+    {
+        if (values.Length == 0)
+        {
+            return null;
+        }
+
+        double mean = values.Average();
+        double variance = values.Select(value => Math.Pow(value - mean, 2)).Average();
+        return Math.Sqrt(variance) * 10;
+    }
+
+    private static double? AccuracyFromCounts(LiveJudgementCounts counts)
+    {
+        if (counts.Total <= 0 || !counts.CountGeki.HasValue || !counts.CountKatu.HasValue)
+        {
+            return null;
+        }
+
+        int max = counts.Count300 + counts.CountGeki.Value;
+        int twoHundred = counts.Count200 + counts.CountKatu.Value;
+        double weighted = max * 6d + twoHundred * 4d + counts.Count100 * 2d + counts.Count50;
+        return weighted / (counts.Total * 6d);
     }
 
     private static AnalysisDataQuality DetermineQuality(AnalysisDataQuality timing, AnalysisDataQuality performance, bool hasColumns, bool hasSection)
@@ -719,7 +779,7 @@ public sealed class RealtimePlayAnalyzer
 
     private readonly record struct TimedOffset(DateTimeOffset ReceivedAt, int MapTimeMs, double Value);
 
-    private readonly record struct AccuracyPoint(DateTimeOffset ReceivedAt, double Value);
+    private readonly record struct JudgementPoint(int MapTimeMs, LiveJudgementCounts Counts);
 }
 
 /// <summary>Pure, deterministic and evidence-first insight rules.</summary>
@@ -763,18 +823,20 @@ public static class PauseCoachInsightEngine
 
         if (timing.SampleCount >= options.MinimumTimingSamples && timing.UnstableRate is double ur && ur >= options.TimingInstabilityUrThreshold)
         {
-            bool worsened = timing.BaselineMeanMs is not null && ur >= options.TimingInstabilityUrThreshold * options.TimingInstabilityMultiplier;
+            bool worsened = timing.BaselineUnstableRate is double baselineUr
+                && baselineUr > 0
+                && ur >= baselineUr * options.TimingInstabilityMultiplier;
             candidates.Add(new InsightCandidate(
                 PauseCoachInsightType.TimingUnstable,
                 worsened ? PauseCoachInsightSeverity.Critical : PauseCoachInsightSeverity.Warning,
                 worsened ? "Timing stability dropped" : "Timing is unstable",
                 "Your timing spread is wide enough to explain a noticeable accuracy loss.",
-                $"Recent UR: {ur:F1}; baseline mean: {Format(timing.BaselineMeanMs)} ms; samples: {timing.SampleCount}.",
+                $"Recent UR: {ur:F1}; baseline UR: {Format(timing.BaselineUnstableRate)}; samples: {timing.SampleCount}.",
                 0.62,
                 timing.Quality));
         }
 
-        if (performance.Accuracy is double accuracy && performance.BaselineAccuracy is double baseline &&
+        if (performance.RecentAccuracy is double accuracy && performance.BaselineWindowAccuracy is double baseline &&
             baseline - accuracy >= options.AccuracyDropThreshold)
         {
             candidates.Add(new InsightCandidate(
@@ -888,7 +950,7 @@ public static class PauseCoachSnapshotMapper
             },
             Overall = new PauseCoachOverallSnapshot
             {
-                Accuracy = snapshot.Performance.Accuracy,
+                Accuracy = snapshot.Performance.RecentAccuracy,
                 Hits = snapshot.Performance.Hits,
                 Misses = snapshot.Performance.Misses,
                 DataQuality = snapshot.Performance.Quality.ToString()
@@ -908,6 +970,7 @@ public static class PauseCoachSnapshotMapper
                 WholeHits = snapshot.Performance.Hits,
                 WholeMisses = snapshot.Performance.Misses,
                 WholeAccuracy = snapshot.Performance.Accuracy,
+                RecentAccuracy = snapshot.Performance.RecentAccuracy,
                 RecentHits = snapshot.Performance.RecentHits,
                 RecentMisses = snapshot.Performance.RecentMisses
             },

@@ -43,6 +43,16 @@
     return Number.isFinite(number) ? number : null;
   }
 
+  function canonicalAccuracy(value) {
+    const number = finite(value);
+    if (number === null) return null;
+    // Tosu has emitted both percentage points (98.73) and fractions (0.9873)
+    // over time.  The runtime boundary is the only place where that ambiguity
+    // is allowed to exist.
+    const normalized = Math.abs(number) > 1.000001 ? number / 100 : number;
+    return Math.max(0, Math.min(1, normalized));
+  }
+
   function now() { return Date.now(); }
 
   function clean(value) { return String(value == null ? "" : value).trim(); }
@@ -78,6 +88,8 @@
       count200: pick(["200", "count200"]),
       count100: pick(["100", "count100"]),
       count50: pick(["50", "count50"]),
+      countGeki: pick(["geki", "MAX", "max", "countGeki"]),
+      countKatu: pick(["katu", "Katu", "countKatu"]),
       countMiss: pick(["0", "miss", "countMiss", "count0"]),
       total: 0,
       hitTotal: 0,
@@ -85,10 +97,10 @@
   }
 
   function finalizeHits(hits) {
-    const values = [hits.count300, hits.count200, hits.count100, hits.count50, hits.countMiss];
+    const values = [hits.count300, hits.count200, hits.count100, hits.count50, hits.countGeki, hits.countKatu, hits.countMiss];
     const known = values.filter(value => value !== null);
     hits.total = known.length ? known.reduce((sum, value) => sum + value, 0) : null;
-    const hitValues = values.slice(0, 4).filter(value => value !== null);
+    const hitValues = values.slice(0, 6).filter(value => value !== null);
     hits.hitTotal = hitValues.length ? hitValues.reduce((sum, value) => sum + value, 0) : null;
     return hits;
   }
@@ -96,8 +108,9 @@
   function normalizeMods(play) {
     const raw = play && play.mods;
     if (Array.isArray(raw)) return raw.map(clean).filter(Boolean).map(value => value.toUpperCase());
-    if (raw && typeof raw === "object" && Array.isArray(raw.array)) {
-      return raw.array.map(entry => entry && typeof entry === "object" ? clean(entry.acronym) : clean(entry))
+    if (raw && typeof raw === "object") {
+      const values = Array.isArray(raw.array) ? raw.array : (raw.acronym || raw.name ? [raw] : []);
+      return values.map(entry => entry && typeof entry === "object" ? clean(entry.acronym || entry.name) : clean(entry))
         .filter(Boolean).map(value => value.toUpperCase());
     }
     return clean(raw).split(/[\s,;+]+/).filter(Boolean).map(value => value.toUpperCase());
@@ -106,6 +119,56 @@
   function readOffsets(play) {
     const raw = play && Array.isArray(play.hitErrorArray) ? play.hitErrorArray : [];
     return raw.map(finite).filter(value => value !== null);
+  }
+
+  function readCombo(play) {
+    const raw = play && play.combo;
+    if (raw && typeof raw === "object") {
+      return {
+        current: finite(raw.current != null ? raw.current : raw.value),
+        max: finite(raw.max != null ? raw.max : raw.maximum),
+      };
+    }
+    return { current: finite(raw != null ? raw : play && play.currentCombo), max: finite(play && (play.maxCombo != null ? play.maxCombo : play.maximumCombo)) };
+  }
+
+  function readHealth(play) {
+    const bar = play && play.healthBar;
+    if (bar && typeof bar === "object") {
+      const value = finite(bar.normal != null ? bar.normal : bar.smooth);
+      if (value !== null) return value;
+    }
+    return finite(play && (play.health != null ? play.health : play.hp));
+  }
+
+  function accuracyFromHits(hits) {
+    if (!hits) return null;
+    const required = [hits.count300, hits.count200, hits.count100, hits.count50, hits.countGeki, hits.countKatu, hits.countMiss];
+    if (required.some(value => value === null)) return null;
+    const max = hits.count300 + hits.countGeki;
+    const weighted = max * 6 + (hits.count200 + hits.countKatu) * 4 + hits.count100 * 2 + hits.count50;
+    const total = hits.total;
+    return total > 0 ? weighted / (total * 6) : null;
+  }
+
+  // Tosu v2 -> Pause Coach contract. Everything below this function consumes
+  // this normalized shape; raw nested Tosu objects never reach the windowing
+  // or insight code.
+  function normalizeTosuPlay(play) {
+    const source = play && typeof play === "object" ? play : {};
+    const combo = readCombo(source);
+    return {
+      score: finite(source.score),
+      accuracy: canonicalAccuracy(source.accuracy),
+      combo: combo.current,
+      maxCombo: combo.max,
+      health: readHealth(source),
+      failed: source.failed === true,
+      mods: normalizeMods(source),
+      hits: finalizeHits(normalizeHits(source)),
+      offsets: readOffsets(source),
+      unstableRate: finite(source.unstableRate),
+    };
   }
 
   function same(a, b) { return Math.abs(a - b) < 0.001; }
@@ -147,13 +210,13 @@
     let sessionCounter = 0;
     let offsets = [];
     let latestOffsets = [];
-    let accuracies = [];
+    let judgementHistory = [];
     let timeline = [];
 
     function clearAttempt() {
       offsets = [];
       latestOffsets = [];
-      accuracies = [];
+      judgementHistory = [];
       timeline = [];
       appendOffsets.previous = [];
     }
@@ -221,10 +284,63 @@
 
     function appendAccuracy(sample) {
       if (sample.accuracy == null) return;
-      accuracies.push({ receivedAt: sample.receivedAt, value: sample.accuracy });
-      const cutoff = sample.receivedAt - Math.max(10000, (config.recentWindowSeconds + config.baselineWindowSeconds) * 1000);
-      accuracies = accuracies.filter(point => point.receivedAt >= cutoff);
       appendEvent(sample, "AccuracyChanged", QUALITY.OBSERVED, sample.accuracy);
+    }
+
+    function appendJudgements(sample) {
+      if (sample.hits.hitTotal == null && sample.hits.countMiss == null) return;
+      const last = judgementHistory[judgementHistory.length - 1];
+      if (last && sample.mapTimeMs < last.mapTimeMs) return;
+      if (last && sample.mapTimeMs === last.mapTimeMs) {
+        judgementHistory[judgementHistory.length - 1] = { mapTimeMs: sample.mapTimeMs, hits: sample.hits.hitTotal, misses: sample.hits.countMiss, hitData: sample.hits };
+      } else {
+        judgementHistory.push({ mapTimeMs: sample.mapTimeMs, hits: sample.hits.hitTotal, misses: sample.hits.countMiss, hitData: sample.hits });
+      }
+      const cutoff = sample.mapTimeMs - Math.max(10000, (config.recentWindowSeconds + config.baselineWindowSeconds) * 1000) - 1000;
+      judgementHistory = judgementHistory.filter(point => point.mapTimeMs >= cutoff);
+      if (judgementHistory.length > config.maxTimelineEvents) judgementHistory.splice(0, judgementHistory.length - config.maxTimelineEvents);
+    }
+
+    function counterAtOrBefore(mapTimeMs) {
+      let result = null;
+      for (const point of judgementHistory) {
+        if (point.mapTimeMs > mapTimeMs) break;
+        result = point;
+      }
+      // Before the first retained point, the attempt start is the only
+      // defensible baseline. Do not manufacture a delta from zero counters.
+      return result || (judgementHistory.length && mapTimeMs < judgementHistory[0].mapTimeMs ? judgementHistory[0] : null);
+    }
+
+    function deltaCounter(current, start) {
+      if (current == null) return null;
+      if (start == null || start > current) return current;
+      return Math.max(0, current - start);
+    }
+
+    function windowMetrics(sample) {
+      const recentStart = sample.mapTimeMs - config.recentWindowSeconds * 1000;
+      const baselineStart = recentStart - config.baselineWindowSeconds * 1000;
+      const recentPoint = counterAtOrBefore(recentStart);
+      const baselinePoint = counterAtOrBefore(baselineStart);
+      const recentHits = deltaCounter(sample.hits.hitTotal, recentPoint && recentPoint.hits);
+      const recentMisses = deltaCounter(sample.hits.countMiss, recentPoint && recentPoint.misses);
+      const baselineHits = recentPoint && baselinePoint ? deltaCounter(recentPoint.hits, baselinePoint.hits) : null;
+      const baselineMisses = recentPoint && baselinePoint ? deltaCounter(recentPoint.misses, baselinePoint.misses) : null;
+      const currentLocal = sample.hits;
+      const recentAccuracy = recentPoint && currentLocal ? accuracyFromHits(deltaHits(currentLocal, recentPoint.hitData)) : null;
+      const baselineAccuracy = recentPoint && baselinePoint ? accuracyFromHits(deltaHits(recentPoint.hitData, baselinePoint.hitData)) : null;
+      return { recentHits, recentMisses, baselineHits, baselineMisses, recentAccuracy, baselineAccuracy };
+    }
+
+    function deltaHits(current, start) {
+      if (!current || !start) return null;
+      const result = {};
+      for (const key of ["count300", "count200", "count100", "count50", "countGeki", "countKatu", "countMiss"]) {
+        if (current[key] == null || start[key] == null || current[key] < start[key]) return null;
+        result[key] = current[key] - start[key];
+      }
+      return finalizeHits(result);
     }
 
     function currentSection(sample, recent, baseline, currentMisses) {
@@ -239,7 +355,7 @@
         startTimeMs: startMs,
         endTimeMs: sample.mapTimeMs,
         patternTypes: [],
-        accuracyDelta: sample.accuracy != null && baseline.accuracy != null ? sample.accuracy - baseline.accuracy : null,
+        accuracyDelta: recent.accuracy != null && baseline.accuracy != null ? recent.accuracy - baseline.accuracy : null,
         misses: currentMisses,
         meanHitErrorMs: recent.mean,
         timingDeviationMs: recent.sd,
@@ -248,9 +364,9 @@
       };
     }
 
-    function buildInsights(sample, recent, baseline, recentStats, baselineStats, currentMisses, section, hasEnough) {
+    function buildInsights(sample, recent, baseline, recentStats, baselineStats, currentMisses, section, hasEnough, recentAccuracy) {
       const candidates = [];
-      if (!hasEnough && recent.length === 0 && currentMisses == null) {
+      if (!hasEnough && recent.length === 0 && (currentMisses == null || sample.mapTimeMs < config.recentWindowSeconds * 1000)) {
         candidates.push(candidate("InsufficientData", "Info", "Not enough telemetry yet", "Keep playing a little longer so Pause Coach can separate a trend from noise.", `Timing samples: ${recent.length}/${config.minimumTimingSamples}.`, 0.9, QUALITY.UNAVAILABLE));
       }
       if (recent.length >= config.minimumTimingSamples && recentStats.mean != null && Math.abs(recentStats.mean) >= config.timingBiasThresholdMs) {
@@ -261,11 +377,11 @@
         const worsened = baselineStats.ur != null && recentStats.ur >= baselineStats.ur * config.timingInstabilityMultiplier;
         candidates.push(candidate("TimingUnstable", worsened ? "Critical" : "Warning", worsened ? "Timing stability dropped" : "Timing is unstable", "Your timing spread is wide enough to explain a noticeable accuracy loss.", `Recent UR: ${recentStats.ur.toFixed(1)}; baseline UR: ${baselineStats.ur == null ? "—" : baselineStats.ur.toFixed(1)}; samples: ${recent.length}.`, 0.62, QUALITY.RECONSTRUCTED));
       }
-      if (sample.accuracy != null && baseline.accuracy != null && baseline.accuracy - sample.accuracy >= config.accuracyDropThreshold) {
-        candidates.push(candidate("AccuracyDrop", "Critical", "Accuracy dropped recently", "The latest section is performing below your earlier baseline.", `Current: ${(sample.accuracy * 100).toFixed(2)}%; baseline: ${(baseline.accuracy * 100).toFixed(2)}%.`, 0.72, QUALITY.OBSERVED));
+      if (recent.accuracy != null && baseline.accuracy != null && baseline.accuracy - recent.accuracy >= config.accuracyDropThreshold) {
+        candidates.push(candidate("AccuracyDrop", "Critical", "Accuracy dropped recently", "The latest section is performing below your earlier baseline.", `Recent: ${(recentAccuracy * 100).toFixed(2)}%; baseline: ${(baseline.accuracy * 100).toFixed(2)}%.`, 0.72, QUALITY.RECONSTRUCTED));
       }
       if (currentMisses != null && currentMisses >= config.minimumMissesForSpike) {
-        candidates.push(candidate("MissSpike", currentMisses >= config.minimumMissesForSpike * 2 ? "Critical" : "Warning", "Misses spiked in the recent window", "Most of the current damage happened recently, not evenly across the attempt.", `Recent misses: ${currentMisses}; recent hits: ${sample.recentHits == null ? "—" : sample.recentHits}.`, 0.6, QUALITY.OBSERVED));
+        candidates.push(candidate("MissSpike", currentMisses >= config.minimumMissesForSpike * 2 ? "Critical" : "Warning", "Misses spiked in the recent window", "Most of the current damage happened recently, not evenly across the attempt.", `Recent misses: ${currentMisses}; recent hits: ${sample.recentHits == null ? "—" : sample.recentHits}.`, 0.6, QUALITY.RECONSTRUCTED));
       }
       if (section && section.accuracyDelta != null && section.accuracyDelta <= -config.sectionAccuracyDropThreshold) {
         candidates.push(candidate("SectionCollapse", "Warning", "The recent section is the weak point", `Performance fell in ${section.label || "the current section"}.`, `Section accuracy delta: ${(section.accuracyDelta * 100).toFixed(1)}%; data: ${section.dataQuality || QUALITY.RECONSTRUCTED}.`, 0.55, section.dataQuality || QUALITY.RECONSTRUCTED));
@@ -285,24 +401,29 @@
       const payload = input && typeof input === "object" ? input : {};
       const sourceState = payload.gameplay || payload.state || {};
       const state = normalizeState(sourceState);
-      const play = payload.play && typeof payload.play === "object" ? payload.play : {};
-      const hits = finalizeHits(normalizeHits(play));
+      const play = normalizeTosuPlay(payload.play);
+      const hits = play.hits;
+      const mapTimeValue = finite(payload.mapTimeMs != null ? payload.mapTimeMs : payload.beatmapTimeMs);
+      const receivedValue = finite(payload.receivedAt);
+      const currentBeatmapId = clean(payload.beatmap && (payload.beatmap.id || payload.beatmap.beatmapId)) || clean(payload.beatmapId);
+      const currentBeatmapHash = clean(payload.beatmap && payload.beatmap.hash) || clean(payload.beatmapHash);
       const sample = {
-        beatmapId: clean(payload.beatmap && (payload.beatmap.id || payload.beatmap.beatmapId)) || clean(payload.beatmapId),
-        beatmapHash: clean(payload.beatmap && payload.beatmap.hash),
+        beatmapId: currentBeatmapId,
+        beatmapHash: currentBeatmapHash,
         state,
-        mapTimeMs: finite(payload.mapTimeMs != null ? payload.mapTimeMs : payload.beatmapTimeMs) || 0,
-        score: finite(play.score),
-        accuracy: finite(play.accuracy),
-        combo: finite(play.combo != null ? play.combo : play.currentCombo),
-        maxCombo: finite(play.maxCombo != null ? play.maxCombo : play.maximumCombo),
-        health: finite(play.health != null ? play.health : play.hp),
-        failed: play.failed === true,
-        mods: normalizeMods(play),
+        mapTimeMs: mapTimeValue != null ? mapTimeValue : (previous ? previous.mapTimeMs : 0),
+        score: play.score,
+        accuracy: play.accuracy,
+        unstableRate: play.unstableRate,
+        combo: play.combo,
+        maxCombo: play.maxCombo,
+        health: play.health,
+        failed: play.failed,
+        mods: play.mods,
         hits,
-        offsets: readOffsets(play),
+        offsets: play.offsets,
         focused: sourceState.isFocused,
-        receivedAt: now(),
+        receivedAt: receivedValue != null ? receivedValue : now(),
         currentSection: payload.currentSection || null,
       };
       sample.replay = state === "replay";
@@ -314,7 +435,8 @@
         return unavailable(sample, "Pause Coach is disabled for replay playback or spectating.");
       }
 
-      const changedBeatmap = session && (session.beatmapId !== sample.beatmapId || session.beatmapHash !== sample.beatmapHash);
+      const changedBeatmap = session && ((sample.beatmapId && session.beatmapId && session.beatmapId !== sample.beatmapId)
+        || (sample.beatmapHash && session.beatmapHash && session.beatmapHash !== sample.beatmapHash));
       const afterFinished = sample.state === "playing" && previous && !["playing", "paused"].includes(previous.state);
       const retry = isRetry(sample);
       if (sample.state === "playing" && (!session || changedBeatmap || retry || afterFinished)) start(sample);
@@ -323,6 +445,12 @@
         previous = sample;
         return waiting(sample);
       }
+
+      // A state-only Tosu packet may omit beatmap identity. It is not evidence
+      // of a new attempt; fill missing identity only when a later packet gives
+      // us positive information.
+      if (sample.beatmapId && !session.beatmapId) session.beatmapId = sample.beatmapId;
+      if (sample.beatmapHash && !session.beatmapHash) session.beatmapHash = sample.beatmapHash;
 
       if (previous && previous.state !== sample.state) {
         appendEvent(sample, "StateChanged", QUALITY.OBSERVED);
@@ -333,28 +461,30 @@
       appendAccuracy(sample);
       appendOffsets.previous = appendOffsets.previous || [];
       appendOffsets(sample);
+      appendJudgements(sample);
 
-      const recentCutoff = sample.receivedAt - config.recentWindowSeconds * 1000;
+      const recentCutoff = sample.mapTimeMs - config.recentWindowSeconds * 1000;
       const baselineCutoff = recentCutoff - config.baselineWindowSeconds * 1000;
-      const recent = offsets.filter(item => item.receivedAt >= recentCutoff).map(item => item.value);
-      const baseline = offsets.filter(item => item.receivedAt < recentCutoff && item.receivedAt >= baselineCutoff).map(item => item.value);
+      const recent = offsets.filter(item => item.mapTimeMs >= recentCutoff && item.mapTimeMs <= sample.mapTimeMs).map(item => item.value);
+      const baseline = offsets.filter(item => item.mapTimeMs < recentCutoff && item.mapTimeMs >= baselineCutoff).map(item => item.value);
       const recentStats = stats(recent);
       const baselineStats = stats(baseline);
-      const baselineAccuracy = accuracies.filter(point => point.receivedAt < recentCutoff).map(point => point.value).slice(-1)[0] ?? null;
-      const priorHits = previous ? previous.hits.hitTotal : null;
-      const priorMisses = previous ? previous.hits.countMiss : null;
-      const recentHits = priorHits != null && hits.hitTotal != null && hits.hitTotal >= priorHits ? hits.hitTotal - priorHits : (hits.hitTotal != null ? hits.hitTotal : null);
-      const recentMisses = priorMisses != null && hits.countMiss != null && hits.countMiss >= priorMisses ? hits.countMiss - priorMisses : (hits.countMiss != null ? hits.countMiss : null);
+      const counters = windowMetrics(sample);
+      const recentHits = counters.recentHits;
+      const recentMisses = counters.recentMisses;
+      const recentAccuracy = counters.recentAccuracy;
+      const baselineAccuracy = counters.baselineAccuracy;
       sample.recentHits = recentHits;
-      const section = currentSection(sample, recentStats, { accuracy: baselineAccuracy }, recentMisses);
-      const hasEnough = recent.length >= config.minimumTimingSamples || recentHits != null && recentHits > 0;
+      const section = currentSection(sample, { mean: recentStats.mean, sd: recentStats.sd, accuracy: recentAccuracy }, { accuracy: baselineAccuracy }, recentMisses);
+      const hasEnough = recent.length >= config.minimumTimingSamples
+        || recentHits != null && recentHits > 0 && sample.mapTimeMs >= config.recentWindowSeconds * 1000;
       const timingQuality = recent.length ? QUALITY.RECONSTRUCTED : QUALITY.UNAVAILABLE;
       const dataQuality = qualityFor(timingQuality, hits.total != null || sample.accuracy != null);
       const widgetState = sample.state === "paused" ? (hasEnough ? STATES.PAUSED : STATES.INSUFFICIENT)
         : sample.state === "results" ? (hasEnough ? STATES.READY : STATES.INSUFFICIENT)
           : sample.state === "playing" ? STATES.PLAYING : STATES.WAITING;
       const insights = sample.state === "paused" || sample.state === "results"
-        ? buildInsights(sample, recent, baseline, recentStats, baselineStats, recentMisses, section, hasEnough)
+        ? buildInsights(sample, recent, baseline, recentStats, baselineStats, recentMisses, section, hasEnough, recentAccuracy)
         : [];
       const diagnostics = [];
       if (recent.length < config.minimumTimingSamples) diagnostics.push(`pausecoach.insufficient_timing: need ${config.minimumTimingSamples} timing samples, have ${recent.length}.`);
@@ -396,13 +526,24 @@
           combo: sample.combo,
           maxCombo: sample.maxCombo,
           score: sample.score,
+          unstableRate: sample.unstableRate,
           hits: hits.hitTotal,
           misses: hits.countMiss,
+          judgements: {
+            count300: hits.count300,
+            count200: hits.count200,
+            count100: hits.count100,
+            count50: hits.count50,
+            countGeki: hits.countGeki,
+            countKatu: hits.countKatu,
+            countMiss: hits.countMiss,
+          },
           dataQuality: hits.total != null || sample.accuracy != null ? QUALITY.OBSERVED : QUALITY.UNAVAILABLE,
         },
         recent: {
           windowSeconds: config.recentWindowSeconds,
-          accuracy: sample.accuracy,
+          accuracy: recentAccuracy,
+          accuracyProvenance: recentAccuracy == null ? QUALITY.UNAVAILABLE : QUALITY.RECONSTRUCTED,
           meanTimingMs: recentStats.mean,
           timingDeviationMs: recentStats.sd,
           hits: recentHits,
@@ -413,7 +554,9 @@
           wholeHits: hits.hitTotal,
           wholeMisses: hits.countMiss,
           wholeAccuracy: sample.accuracy,
-          recentAccuracy: sample.accuracy != null && baselineAccuracy != null ? sample.accuracy : null,
+          recentAccuracy,
+          recentAccuracyProvenance: recentAccuracy == null ? QUALITY.UNAVAILABLE : QUALITY.RECONSTRUCTED,
+          baselineAccuracy,
           recentHits,
           recentMisses,
         },
