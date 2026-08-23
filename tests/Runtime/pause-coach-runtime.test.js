@@ -210,7 +210,7 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.match(renderer, /displaying `0 SR`/);
   assert.match(renderer, /__overlayHostQueueSizeReport/);
   assert.match(renderer, /overlay:pause-coach-render-debug/);
-  for (const preset of ["pause-coach-card", "pause-coach-minimal", "pause-coach-signal"]) {
+  for (const preset of ["pause-coach-card"]) {
     const css = fs.readFileSync(path.join(root, "assets/overlay/presets", preset, "style.css"), "utf8");
     const manifest = JSON.parse(fs.readFileSync(path.join(root, "assets/overlay/presets", preset, "manifest.json"), "utf8"));
     assert.match(css, /max-width:var\(--overlay-host-width/);

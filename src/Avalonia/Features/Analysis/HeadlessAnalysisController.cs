@@ -253,9 +253,109 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             snapshot = _lastSnapshot;
         }
 
-        if (snapshot is not null)
+        if (snapshot is null)
         {
-            await _presenter.PresentAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Navigation can happen immediately after the player selects another
+        // map. The cached analysis belongs to the previous map and must not be
+        // replayed into the new widget document while the new headless run is
+        // still being prepared. Verify the current Tosu identity before
+        // replaying the cache; realtime adapter frames remain responsible for
+        // the live transition.
+        try
+        {
+            var currentBeatmap = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsSameBeatmap(snapshot, currentBeatmap))
+            {
+                AppLogger.Info(
+                    "Headless snapshot replay",
+                    $"Skipped cached snapshot for map {snapshot.Beatmap.Id} because Tosu now reports {currentBeatmap.Identity.Id}.");
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TosuBeatmapSourceException exception)
+        {
+            // Keep the previous behaviour when Tosu is temporarily
+            // unavailable (for example while leaving osu!): a cached layout
+            // is still useful in the launcher, and the next live frame will
+            // reconcile it once the source is available again.
+            AppLogger.Debug("Headless snapshot replay", $"Could not verify the cached map before replay: {exception.Message}");
+        }
+
+        var replayExtensions = new Dictionary<string, object?>(snapshot.Extensions, StringComparer.OrdinalIgnoreCase)
+        {
+            ["headlessReplay"] = true
+        };
+        await _presenter.PresentAsync(
+            snapshot with { Extensions = replayExtensions },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsSameBeatmap(AnalysisSnapshot snapshot, TosuBeatmapSnapshot current)
+    {
+        var cachedId = snapshot.Beatmap.Id?.Trim() ?? string.Empty;
+        var currentId = current.Identity.Id?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(cachedId) && !string.IsNullOrWhiteSpace(currentId))
+        {
+            return string.Equals(cachedId, currentId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var cachedSet = snapshot.Beatmap.SetId?.Trim() ?? string.Empty;
+        var currentSet = current.Identity.SetId?.Trim() ?? string.Empty;
+        var cachedVersion = snapshot.Beatmap.Version?.Trim() ?? string.Empty;
+        var currentVersion = current.Metadata.Version?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(cachedSet) && !string.IsNullOrWhiteSpace(currentSet))
+        {
+            return string.Equals(cachedSet, currentSet, StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrWhiteSpace(cachedVersion)
+                    || string.IsNullOrWhiteSpace(currentVersion)
+                    || string.Equals(cachedVersion, currentVersion, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return string.Equals(snapshot.Beatmap.Artist?.Trim(), current.Metadata.Artist?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(snapshot.Beatmap.Title?.Trim(), current.Metadata.Title?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(cachedVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> IsCurrentBeatmapAsync(
+        TosuBeatmapSnapshot expected,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var current = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
+            var expectedId = expected.Identity.Id?.Trim() ?? string.Empty;
+            var currentId = current.Identity.Id?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(expectedId) && !string.IsNullOrWhiteSpace(currentId))
+            {
+                return string.Equals(expectedId, currentId, StringComparison.OrdinalIgnoreCase);
+            }
+
+            var expectedHash = expected.Identity.Hash?.Trim() ?? string.Empty;
+            var currentHash = current.Identity.Hash?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(expectedHash) && !string.IsNullOrWhiteSpace(currentHash))
+            {
+                return string.Equals(expectedHash, currentHash, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(expected.Identity.SetId?.Trim(), current.Identity.SetId?.Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(expected.Metadata.Version?.Trim(), current.Metadata.Version?.Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(expected.Metadata.Title?.Trim(), current.Metadata.Title?.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TosuBeatmapSourceException exception)
+        {
+            AppLogger.Debug("Headless snapshot freshness", $"Could not verify analysis map before publishing: {exception.Message}");
+            return true;
         }
     }
 
@@ -742,6 +842,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         WidgetAnalysisSceneSnapshot sceneSnapshot,
         CancellationToken cancellationToken)
     {
+        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        {
+            AppLogger.Info("Headless snapshot push", $"Skipped stale scene result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
+            return;
+        }
+
         LogSceneResult(sceneSnapshot);
 
         var firstWidget = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
@@ -768,6 +874,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         AnalysisResult result,
         CancellationToken cancellationToken)
     {
+        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        {
+            AppLogger.Info("Headless snapshot push", $"Skipped stale analysis result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
+            return;
+        }
+
         var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
         await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
 

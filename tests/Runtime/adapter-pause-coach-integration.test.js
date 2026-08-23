@@ -179,6 +179,15 @@ async function run(source) {
   assert.equal(paused.pauseCoach.sessionId, playing.pauseCoach.sessionId, `${source}: pause must retain session`);
   assert.ok((paused.pauseCoach.timing.sampleCount || 0) > 0, `${source}: recent timing window must retain data`);
   assert.ok(scenario.hostMessages.some(message => message.startsWith("overlay:pause-coach-debug:")));
+
+  // A stale game.paused=true flag can accompany the next song-select/menu
+  // state. The named state must clear the paused lifecycle for the overlay.
+  const menu = payload("SelectPlay", true, 25_000, 25000, 97.5, 34, [0, 1, -1]);
+  if (source === "browser-http") await scenario.poll(menu);
+  else scenario.apply(menu);
+  const menuSnapshot = scenario.snapshots.at(-1);
+  assert.equal(menuSnapshot.gameplay.isPlaying, false, `${source}: menu must not be playing`);
+  assert.equal(menuSnapshot.gameplay.isPaused, false, `${source}: menu must clear stale paused state`);
   scenario.dispose();
 }
 

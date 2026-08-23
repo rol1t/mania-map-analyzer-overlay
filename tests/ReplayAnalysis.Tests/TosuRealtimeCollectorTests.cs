@@ -108,6 +108,23 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
+    public void NamedMenuStateWinsOverStalePausedFlag()
+    {
+        var collector = NewCollector();
+        collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]), "native-http", _start);
+
+        // During a lazer transition Tosu can report the menu while the game
+        // object still carries paused=true from the previous play frame.
+        TosuRealtimeTelemetry menu = collector.Process(
+            Payload("SelectPlay", 5, true, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
+            "native-http",
+            _start.AddSeconds(26))!;
+
+        Assert.Equal(RealtimePlayState.Menu, menu.Snapshot.State);
+        Assert.NotEqual(PauseCoachWidgetState.Paused, menu.Snapshot.WidgetState);
+    }
+
+    [Fact]
     public void ResultsRetainFinalDiagnosisAndCollectorIsVisibilityIndependent()
     {
         // No presentation/WebView object is involved in this path. The same
@@ -115,7 +132,7 @@ public sealed class TosuRealtimeCollectorTests
         var collector = NewCollector();
         collector.Process(Payload("Play", 2, false, 0, 1000, 99, 1, 0, [1]), "native-http", _start);
         collector.Process(Payload("Play", 2, false, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(25));
-        TosuRealtimeTelemetry results = collector.Process(Payload("Results", 7, false, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
+        TosuRealtimeTelemetry results = collector.Process(Payload("Results", 7, true, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
 
         Assert.Equal(RealtimePlayState.Results, results.Snapshot.State);
         Assert.Equal(PauseCoachWidgetState.Ready, results.Snapshot.WidgetState);

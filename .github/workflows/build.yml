@@ -33,6 +33,10 @@ jobs:
         run: dotnet test ManiaMapAnalyzerOverlay.sln --configuration Release --no-build --nologo
       - name: Run production Pause Coach runtime tests
         run: node tests/Runtime/pause-coach-runtime.test.js
+      - name: Run adapter Pause Coach integration tests
+        run: node tests/Runtime/adapter-pause-coach-integration.test.js
+      - name: Run native renderer precedence tests
+        run: node tests/Runtime/renderer-native-precedence.test.js
       - name: Build application payload (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

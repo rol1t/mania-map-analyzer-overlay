@@ -96,30 +96,95 @@
     return merged;
   }
 
+  function isNativePauseCoachSnapshot(snapshot) {
+    return !!(snapshot && (snapshot.nativePauseCoach === true
+      || snapshot.extensions && snapshot.extensions.nativePauseCoach === true));
+  }
+
+  function isRealtimeSnapshot(snapshot) {
+    if (!snapshot) return false;
+    if (isNativePauseCoachSnapshot(snapshot)) return true;
+    if (snapshot.pauseCoach && snapshot.pauseCoach.hasData === true) return true;
+    // The browser adapter marks all Tosu live replay containers as
+    // provisional, including the first id-only frame after navigation.
+    // Headless analysis snapshots intentionally do not set this flag.
+    return !!(snapshot.replay && snapshot.replay.isProvisional === true);
+  }
+
+  function isReplayedHeadlessSnapshot(snapshot) {
+    return !!(snapshot && snapshot.extensions && snapshot.extensions.headlessReplay === true);
+  }
+
   function mergeSnapshot(snapshot) {
-    var nativeMarker = snapshot && (snapshot.nativePauseCoach === true
-      || snapshot.extensions && snapshot.extensions.nativePauseCoach === true);
+    var nativeMarker = isNativePauseCoachSnapshot(snapshot);
     if (nativeMarker) {
       window.__overlayNativePauseCoachSnapshot = snapshot;
     }
     const nativeSnapshot = window.__overlayNativePauseCoachSnapshot;
     if (nativeSnapshot && nativeSnapshot.pauseCoach && snapshot && snapshot !== nativeSnapshot) {
       const nativeKey = beatmapKey(nativeSnapshot);
-      const currentKey = beatmapKey(snapshot);
-      // The native collector is authoritative for realtime coaching. Keep its
-      // session/rolling-window state when the presentation WebView publishes
-      // its own adapter snapshot, but never cross-contaminate another map.
-      if (nativeKey && currentKey && nativeKey === currentKey) {
+      let currentKey = beatmapKey(snapshot);
+      const nativeId = String(nativeSnapshot.beatmap && nativeSnapshot.beatmap.id || "").trim().toLowerCase();
+      const currentId = String(snapshot.beatmap && snapshot.beatmap.id || "").trim().toLowerCase();
+      const nativeSession = String(nativeSnapshot.pauseCoach.sessionId || "").trim();
+      const currentSession = String(snapshot.pauseCoach && snapshot.pauseCoach.sessionId || "").trim();
+      const nativeSource = String(nativeSnapshot.sourceId || "").trim().toLowerCase();
+      const currentSource = String(snapshot.sourceId || "").trim().toLowerCase();
+      const sessionsAreComparable = nativeSource && currentSource && nativeSource === currentSource;
+      const positiveDifferentBeatmap = (nativeId && currentId && nativeId !== currentId)
+        || (!nativeId && !currentId && nativeKey && currentKey && nativeKey !== currentKey);
+      const positiveDifferentAttempt = positiveDifferentBeatmap
+        || (sessionsAreComparable && nativeSession && currentSession && nativeSession !== currentSession)
+        || (!nativeId && !currentId && nativeSession && currentSession && nativeSession !== currentSession);
+      // The native collector is authoritative for realtime coaching for the
+      // current attempt. Browser frames are still useful for map metadata,
+      // but must not replace native pause/gameplay/replay values for the same
+      // map: the two sources use different rolling windows and alternating
+      // them makes the visible card jump backwards and forwards. A positive
+      // map transition releases native authority; the next native frame then
+      // establishes the new attempt again.
+      const currentMissingBeatmapIdentity = !currentKey;
+      if (positiveDifferentAttempt) {
+        // A positive map/session transition releases the previous native
+        // authority. The next native marker (if any) will establish it again.
+        window.__overlayNativePauseCoachSnapshot = null;
+      } else if (currentMissingBeatmapIdentity) {
         snapshot = Object.assign({}, snapshot, {
+          beatmap: mergeBeatmap(snapshot.beatmap, nativeSnapshot.beatmap),
           pauseCoach: nativeSnapshot.pauseCoach,
           replay: nativeSnapshot.replay || snapshot.replay,
           gameplay: nativeSnapshot.gameplay || snapshot.gameplay,
         });
+        currentKey = beatmapKey(snapshot);
+      } else if ((nativeKey && currentKey && nativeKey === currentKey) ||
+                 (nativeId && currentId && nativeId === currentId)) {
+        // Keep browser metadata, but retain the native rolling-window values
+        // until the collector confirms a new map/attempt. This makes preview
+        // and overlay presentation deterministic even though both producers
+        // continue to run concurrently.
+        snapshot = Object.assign({}, snapshot, {
+          beatmap: mergeBeatmap(nativeSnapshot.beatmap, snapshot.beatmap),
+          pauseCoach: nativeSnapshot.pauseCoach || snapshot.pauseCoach,
+          replay: nativeSnapshot.replay || snapshot.replay,
+          gameplay: nativeSnapshot.gameplay || snapshot.gameplay,
+        });
+        currentKey = beatmapKey(snapshot);
       }
     }
     const previous = window.__overlayLatestAnalysisSnapshot;
     const previousKey = beatmapKey(previous);
     const currentKey = beatmapKey(snapshot);
+    const currentMissingBeatmapIdentity = !currentKey;
+    // A completed headless analysis can finish after a map switch and after
+    // the adapter has already published the new live map. The old result is
+    // still a valid snapshot, but it is no longer the current presentation.
+    // Do not let that late, non-realtime frame roll the widget back to the
+    // previous map. A new live/native frame remains allowed to establish the
+    // next map because it carries positive realtime evidence.
+    if (previousKey && currentKey && previousKey !== currentKey
+        && isRealtimeSnapshot(previous) && isReplayedHeadlessSnapshot(snapshot)) {
+      return previous;
+    }
     // Headless snapshots can arrive without beatmap metadata while the Tosu
     // adapter still owns the live identity. Preserve live blocks during that
     // short gap; only discard them when both snapshots identify different
@@ -178,6 +243,15 @@
     // the latest attempt diagnosis while those snapshots continue to arrive.
     if (!snapshot.pauseCoach && previous.pauseCoach) {
       merged.pauseCoach = previous.pauseCoach;
+    }
+    if (currentMissingBeatmapIdentity && previousKey && previousKey !== currentKey) {
+      // A navigation/headless frame can briefly omit beatmap metadata while
+      // the live adapter is still publishing the current attempt. Do not let
+      // that partial frame reset a visible coach card to WaitingForGame or
+      // erase the latest gameplay/replay values.
+      if (previous.pauseCoach) merged.pauseCoach = previous.pauseCoach;
+      if (previous.gameplay) merged.gameplay = previous.gameplay;
+      if (previous.replay) merged.replay = previous.replay;
     }
     return merged;
   }
@@ -588,9 +662,11 @@
     const replayInsights = (Array.isArray(replay.insights) ? replay.insights : []).map(function (insight) {
       return [insight.code, insight.message];
     });
+    const gameplay = snapshot.gameplay || {};
     return JSON.stringify({
       beatmap: [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version,
         beatmap.mapper, beatmap.bpmLabel, beatmap.backgroundUrl],
+      gameplay: [gameplay.state, gameplay.isPlaying, gameplay.isPaused, gameplay.isFocused],
       difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys],
       ranks,
       skills,
@@ -606,14 +682,28 @@
     });
   }
 
+  // Keep the card stable without making realtime state feel frozen. The
+  // adapter/native collector continue to process every frame; only DOM
+  // presentation is coalesced to the newest value every 300 ms.
+  const PRESENTATION_UPDATE_INTERVAL_MS = 300;
+  // A fresh WebView receives cached headless analysis, browser telemetry and
+  // the replayable native snapshot in quick succession. Hold only the first
+  // DOM frame for the same short interval so those sources settle into one
+  // merged snapshot before the widget becomes visible; subsequent updates
+  // use the normal latest-wins throttle above.
+  const INITIAL_RENDER_SETTLE_MS = 300;
+  const rendererStartedAt = Date.now();
   var lastRenderSignature = "";
+  var lastRenderAt = 0;
+  var pendingRenderSnapshot = null;
+  var pendingRenderTimer = 0;
 
-  function render(snapshot, force) {
-    const effectiveSnapshot = mergeSnapshot(snapshot);
-    window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
+  function renderNow(snapshot, force) {
+    const effectiveSnapshot = snapshot;
     const signature = renderSignature(effectiveSnapshot);
     if (!force && signature === lastRenderSignature) return;
     lastRenderSignature = signature;
+    lastRenderAt = Date.now();
     tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
@@ -622,6 +712,58 @@
     renderMainCard(effectiveSnapshot);
     if (typeof window.__overlayHostQueueSizeReport === "function") {
       window.__overlayHostQueueSizeReport();
+    }
+  }
+
+  function flushPendingRender() {
+    pendingRenderTimer = 0;
+    const snapshot = pendingRenderSnapshot;
+    pendingRenderSnapshot = null;
+    if (snapshot) renderNow(snapshot, false);
+  }
+
+  function render(snapshot, force) {
+    const effectiveSnapshot = mergeSnapshot(snapshot);
+    window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
+    if (force) {
+      pendingRenderSnapshot = null;
+      if (pendingRenderTimer) {
+        window.clearTimeout(pendingRenderTimer);
+        pendingRenderTimer = 0;
+      }
+      renderNow(effectiveSnapshot, true);
+      return;
+    }
+
+    const elapsed = Date.now() - lastRenderAt;
+    const startupElapsed = Date.now() - rendererStartedAt;
+    if (lastRenderAt === 0 && startupElapsed < INITIAL_RENDER_SETTLE_MS) {
+      pendingRenderSnapshot = effectiveSnapshot;
+      if (!pendingRenderTimer) {
+        pendingRenderTimer = window.setTimeout(
+          flushPendingRender,
+          Math.max(0, INITIAL_RENDER_SETTLE_MS - startupElapsed));
+      }
+      return;
+    }
+    if (lastRenderAt === 0 || elapsed >= PRESENTATION_UPDATE_INTERVAL_MS) {
+      pendingRenderSnapshot = null;
+      if (pendingRenderTimer) {
+        window.clearTimeout(pendingRenderTimer);
+        pendingRenderTimer = 0;
+      }
+      renderNow(effectiveSnapshot, false);
+      return;
+    }
+
+    // Keep collecting/merging every frame, but delay the visible DOM update
+    // until the 300 ms presentation gap expires. This is latest-wins, so
+    // intermediate score/UR/accuracy values cannot make the card flicker.
+    pendingRenderSnapshot = effectiveSnapshot;
+    if (!pendingRenderTimer) {
+      pendingRenderTimer = window.setTimeout(
+        flushPendingRender,
+        Math.max(0, PRESENTATION_UPDATE_INTERVAL_MS - elapsed));
     }
   }
 

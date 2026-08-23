@@ -48,7 +48,7 @@ Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extr
 - [x] Add centralized thresholds, deterministic insight ranking, confidence and data-provenance labels.
 - [x] Integrate the adapter with Tosu v2/WebSocket telemetry and throttle active-play UI publication while keeping pause/results snapshots immediate.
 - [x] Add explicit unavailable diagnostics instead of fabricating per-column or canonical live pattern claims.
-- [x] Add standalone `Pause Coach Card`, `Pause Coach Minimal`, and `Pause Coach Signal` presets; extend `Companella Replay` with the same diagnosis block.
+- [x] Add the standalone `Pause Coach Card` preset; extend `Companella Replay` with the same diagnosis block.
 - [x] Document actual Tosu fields, quality categories, lifecycle, insight rules and limitations in [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md).
 - [x] Add synthetic lifecycle, retry, timing, accuracy, miss-spike, insufficient-data, provenance and bounded-buffer tests.
 - [ ] Manual Windows/WebView acceptance with a live Tosu session: verify pause/resume visibility, retry reset, result-screen snapshot and each visual preset.
@@ -136,6 +136,7 @@ Replay analysis is now feature-complete per `docs/replay-analysis-todo.md`; extr
 
 ## Manual acceptance and release
 
+- [ ] Known issue: immediately after opening or reloading the widget, telemetry values may briefly jump (typically for up to ~300 ms) while the native, browser, and cached headless snapshots converge. This is cosmetic and does not affect the ongoing session once the initial render settles.
 - [ ] Manually test osu! stable and lazer in windowed, borderless, and fullscreen modes.
 - [ ] Verify map-start/menu/pause visibility, osu! focus/input blocking, dragging, resizing, and DPI scaling.
 - [ ] Verify clean shutdown of Tosu and the overlay when the application exits.

@@ -182,6 +182,21 @@ public static class TosuRealtimePayloadNormalizer
             return RealtimePlayState.Spectating;
         }
 
+        // Tosu can leave game.paused=true for a short time while transitioning
+        // through song select/menu. A named non-gameplay state is stronger
+        // evidence than that stale flag; otherwise a menu packet is
+        // misclassified as Paused and the overlay never receives the state
+        // change needed to reconcile its visibility.
+        if (token is "result" or "results" or "resultscreen")
+        {
+            return RealtimePlayState.Results;
+        }
+
+        if (token is "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options" or "exit")
+        {
+            return RealtimePlayState.Menu;
+        }
+
         if (paused == true || token is "pause" or "paused" or "break")
         {
             return RealtimePlayState.Paused;
@@ -190,16 +205,6 @@ public static class TosuRealtimePayloadNormalizer
         if (token is "play" or "gameplay" or "playing")
         {
             return RealtimePlayState.Playing;
-        }
-
-        if (token is "result" or "results" or "resultscreen")
-        {
-            return RealtimePlayState.Results;
-        }
-
-        if (token is "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options")
-        {
-            return RealtimePlayState.Menu;
         }
 
         if (number == 2)

@@ -103,13 +103,18 @@ public sealed class TosuService : IDisposable
             bool? isPlaying = stateName switch
             {
                 "play" or "gameplay" or "playing" or "spectating" or "watchingreplay" or "replay" => true,
-                "menu" or "edit" or "selectplay" or "selectedit" or "selectdrawings" or "resultscreen" or "result" or "options" or "songselect" => false,
+                "menu" or "edit" or "selectplay" or "selectedit" or "selectdrawings" or "resultscreen" or "result" or "results" or "options" or "songselect" or "exit" => false,
                 _ when stateNumber is int numberValue => numberValue == 2,
                 _ => null
             };
 
-            bool? isPaused = null;
-            if (document.RootElement.TryGetProperty("game", out var game) &&
+            bool? isPaused = stateName switch
+            {
+                "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options" or "result" or "results" or "resultscreen" or "exit" => false,
+                "pause" or "paused" or "break" => true,
+                _ => null
+            };
+            if (isPaused is null && document.RootElement.TryGetProperty("game", out var game) &&
                 game.ValueKind == JsonValueKind.Object &&
                 game.TryGetProperty("paused", out var paused) &&
                 paused.ValueKind is JsonValueKind.True or JsonValueKind.False)

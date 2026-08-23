@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     private readonly ReplayAnalysisSession _replayAnalysisSession = new();
     private readonly OverlayDragSession _overlayDragSession = new();
     private readonly TosuRealtimeCollector _overlayRealtimeCollector = new();
+    private readonly LatestWinsSnapshotPublisher<RealtimeAnalysisSnapshot> _nativePauseCoachPublisher;
     private static readonly JsonSerializerOptions _overlaySnapshotJsonOptions = new(JsonSerializerDefaults.Web);
     private NativeWebView Browser { get; set; } = null!;
     private MainViewModel? _model;
@@ -77,9 +78,6 @@ public partial class MainWindow : Window
     // Avalonia UI queue so WM_NCLBUTTONDOWN is never entered re-entrantly.
     private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
-    private int _nativePauseCoachPublishInFlight;
-    private bool _overlayBrowserReady;
-    private RealtimeAnalysisSnapshot? _pendingNativePauseCoachSnapshot;
     private string _lastNativePauseCoachDiagnostic = string.Empty;
     private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
     private string _lastNativePollBoundaryDiagnostic = string.Empty;
@@ -99,6 +97,9 @@ public partial class MainWindow : Window
         Browser = CreateBrowser(new SolidColorBrush(Color.Parse("#0E1016")));
         BrowserHost.Child = Browser;
         _presentation = new OverlayPresentationService(_presetCatalog, _analyzerCatalog);
+        _nativePauseCoachPublisher = new LatestWinsSnapshotPublisher<RealtimeAnalysisSnapshot>(
+            PublishNativePauseCoachSnapshotToBrowserAsync,
+            exception => AppLogger.Error("Publishing native Pause Coach snapshot", exception, userVisible: false));
         _windowsOverlay = new WindowsOverlayController(this);
         _windowsOverlay.ExitRequested += (_, _) => LeaveOverlayMode();
         _windowsOverlay.ClickThroughChanged += enabled => Browser.IsHitTestVisible = !enabled;
@@ -149,6 +150,15 @@ public partial class MainWindow : Window
             try
             {
                 await InitializeAsync();
+                // Navigation can complete before the first native snapshot
+                // arrives. Store the visible launcher state independently so
+                // the publisher can flush that snapshot as soon as the
+                // document reports ready, even if the initial navigation
+                // happened during the Opened lifecycle transition.
+                if (!_overlayMode && IsVisible)
+                {
+                    _nativePauseCoachPublisher.SetPresentationVisible(true);
+                }
             }
             catch (Exception exception)
             {
@@ -160,6 +170,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         AppLogger.ErrorRaised -= AppLogger_ErrorRaised;
+        _nativePauseCoachPublisher.BeginPresentationSession();
         StopOverlayGameplayPolling();
         _previewPresentationCancellation?.Cancel();
         _previewPresentationCancellation?.Dispose();
@@ -205,8 +216,7 @@ public partial class MainWindow : Window
 
     private void ReplaceBrowser(IBrush background)
     {
-        _overlayBrowserReady = false;
-        _pendingNativePauseCoachSnapshot = null;
+        _nativePauseCoachPublisher.BeginPresentationSession();
         var previous = Browser;
         previous.NavigationCompleted -= Browser_NavigationCompleted;
         previous.WebMessageReceived -= Browser_WebMessageReceived;
@@ -316,6 +326,11 @@ public partial class MainWindow : Window
             _model.SetStatus(L("status.tosu_running"), true);
             SetControlsEnabled(true);
             Navigate(AnalysisUrl);
+            // Keep the normal launcher preview fed by the same native Tosu
+            // realtime stream as the overlay. The preview is a visible
+            // presentation surface too; otherwise it only changes after a
+            // navigation/reload while the overlay updates continuously.
+            StartOverlayGameplayPolling();
         }
         else
         {
@@ -374,19 +389,24 @@ public partial class MainWindow : Window
             if (e.IsRunning)
             {
                 SetControlsEnabled(true);
+                StartOverlayGameplayPolling();
                 if (_headlessAnalysisController is not null)
                 {
                     _ = _headlessAnalysisController.NotifyTosuRestartAsync();
                 }
             }
-            else if (_initialized && _overlayMode)
+            else
             {
-                ReturnToLauncherAfterGameExit(
-                    "status.osu_stopped");
-            }
-            else if (_initialized)
-            {
-                SetControlsEnabled(false, keepRestart: true);
+                StopOverlayGameplayPolling();
+                if (_initialized && _overlayMode)
+                {
+                    ReturnToLauncherAfterGameExit(
+                        "status.osu_stopped");
+                }
+                else if (_initialized)
+                {
+                    SetControlsEnabled(false, keepRestart: true);
+                }
             }
         });
     }
@@ -787,6 +807,12 @@ public partial class MainWindow : Window
     {
         try
         {
+            // A navigation/reinjection invalidates any call targeting the
+            // previous document. Keep the latest native snapshot so the new
+            // document can replay it after NavigationCompleted in either
+            // launcher-preview or overlay mode.
+            _nativePauseCoachPublisher.SetBrowserReady(false);
+
             Browser.Navigate(new Uri(url));
         }
         catch (Exception exception)
@@ -822,20 +848,14 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            var analysisDocumentReady = e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source);
+            if (analysisDocumentReady)
             {
                 await ApplyPresentationAsync();
                 if (_overlayMode)
                 {
                     await FitOverlayWindowToRenderedWidgetAsync();
                 }
-
-                // Native polling starts together with navigation. Mark the
-                // document ready now, but publish the cached headless snapshot
-                // before the queued realtime frame so the latter can merge
-                // live coaching into a complete layout instead of briefly
-                // hiding the skill chart.
-                _overlayBrowserReady = true;
             }
 
             if (_headlessAnalysisController is not null)
@@ -863,14 +883,19 @@ public partial class MainWindow : Window
                 }
             }
 
-            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            if (analysisDocumentReady)
             {
-                var pending = _pendingNativePauseCoachSnapshot;
-                _pendingNativePauseCoachSnapshot = null;
-                if (_overlayMode && pending is not null)
-                {
-                    await PublishNativePauseCoachSnapshotAsync(pending);
-                }
+                // Mark readiness only after the fresh renderer and any cached
+                // headless snapshot have been injected. The coalescer then
+                // flushes its newest native frame when this document is
+                // visible, including the normal launcher preview.
+                _nativePauseCoachPublisher.SetBrowserReady(true);
+                // Avalonia's IsVisible describes the top-level control, not
+                // the native overlay HWND. The HWND may be SW_HIDE/opacity 0
+                // while the WebView document remains loaded; do not flush
+                // realtime frames into that hidden presentation surface.
+                _nativePauseCoachPublisher.SetPresentationVisible(
+                    _overlayMode ? _overlayWindowVisible && Opacity > 0 : IsVisible);
             }
         }
         catch (Exception exception)
@@ -1958,6 +1983,7 @@ public partial class MainWindow : Window
         _model.SetStatus(L(_model.Tosu.IsRunning ? "status.tosu_running" : "status.tosu_not_running"), _model.Tosu.IsRunning);
         if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
         {
+            _nativePauseCoachPublisher.SetBrowserReady(false);
             Browser.Refresh();
         }
     }
@@ -2000,7 +2026,10 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
-        _overlayRealtimeCollector.Reset();
+        // The native collector is presentation-independent and has already
+        // accumulated the current attempt in launcher preview. Keep that
+        // session across the WebView swap so opening the overlay does not
+        // briefly replace a complete window with a one-sample session.
         _lastNativePauseCoachDiagnostic = string.Empty;
         _lastNativePauseCoachDiagnosticAt = default;
         _lastNativePollBoundaryDiagnostic = string.Empty;
@@ -2042,8 +2071,6 @@ public partial class MainWindow : Window
             "horizontal" => 920d,
             "companella" or "companella-replay" => 760d,
             "pause-coach-card" => 620d,
-            "pause-coach-minimal" => 560d,
-            "pause-coach-signal" => 680d,
             _ => 475d
         };
         var baseHeight = layout switch
@@ -2051,8 +2078,6 @@ public partial class MainWindow : Window
             "horizontal" => 360d,
             "companella" or "companella-replay" => 340d,
             "pause-coach-card" => 300d,
-            "pause-coach-minimal" => 180d,
-            "pause-coach-signal" => 270d,
             _ => 540d
         };
         var width = baseWidth * scale;
@@ -2118,7 +2143,9 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
-        _overlayRealtimeCollector.Reset();
+        // Keep the collector session when returning to the launcher. The
+        // next Tosu frame handles map/retry transitions, while resetting here
+        // would make the preview briefly show a freshly empty window.
         _lastNativePauseCoachDiagnostic = string.Empty;
         _lastNativePauseCoachDiagnosticAt = default;
         _lastNativePollBoundaryDiagnostic = string.Empty;
@@ -2140,6 +2167,14 @@ public partial class MainWindow : Window
         Position = _normalPosition;
         ClientSize = _normalClientSize;
         SetOverlayWindowVisibility(true);
+        // Overlay mode owns the polling lifetime while the native HWND is
+        // active. Restart it when returning to the launcher so the preview
+        // keeps receiving the same realtime stream without requiring reload.
+        if (_model.Tosu.IsRunning)
+        {
+            StartOverlayGameplayPolling();
+        }
+        _nativePauseCoachPublisher.SetPresentationVisible(IsVisible);
         Dispatcher.UIThread.Post(() =>
         {
             if (_overlayMode || BrowserHost.Child is not null)
@@ -2253,8 +2288,6 @@ public partial class MainWindow : Window
             "horizontal" => 920d,
             "companella" or "companella-replay" => 760d,
             "pause-coach-card" => 620d,
-            "pause-coach-minimal" => 560d,
-            "pause-coach-signal" => 680d,
             "default" => 475d,
             _ => ClientSize.Width / currentScale
         };
@@ -2430,7 +2463,7 @@ public partial class MainWindow : Window
 
     private async Task PollOverlayGameplayStateAsync()
     {
-        if (!_overlayMode || _model is null || Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
+        if (_model is null || Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
         {
             return;
         }
@@ -2450,7 +2483,11 @@ public partial class MainWindow : Window
 
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (_overlayMode)
+                    // The request may finish after overlay exit/re-entry. Do
+                    // not deliver a stale response into the new WebView
+                    // session, but do feed both visible launcher and overlay
+                    // presentations from the same collector.
+                    if (!cancellationToken.IsCancellationRequested)
                     {
                         ApplyNativeRealtimeTelemetry(telemetry);
                     }
@@ -2513,7 +2550,7 @@ public partial class MainWindow : Window
 
         TraceGameplayState("native-http", telemetry.RawStateName, telemetry.RawStateNumber, isPlaying, isPaused, telemetry.Sample.Focused);
         LogNativePauseCoachTelemetry(telemetry);
-        _ = PublishNativePauseCoachSnapshotAsync(telemetry.Snapshot);
+        _nativePauseCoachPublisher.Submit(telemetry.Snapshot);
     }
 
     private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
@@ -2560,84 +2597,82 @@ public partial class MainWindow : Window
             $"session={snapshot.SessionId}; coach={snapshot.WidgetState}");
     }
 
-    private async Task PublishNativePauseCoachSnapshotAsync(RealtimeAnalysisSnapshot snapshot)
+    private Task PublishNativePauseCoachSnapshotToBrowserAsync(RealtimeAnalysisSnapshot snapshot)
     {
-        if (!_overlayMode)
+        if (Dispatcher.UIThread.CheckAccess())
         {
-            return;
+            return PublishNativePauseCoachSnapshotToBrowserCoreAsync(snapshot);
         }
 
-        if (!_overlayBrowserReady)
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(async () =>
         {
-            _pendingNativePauseCoachSnapshot = snapshot;
-            return;
-        }
-
-        if (Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 1) != 0)
-        {
-            return;
-        }
-
-        try
-        {
-            var pauseCoach = PauseCoachSnapshotMapper.ToSnapshot(snapshot);
-            bool? isPlaying = snapshot.State switch
+            try
             {
-                RealtimePlayState.Playing or RealtimePlayState.Paused => true,
-                RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
-                _ => null
-            };
-            bool? isPaused = snapshot.State == RealtimePlayState.Paused
-                ? true
-                : snapshot.State == RealtimePlayState.Playing
-                    ? false
-                    : null;
-            var analysis = new AnalysisSnapshot
+                await PublishNativePauseCoachSnapshotToBrowserCoreAsync(snapshot);
+                completion.TrySetResult(null);
+            }
+            catch (Exception exception)
             {
-                SchemaVersion = AnalysisSnapshot.CurrentSchemaVersion,
-                SourceId = "mania-map-analyser",
-                Beatmap = new BeatmapSnapshot { Id = snapshot.BeatmapId },
-                Gameplay = new GameplaySnapshot
-                {
-                    State = snapshot.State.ToString(),
-                    IsPlaying = isPlaying,
-                    IsPaused = isPaused,
-                    IsFocused = null
-                },
-                Replay = new ReplayOverlaySnapshot
-                {
-                    MapProgressMs = snapshot.MapTimeMs,
-                    Score = snapshot.Score,
-                    Accuracy = snapshot.Accuracy,
-                    Ur = snapshot.UnstableRate,
-                    MeanMs = snapshot.Timing.MeanMs,
-                    MedianMs = snapshot.Timing.MedianMs,
-                    SdMs = snapshot.Timing.StandardDeviationMs,
-                    SampleCount = snapshot.Timing.SampleCount,
-                    RecentOffsets = snapshot.RecentOffsets,
-                    IsProvisional = true,
-                    Fidelity = "provisional",
-                    Reason = "Native Tosu v2 realtime telemetry."
-                },
-                PauseCoach = pauseCoach,
-                Extensions = new Dictionary<string, object?> { ["nativePauseCoach"] = true }
-            };
-            string json = JsonSerializer.Serialize(analysis, _overlaySnapshotJsonOptions);
-            // The renderer handles the event and performs one render. Calling
-            // its exported function as well causes every native poll frame to
-            // rebuild the Pause Coach DOM twice, which looks like jitter.
-            string script = "window.__overlayNativePauseCoachSnapshot=" + json + ";" +
-                            "window.dispatchEvent(new CustomEvent('analysis:snapshot',{detail:" + json + "}));";
-            await Browser.InvokeScript(script).ConfigureAwait(true);
-        }
-        catch (Exception exception)
+                completion.TrySetException(exception);
+            }
+        });
+        return completion.Task;
+    }
+
+    private async Task PublishNativePauseCoachSnapshotToBrowserCoreAsync(RealtimeAnalysisSnapshot snapshot)
+    {
+        var browser = Browser;
+        var pauseCoach = PauseCoachSnapshotMapper.ToSnapshot(snapshot);
+        bool? isPlaying = snapshot.State switch
         {
-            AppLogger.Error("Publishing native Pause Coach snapshot", exception, userVisible: false);
-        }
-        finally
+            RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+            _ => null
+        };
+        bool? isPaused = snapshot.State == RealtimePlayState.Paused
+            ? true
+            : snapshot.State == RealtimePlayState.Playing
+                ? false
+                : null;
+        var analysis = new AnalysisSnapshot
         {
-            Interlocked.Exchange(ref _nativePauseCoachPublishInFlight, 0);
-        }
+            SchemaVersion = AnalysisSnapshot.CurrentSchemaVersion,
+            SourceId = "mania-map-analyser",
+            Beatmap = new BeatmapSnapshot { Id = snapshot.BeatmapId },
+            Gameplay = new GameplaySnapshot
+            {
+                State = snapshot.State.ToString(),
+                IsPlaying = isPlaying,
+                IsPaused = isPaused,
+                IsFocused = null
+            },
+            Replay = new ReplayOverlaySnapshot
+            {
+                MapProgressMs = snapshot.MapTimeMs,
+                Score = snapshot.Score,
+                Accuracy = snapshot.Accuracy,
+                Ur = snapshot.UnstableRate,
+                MeanMs = snapshot.Timing.MeanMs,
+                MedianMs = snapshot.Timing.MedianMs,
+                SdMs = snapshot.Timing.StandardDeviationMs,
+                SampleCount = snapshot.Timing.SampleCount,
+                RecentOffsets = snapshot.RecentOffsets,
+                IsProvisional = true,
+                Fidelity = "provisional",
+                Reason = "Native Tosu v2 realtime telemetry."
+            },
+            PauseCoach = pauseCoach,
+            Extensions = new Dictionary<string, object?> { ["nativePauseCoach"] = true }
+        };
+        string json = JsonSerializer.Serialize(analysis, _overlaySnapshotJsonOptions);
+        // The renderer handles the event and performs one render. Calling its
+        // exported function as well would rebuild the DOM twice and cause
+        // visible jitter. The publisher guarantees this is the newest frame
+        // for the current browser/document session.
+        string script = "window.__overlayNativePauseCoachSnapshot=" + json + ";" +
+                        "window.dispatchEvent(new CustomEvent('analysis:snapshot',{detail:" + json + "}));";
+        await browser.InvokeScript(script).ConfigureAwait(true);
     }
 
     private void UpdateOverlayVisibility()
@@ -2673,6 +2708,7 @@ public partial class MainWindow : Window
         var expectedOpacity = visible ? GetOverlayOpacity() : 0d;
         if (_overlayWindowVisible == visible && actualVisible == visible && Math.Abs(Opacity - expectedOpacity) < 0.001)
         {
+            _nativePauseCoachPublisher.SetPresentationVisible(_overlayMode && visible);
             return;
         }
 
@@ -2694,6 +2730,7 @@ public partial class MainWindow : Window
 
             Opacity = visible ? GetOverlayOpacity() : 0;
             _overlayWindowVisible = visible;
+            _nativePauseCoachPublisher.SetPresentationVisible(_overlayMode && visible);
         }
         catch (Exception exception)
         {
@@ -2711,6 +2748,7 @@ public partial class MainWindow : Window
                     : IsVisible;
                 Opacity = nativeVisible ? GetOverlayOpacity() : 0;
                 _overlayWindowVisible = nativeVisible;
+                _nativePauseCoachPublisher.SetPresentationVisible(_overlayMode && nativeVisible);
             }
             catch
             {
@@ -2749,7 +2787,9 @@ public partial class MainWindow : Window
                               (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
             ? _model.Settings.OverlayLayoutMode
             : _model.Settings.OverlayPresetId;
-        return OverlayVisibilityPolicy.Normalize(_presetCatalog.Get(requestedPreset).VisibilityPolicy);
+        var requestedLayout = OverlayPresentationService.NormalizeLayout(requestedPreset);
+        var effectivePresetId = requestedLayout == "custom" ? requestedPreset : requestedLayout;
+        return OverlayVisibilityPolicy.Normalize(_presetCatalog.Get(effectivePresetId).VisibilityPolicy);
     }
 
     private void SaveOverlayBounds()

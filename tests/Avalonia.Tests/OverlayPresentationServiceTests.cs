@@ -25,7 +25,7 @@ public sealed class OverlayPresentationServiceTests
     }
 
     [Fact]
-    public void PauseCoachPresentationVariantsAreAvailable()
+    public void PauseCoachCardPresentationIsAvailable()
     {
         var settings = new LauncherSettings
         {
@@ -39,5 +39,13 @@ public sealed class OverlayPresentationServiceTests
         Assert.Contains("overlay-pause-coach-card", scripts.SetupScript, StringComparison.Ordinal);
         Assert.Contains("overlay-pause-coach-primary", scripts.SetupScript, StringComparison.Ordinal);
         Assert.Contains("[data-overlay-preset-node],.overlay-pause-coach", scripts.SetupScript, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("pause-coach-minimal")]
+    [InlineData("pause-coach-signal")]
+    public void RemovedPauseCoachVariantsMigrateToCard(string removedPreset)
+    {
+        Assert.Equal("pause-coach-card", OverlayPresentationService.NormalizeLayout(removedPreset));
     }
 }

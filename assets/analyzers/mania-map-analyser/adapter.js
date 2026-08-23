@@ -775,7 +775,7 @@
     // values can differ between older stable integrations. Use the numeric
     // enum only when the name is missing or unknown.
     const namedPlaying = ["play", "gameplay", "playing", "spectating", "watchingreplay", "replay"].includes(stateToken);
-    const namedNonPlaying = ["menu", "edit", "selectplay", "selectedit", "selectdrawings", "resultscreen", "result", "options", "songselect"].includes(stateToken);
+    const namedNonPlaying = ["menu", "edit", "selectplay", "selectedit", "selectdrawings", "resultscreen", "result", "results", "options", "songselect", "exit"].includes(stateToken);
     const isPlaying = namedPlaying
       ? true
       : namedNonPlaying
@@ -801,10 +801,15 @@
     const websocketPauseStale = source !== "browser-http"
       && explicitPause === false
       && httpPauseState === true;
-    const nextIsPaused = stateToken === "pause" || stateToken === "paused" || stateToken === "break"
-      ? true
-      : websocketPauseStale ? true
-      : explicitPause !== undefined ? explicitPause : gameplay.isPaused;
+    // Tosu may keep game.paused=true while it emits the next menu/song-select
+    // state. A named non-playing state must clear that stale pause flag or the
+    // overlay can remain stuck in its previous paused lifecycle.
+    const nextIsPaused = namedNonPlaying
+      ? false
+      : stateToken === "pause" || stateToken === "paused" || stateToken === "break"
+        ? true
+        : websocketPauseStale ? true
+        : explicitPause !== undefined ? explicitPause : gameplay.isPaused;
     const isFocused = game && typeof game.focused === "boolean" ? game.focused : gameplay.isFocused;
     gameplay = {
       state: nextState,

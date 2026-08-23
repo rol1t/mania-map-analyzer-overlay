@@ -60,7 +60,7 @@ For osu!stable exclusive fullscreen, enable **Stable FS**, confirm the tosu rest
 
 ## Appearance and CSS
 
-Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, `Pause Coach Card`, `Pause Coach Minimal`, `Pause Coach Signal`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` includes replay metrics and a realtime Pause Coach block; the standalone variants focus on the current attempt diagnosis. See [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md) for telemetry provenance and limitations.
+Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, `Pause Coach Card`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` includes replay metrics and a realtime Pause Coach block; `Pause Coach Card` is the only standalone Pause Coach layout. See [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md) for telemetry provenance and limitations.
 
 Overlay visibility is configured per preset in `manifest.json`. Set
 `visibilityPolicy` to `always`, `outside-play`, `during-play`, `paused-only`,
