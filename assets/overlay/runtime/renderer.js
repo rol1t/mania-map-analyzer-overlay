@@ -48,7 +48,9 @@
   }
 
   function mergeSnapshot(snapshot) {
-    if (snapshot && snapshot.nativePauseCoach === true) {
+    var nativeMarker = snapshot && (snapshot.nativePauseCoach === true
+      || snapshot.extensions && snapshot.extensions.nativePauseCoach === true);
+    if (nativeMarker) {
       window.__overlayNativePauseCoachSnapshot = snapshot;
     }
     const nativeSnapshot = window.__overlayNativePauseCoachSnapshot;
@@ -436,6 +438,46 @@
     }
   }
 
+  var lastPauseCoachRenderTrace = "";
+  function tracePauseCoachRender(snapshot) {
+    var coach = snapshot && snapshot.pauseCoach;
+    if (!coach) return;
+    var gameplay = snapshot.gameplay || {};
+    var replay = snapshot.replay || {};
+    var overall = coach.overall || {};
+    var judgements = overall.judgements || {};
+    var hitCount = [judgements.count300, judgements.count200, judgements.count100, judgements.count50,
+      judgements.countGeki, judgements.countKatu, judgements.countMiss]
+      .filter(function (value) { return value != null; })
+      .reduce(function (sum, value) { return sum + Number(value || 0); }, 0);
+    var trace = {
+      source: snapshot.nativePauseCoach === true
+        || snapshot.extensions && snapshot.extensions.nativePauseCoach === true
+        ? "native-render"
+        : "adapter-render",
+      normalizedIsPlaying: gameplay.isPlaying == null ? null : gameplay.isPlaying,
+      normalizedIsPaused: gameplay.isPaused == null ? null : gameplay.isPaused,
+      runtimeState: gameplay.state || "",
+      beatmapId: snapshot.beatmap && snapshot.beatmap.id || "",
+      mapTimeMs: coach.mapProgressMs == null ? replay.mapProgressMs : coach.mapProgressMs,
+      score: coach.score == null ? replay.score : coach.score,
+      accuracy: coach.accuracy == null ? replay.accuracy : coach.accuracy,
+      judgementCount: hitCount,
+      hitErrorArrayLength: Array.isArray(replay.recentOffsets) ? replay.recentOffsets.length : 0,
+      sessionId: coach.sessionId || "",
+      coachState: coach.state || "",
+    };
+    var signature = JSON.stringify(trace);
+    if (signature === lastPauseCoachRenderTrace) return;
+    lastPauseCoachRenderTrace = signature;
+    try {
+      var encoded = encodeURIComponent(JSON.stringify(trace));
+      if (typeof window.__overlayHostSend === "function") window.__overlayHostSend("overlay:pause-coach-render-debug:" + encoded);
+    } catch (exception) {
+      // Diagnostics must never interfere with rendering.
+    }
+  }
+
   function renderMainCard(snapshot) {
     var difficulty = snapshot.difficulty || {};
     var starText = difficulty.starLabel || formatNumber(difficulty.starRating, 2) || "—";
@@ -467,6 +509,7 @@
   function render(snapshot) {
     const effectiveSnapshot = mergeSnapshot(snapshot);
     window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
+    tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
     renderReplay(effectiveSnapshot);

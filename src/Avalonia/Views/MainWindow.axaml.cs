@@ -878,6 +878,10 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (TryHandlePauseCoachTrace(message))
+        {
+            return;
+        }
 
         if (TryHandleAnalyzerMessage(message))
         {
@@ -1191,6 +1195,52 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             AppLogger.Error("Reading gameplay state trace", exception, userVisible: false);
+        }
+
+        return true;
+    }
+
+    private static bool TryHandlePauseCoachTrace(string message)
+    {
+        const string adapterPrefix = "overlay:pause-coach-debug:";
+        const string renderPrefix = "overlay:pause-coach-render-debug:";
+        string? sourcePrefix = message.StartsWith(adapterPrefix, StringComparison.Ordinal)
+            ? adapterPrefix
+            : message.StartsWith(renderPrefix, StringComparison.Ordinal)
+                ? renderPrefix
+                : null;
+        if (sourcePrefix is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Uri.UnescapeDataString(message[sourcePrefix.Length..]));
+            var root = document.RootElement;
+            string GetString(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+            string GetNumber(string name) => root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                ? value.ToString()
+                : "null";
+            string GetBool(string name) => root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? value.GetBoolean().ToString()
+                : "null";
+
+            AppLogger.Info(
+                sourcePrefix == adapterPrefix ? "PauseCoach adapter telemetry" : "PauseCoach renderer telemetry",
+                $"source={GetString("source")}; rawState={GetString("rawState")}; rawStateNumber={GetNumber("rawStateNumber")}; " +
+                $"rawPaused={GetBool("rawPaused")}; normalizedIsPlaying={GetBool("normalizedIsPlaying")}; " +
+                $"normalizedIsPaused={GetBool("normalizedIsPaused")}; runtimeState={GetString("runtimeState")}; " +
+                $"beatmap={GetString("beatmapId")}; mapTimeMs={GetNumber("mapTimeMs")}; score={GetNumber("score")}; " +
+                $"accuracy={GetNumber("accuracy")}; judgementCount={GetNumber("judgementCount")}; " +
+                $"hitErrorArrayLength={GetNumber("hitErrorArrayLength")}; sessionId={GetString("sessionId")}; " +
+                $"coachState={GetString("coachState")}");
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Reading Pause Coach trace", exception, userVisible: false);
         }
 
         return true;
@@ -2381,6 +2431,18 @@ public partial class MainWindow : Window
     private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
     {
         var snapshot = telemetry.Snapshot;
+        bool? normalizedIsPlaying = snapshot.State switch
+        {
+            RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+            _ => null
+        };
+        bool? normalizedIsPaused = snapshot.State switch
+        {
+            RealtimePlayState.Paused => true,
+            RealtimePlayState.Playing => false,
+            _ => null
+        };
         string signature = string.Join(
             '|',
             telemetry.RawStateName,
@@ -2402,8 +2464,10 @@ public partial class MainWindow : Window
         AppLogger.Info(
             "PauseCoach telemetry",
             $"source=native-http; rawState={telemetry.RawStateName}; number={telemetry.RawStateNumber?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
-            $"paused={telemetry.RawPaused?.ToString() ?? "null"}; normalized={snapshot.State}; map={snapshot.BeatmapId}; " +
-            $"mapTime={snapshot.MapTimeMs}; score={snapshot.Score?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"paused={telemetry.RawPaused?.ToString() ?? "null"}; normalized={snapshot.State}; " +
+            $"normalizedIsPlaying={normalizedIsPlaying?.ToString() ?? "null"}; normalizedIsPaused={normalizedIsPaused?.ToString() ?? "null"}; " +
+            $"map={snapshot.BeatmapId}; mapTime={snapshot.MapTimeMs}; score={snapshot.Score?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"accuracy={snapshot.Accuracy?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
             $"hits={telemetry.JudgementTotal}; timingSamples={telemetry.HitErrorSampleCount}; " +
             $"session={snapshot.SessionId}; coach={snapshot.WidgetState}");
     }

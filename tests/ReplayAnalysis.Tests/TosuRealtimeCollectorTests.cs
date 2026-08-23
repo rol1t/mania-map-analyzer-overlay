@@ -13,16 +13,18 @@ public sealed class TosuRealtimeCollectorTests
     [Theory]
     [InlineData("native-http")]
     [InlineData("websocket")]
-    public void StablePlayPauseUsesFullTosuPayloadAndKeepsSession(string source)
+    public void LazerPlayPauseUsesFullTosuPayloadAndKeepsSession(string source)
     {
         var collector = NewCollector();
         collector.Process(Payload("SelectPlay", 1, false, 0, 0, 0, 0, 0, []), source, _start);
         TosuRealtimeTelemetry first = collector.Process(Payload("Play", 2, false, 0, 1000, 98.5, 2, 0, [0, 1]), source, _start.AddSeconds(1))!;
+        TosuRealtimeTelemetry fiveSeconds = collector.Process(Payload("Play", 2, false, 5_000, 10_000, 98, 10, 0, Enumerable.Range(0, 5).Select(index => index - 1).ToArray()), source, _start.AddSeconds(5))!;
         TosuRealtimeTelemetry tenSeconds = collector.Process(Payload("Play", 2, false, 10_000, 20_000, 97.5, 20, 1, Enumerable.Range(0, 8).Select(index => index - 2).ToArray()), source, _start.AddSeconds(10))!;
         TosuRealtimeTelemetry twentyFiveSeconds = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(25))!;
         TosuRealtimeTelemetry paused = collector.Process(Payload("Play", 2, true, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(26))!;
 
         Assert.Equal(PauseCoachWidgetState.Playing, first.Snapshot.WidgetState);
+        Assert.Equal(PauseCoachWidgetState.Playing, fiveSeconds.Snapshot.WidgetState);
         Assert.Equal(PauseCoachWidgetState.Playing, tenSeconds.Snapshot.WidgetState);
         Assert.Equal(PauseCoachWidgetState.Playing, twentyFiveSeconds.Snapshot.WidgetState);
         Assert.Equal(RealtimePlayState.Paused, paused.Snapshot.State);
@@ -46,7 +48,7 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
-    public void PartialStablePausePacketPreservesFullGameplayTelemetry()
+    public void PartialLazerPausePacketPreservesFullGameplayTelemetry()
     {
         var collector = NewCollector();
         TosuRealtimeTelemetry playing = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), "native-http", _start)!;

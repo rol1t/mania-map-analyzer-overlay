@@ -31,6 +31,8 @@
   // a confirmed pause through a stale websocket `paused:false` delta until
   // HTTP confirms that gameplay actually resumed.
   let httpPauseState = null;
+  let lastPauseCoachTraceSignature = "";
+  let lastPauseCoachTraceAt = 0;
   // Presentation changes re-inject this adapter while the WebView stays
   // alive. Keep the current-attempt coach across those re-initializations so
   // resizing or changing a preset does not erase the paused snapshot.
@@ -603,6 +605,52 @@
     }
   }
 
+  // Keep the complete Tosu -> adapter -> runtime boundary observable. This is
+  // deliberately transition/throttled so a live map cannot flood the native
+  // host, while the important Play/2 + paused transition is always recorded.
+  function publishPauseCoachTrace(source, payload, stateNumber, stateName, rawPaused, isPlaying, isPaused, sourcePlay, coach) {
+    try {
+      const snapshot = coach || {};
+      const timing = snapshot.timing || {};
+      const overall = snapshot.overall || {};
+      const hits = overall.judgements || {};
+      const hitCount = [hits.count300, hits.count200, hits.count100, hits.count50, hits.countGeki, hits.countKatu, hits.countMiss]
+        .filter(value => value !== null && value !== undefined)
+        .reduce((sum, value) => sum + Number(value || 0), 0);
+      const rawState = payload && payload.state;
+      const rawStateName = rawState && typeof rawState === "object" ? clean(rawState.name) : clean(rawState);
+      const rawStateNumber = rawState && typeof rawState === "object" ? finiteNumber(rawState.number) : finiteNumber(rawState);
+      const rawGame = payload && payload.game && typeof payload.game === "object" ? payload.game : {};
+      const rawPauseValue = rawGame.paused !== undefined ? rawGame.paused : rawGame.isPaused;
+      const play = sourcePlay || {};
+      const signature = [source, rawStateName, rawStateNumber, rawPauseValue, isPlaying, isPaused, snapshot.state, snapshot.sessionId, replay.mapProgressMs, play.score, play.accuracy, hitCount, replay.recentOffsets.length].join("|");
+      const now = Date.now();
+      if (signature === lastPauseCoachTraceSignature && now - lastPauseCoachTraceAt < 5000) return;
+      lastPauseCoachTraceSignature = signature;
+      lastPauseCoachTraceAt = now;
+      sendToHost("overlay:pause-coach-debug:" + encodeURIComponent(JSON.stringify({
+        source: source || "unknown",
+        rawState: rawStateName || stateName || "",
+        rawStateNumber: rawStateNumber === null ? stateNumber : rawStateNumber,
+        rawPaused: rawPauseValue === undefined ? (rawPaused === undefined ? null : rawPaused) : booleanValue(rawPauseValue),
+        normalizedIsPlaying: typeof isPlaying === "boolean" ? isPlaying : null,
+        normalizedIsPaused: typeof isPaused === "boolean" ? isPaused : null,
+        runtimeState: snapshot.state || "",
+        beatmapId: beatmap.id || "",
+        mapTimeMs: replay.mapProgressMs,
+        score: play.score == null ? replay.score : finiteNumber(play.score),
+        accuracy: play.accuracy == null ? replay.accuracy : finiteNumber(play.accuracy),
+        judgementCount: hitCount,
+        hitErrorArrayLength: replay.recentOffsets.length,
+        sessionId: snapshot.sessionId || "",
+        coachState: snapshot.state || "",
+        timingSampleCount: timing.sampleCount == null ? null : timing.sampleCount,
+      })));
+    } catch (exception) {
+      reportRuntimeError("Publishing Pause Coach trace", exception);
+    }
+  }
+
   function reportRuntimeError(operation, exception) {
     const message = exception && exception.message ? exception.message : String(exception || "Unknown runtime error");
     console.error(operation, exception);
@@ -807,6 +855,7 @@
     }
 
     publishGameplayTrace(source || "unknown", stateNumber, stateName, nextIsPlaying, nextIsPaused, isFocused);
+    publishPauseCoachTrace(source || "unknown", payload, stateNumber, stateName, explicitPause, nextIsPlaying, nextIsPaused, sourcePlayForCoach, pauseCoach);
     keepSourceHostAvailable();
     window.dispatchEvent(new CustomEvent("overlay:gameplay-state", { detail: gameplay }));
     publishGameplayState();
@@ -931,4 +980,9 @@
       httpPauseState = null;
     },
   };
+  // Test-only access to the same raw-payload adapter boundary used by the
+  // websocket and /json/v2 paths. Production never enables this hook.
+  if (window.__overlayAdapterTestMode === true) {
+    window.__overlayAnalyzerAdapterTest = { applyTosuPayload: applyTosuPayload, publish: publish, pollState: pollState };
+  }
 })();
