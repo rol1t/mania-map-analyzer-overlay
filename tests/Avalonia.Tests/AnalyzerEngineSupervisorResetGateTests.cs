@@ -11,15 +11,27 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
     private readonly string _rootDirectory = Path.Combine(
         Path.GetTempPath(),
         "ManiaMapAnalyzerOverlay-SupervisorResetTests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _deploymentDirectory = Path.Combine(
+        Path.GetTempPath(),
+        "ManiaMapAnalyzerOverlay-SupervisorResetDeployment-" + Guid.NewGuid().ToString("N"));
     private readonly RecordingDiagnosticSink _diagnosticSink = new();
 
-    public AnalyzerEngineSupervisorResetGateTests() => Directory.CreateDirectory(_rootDirectory);
+    public AnalyzerEngineSupervisorResetGateTests()
+    {
+        Directory.CreateDirectory(_rootDirectory);
+        Directory.CreateDirectory(_deploymentDirectory);
+    }
 
     public void Dispose()
     {
         if (Directory.Exists(_rootDirectory))
         {
             Directory.Delete(_rootDirectory, recursive: true);
+        }
+
+        if (Directory.Exists(_deploymentDirectory))
+        {
+            Directory.Delete(_deploymentDirectory, recursive: true);
         }
     }
 
@@ -30,7 +42,7 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
         var catalog = new AnalyzerEngineCatalog(_rootDirectory, _diagnosticSink);
         var deployer = new AnalyzerEnginePackageDeployer(_diagnosticSink);
         var host = new TrackingFakeScriptHost();
-        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host);
+        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host, deploymentDirectory: _deploymentDirectory);
 
         var startTask = supervisor.StartAsync();
 
@@ -78,7 +90,7 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
         var package = Assert.Single(catalog.Available());
         var host = new TrackingFakeScriptHost();
         var deployer = new AnalyzerEnginePackageDeployer(_diagnosticSink);
-        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host);
+        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host, deploymentDirectory: _deploymentDirectory);
 
         // Inject a bridge and force Deploying state via reflection to simulate race window.
         var bridge = new AnalyzerEngineScriptBridge(package, host, diagnosticSink: _diagnosticSink);
@@ -102,7 +114,7 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
         var package = Assert.Single(catalog.Available());
         var host = new TrackingFakeScriptHost();
         var deployer = new AnalyzerEnginePackageDeployer(_diagnosticSink);
-        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host);
+        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host, deploymentDirectory: _deploymentDirectory);
         var bridge = new AnalyzerEngineScriptBridge(package, host, diagnosticSink: _diagnosticSink);
         SetSupervisorState(supervisor, AnalyzerEngineSupervisorStatus.Bootstrapping, bridge);
 
@@ -120,7 +132,7 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
         var catalog = new AnalyzerEngineCatalog(_rootDirectory, _diagnosticSink);
         var deployer = new AnalyzerEnginePackageDeployer(_diagnosticSink);
         var host = new TrackingFakeScriptHost();
-        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host);
+        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host, deploymentDirectory: _deploymentDirectory);
 
         // Bring to Ready via real startup.
         var startTask = supervisor.StartAsync();
@@ -149,7 +161,7 @@ public sealed class AnalyzerEngineSupervisorResetGateTests : IDisposable
         var package = Assert.Single(catalog.Available());
         var host = new TrackingFakeScriptHost();
         var deployer = new AnalyzerEnginePackageDeployer(_diagnosticSink);
-        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host);
+        await using var supervisor = new AnalyzerEngineSupervisor(catalog, deployer, host, deploymentDirectory: _deploymentDirectory);
         var bridge = new AnalyzerEngineScriptBridge(package, host, diagnosticSink: _diagnosticSink);
         SetSupervisorState(supervisor, AnalyzerEngineSupervisorStatus.Ready, bridge);
 
