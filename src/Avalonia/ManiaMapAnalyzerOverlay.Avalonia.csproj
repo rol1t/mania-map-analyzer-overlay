@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
     <ProjectReference Include="..\ReplayAnalysis\ManiaMapAnalyzerOverlay.ReplayAnalysis.csproj" />
+    <ProjectReference Include="..\Application\ManiaMapAnalyzerOverlay.Application.csproj" />
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
     <Compile Include="..\Services\OverlayStyleBuilder.cs" Link="Shared\OverlayStyleBuilder.cs" />

@@ -60,6 +60,30 @@ public sealed class LatestWinsSnapshotPublisherTests
     }
 
     [Fact]
+    public async Task ShowingAfterHidePublishesNewestFrameCollectedWhileHidden()
+    {
+        var published = new List<string>();
+        var publisher = CreatePublisher(published);
+
+        publisher.BeginPresentationSession();
+        publisher.SetBrowserReady(true);
+        publisher.SetPresentationVisible(true);
+        publisher.Submit("Playing@10000");
+        await EventuallyAsync(() => published.Count == 1);
+
+        publisher.SetPresentationVisible(false);
+        publisher.Submit("Playing@20000");
+        publisher.Submit("Paused@30000");
+
+        Assert.Equal(["Playing@10000"], published);
+
+        publisher.SetPresentationVisible(true);
+        await EventuallyAsync(() => published.Count == 2);
+
+        Assert.Equal(["Playing@10000", "Paused@30000"], published);
+    }
+
+    [Fact]
     public async Task SlowPublishRetainsNewestFrameAndPublishesItAfterCurrentCall()
     {
         var published = new List<string>();

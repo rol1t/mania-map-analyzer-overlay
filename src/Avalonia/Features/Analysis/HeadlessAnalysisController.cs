@@ -1062,7 +1062,9 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         var message = exception.Message ?? string.Empty;
         if (message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase))
+            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase) ||
+            (exception.StatusCode == System.Net.HttpStatusCode.NotFound &&
+             string.Equals(exception.Route, "files/beatmap/file", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }

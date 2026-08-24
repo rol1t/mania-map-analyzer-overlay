@@ -18,4 +18,24 @@ public sealed class TosuBeatmapSourceException : Exception
         : base(message, innerException)
     {
     }
+
+    public TosuBeatmapSourceException(string message, string route, System.Net.HttpStatusCode statusCode)
+        : base(message)
+    {
+        Route = route;
+        StatusCode = statusCode;
+    }
+
+    /// <summary>Endpoint and HTTP status when this was raised by the adapter.</summary>
+    public string?
+        Route
+    {
+        get;
+    }
+
+    public System.Net.HttpStatusCode?
+        StatusCode
+    {
+        get;
+    }
 }

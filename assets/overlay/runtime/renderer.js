@@ -65,6 +65,30 @@
     return value != null && String(value).trim() !== "";
   }
 
+  // Native realtime frames intentionally contain only the beatmap identity.
+  // The browser adapter normally supplies the full background URL, but a
+  // navigation/minimize race can make that frame arrive later (or be absent
+  // altogether). Tosu exposes a stable background endpoint keyed by map id,
+  // so the renderer can keep the image available without waiting for a
+  // second producer.
+  function backgroundUrlFor(beatmap) {
+    if (!beatmap) return "";
+    if (hasText(beatmap.backgroundUrl)) {
+      const supplied = String(beatmap.backgroundUrl).trim();
+      // Headless metadata may contain a local filename/path rather than a
+      // browser URL. Do not turn that into a broken relative CSS URL; fall
+      // back to Tosu's HTTP endpoint below.
+      if (/^(?:https?:|data:|blob:|\/)/i.test(supplied)) return supplied;
+    }
+    const id = String(beatmap.id || "").trim();
+    const host = typeof location !== "undefined" && location && location.host
+      ? String(location.host)
+      : "";
+    return id && host
+      ? `http://${host}/files/beatmap/background?ts=${encodeURIComponent(id)}`
+      : "";
+  }
+
   function mergeBeatmap(previous, current) {
     if (!previous || !current) return current || previous || {};
     const merged = Object.assign({}, previous, current);
@@ -124,6 +148,57 @@
     return !!(snapshot && snapshot.extensions && snapshot.extensions.headlessReplay === true);
   }
 
+  // The application now has a versioned view-state contract. Keep the
+  // conversion to the renderer's existing flat block shape deliberately
+  // mechanical while the remaining browser producers are migrated; no Tosu
+  // parsing or producer/session decisions belong here.
+  function viewStateToSnapshot(viewState) {
+    const realtime = viewState && viewState.realtime || {};
+    const producer = String(viewState && viewState.producer || "application").toLowerCase();
+    const isNative = producer === "native" && !!(viewState && viewState.realtime);
+    const gameplay = Object.assign({}, viewState && viewState.gameplay || {});
+    const previousSnapshot = window.__overlayLatestAnalysisSnapshot;
+    const rawBeatmap = viewState && viewState.beatmap || {};
+    const currentBeatmap = Object.assign(
+      { id: viewState && viewState.beatmapId || "" },
+      rawBeatmap);
+    const previousBeatmap = previousSnapshot && previousSnapshot.beatmap || {};
+    const currentBeatmapKey = beatmapKey({ beatmap: currentBeatmap });
+    const previousBeatmapKey = beatmapKey({ beatmap: previousBeatmap });
+    // Native realtime frames intentionally carry only the map identity. Keep
+    // presentation metadata learned by the browser adapter for that same map
+    // (especially the background URL), but never carry it across a map
+    // transition.
+    const beatmap = currentBeatmapKey && currentBeatmapKey === previousBeatmapKey
+      ? mergeBeatmap(previousBeatmap, currentBeatmap)
+      : currentBeatmap;
+    // System.Text.Json serializes the domain enum numerically in the
+    // transport view-state; the composed gameplay block already contains
+    // the renderer-facing string state. Only accept a string override from a
+    // future transport that explicitly opts into string enum serialization.
+    if (typeof realtime.state === "string" && realtime.state) gameplay.state = realtime.state;
+    if (typeof realtime.state === "string" && (realtime.state === "Playing" || realtime.state === "Paused")) gameplay.isPlaying = true;
+    if (realtime.state === "Playing") gameplay.isPaused = false;
+    if (realtime.state === "Paused") gameplay.isPaused = true;
+    return {
+      schemaVersion: 1,
+      sourceId: "mania-map-analyser",
+      beatmap,
+      gameplay,
+      difficulty: viewState && viewState.difficulty || {},
+      ranks: Array.isArray(viewState && viewState.ranks) ? viewState.ranks : [],
+      skills: Array.isArray(viewState && viewState.skills) ? viewState.skills : [],
+      replay: viewState && (viewState.realtimeReplay || viewState.replay) || {},
+      pauseCoach: viewState && viewState.pauseCoach || {},
+      extensions: {
+        nativePauseCoach: isNative,
+        realtimeProducer: producer,
+        viewStateVersion: viewState && viewState.version,
+        beatmapGeneration: viewState && viewState.beatmapGeneration,
+      },
+    };
+  }
+
   function mergeSnapshot(snapshot) {
     var nativeMarker = isNativePauseCoachSnapshot(snapshot);
     if (nativeMarker) {
@@ -148,20 +223,35 @@
         && isNativePauseCoachSnapshot(snapshot);
       const positiveDifferentBeatmap = (nativeId && currentId && nativeId !== currentId)
         || (!nativeId && !currentId && nativeKey && currentKey && nativeKey !== currentKey);
-      const positiveDifferentAttempt = positiveDifferentBeatmap
+      // The native stream is the ordering source for the current Tosu map.
+      // Browser snapshots are produced by an independently scheduled
+      // websocket/DOM pipeline and can legitimately arrive after a map
+      // transition with the previous map still in their payload. Treating
+      // that late browser identity as proof of a new attempt rolls the card
+      // back to the old map (the visible "stuck" card failure). A browser
+      // producer may enrich the native map once it catches up, but only a
+      // native frame is allowed to release native authority.
+      const nativeProducerChangedMap = currentProducer === "native" && positiveDifferentBeatmap;
+      const positiveDifferentAttempt = nativeProducerChangedMap
         || (sessionsAreComparable && nativeSession && currentSession && nativeSession !== currentSession);
       // The native collector is authoritative for realtime coaching for the
       // current attempt. Browser frames are still useful for map metadata,
       // but must not replace native pause/gameplay/replay values for the same
       // map: the two sources use different rolling windows and alternating
       // them makes the visible card jump backwards and forwards. A positive
-      // map transition releases native authority; the next native frame then
-      // establishes the new attempt again.
+      // Native map/session transitions release native authority; browser
+      // frames never do so while native realtime is active.
       const currentMissingBeatmapIdentity = !currentKey;
       if (positiveDifferentAttempt) {
         // A positive map/session transition releases the previous native
         // authority. The next native marker (if any) will establish it again.
         window.__overlayNativePauseCoachSnapshot = null;
+      } else if (currentProducer === "browser" && positiveDifferentBeatmap) {
+        // Do not let a stale browser frame replace the native map identity or
+        // its realtime blocks. The next native frame establishes the new map;
+        // a browser frame for that same identity can then merge metadata.
+        snapshot = nativeSnapshot;
+        currentKey = beatmapKey(snapshot);
       } else if (currentMissingBeatmapIdentity) {
         snapshot = Object.assign({}, snapshot, {
           beatmap: mergeBeatmap(snapshot.beatmap, nativeSnapshot.beatmap),
@@ -231,8 +321,13 @@
 
       // Suppress stale LN DAN for maps without long notes.
       var currentLnPercent = snapshot && snapshot.difficulty ? snapshot.difficulty.lnPercent : null;
-      var hasCurrentLn = currentLnPercent != null && Number(currentLnPercent) > 0;
-      if (!hasCurrentLn) {
+      var hasExplicitLnPercent = currentLnPercent !== null
+        && currentLnPercent !== undefined
+        && Number.isFinite(Number(currentLnPercent));
+      // Realtime/native frames intentionally omit headless difficulty data.
+      // Missing LN% is not evidence that a map has no long notes; only an
+      // explicit zero may suppress a previously resolved LN DAN rank.
+      if (hasExplicitLnPercent && Number(currentLnPercent) <= 0) {
         ranks.delete("ln-dan");
       }
       merged.ranks = Array.from(ranks.values());
@@ -299,8 +394,9 @@
     text("overlay-comp-mapper", beatmap.mapper ? `Mapped by ${beatmap.mapper}` : "Mapper —", "Mapper —");
     text("overlay-comp-version", beatmap.version ? ` · [${beatmap.version}]` : "", "");
 
-    if (beatmap.backgroundUrl) {
-      const safeUrl = String(beatmap.backgroundUrl).replace(/"/g, "\\\"");
+    const backgroundUrl = backgroundUrlFor(beatmap);
+    if (backgroundUrl) {
+      const safeUrl = backgroundUrl.replace(/"/g, "\\\"");
       document.documentElement.style.setProperty("--overlay-comp-cover", `url("${safeUrl}")`);
     } else {
       document.documentElement.style.removeProperty("--overlay-comp-cover");
@@ -349,15 +445,6 @@
 
       column.appendChild(box);
       column.appendChild(label);
-
-      const detail = String(skill.detail || skill.valueLabel || "").trim();
-      if (detail && detail !== displayValue) {
-        const detailElement = document.createElement("div");
-        detailElement.className = "overlay-comp-detail";
-        detailElement.textContent = detail;
-        detailElement.title = detail;
-        column.appendChild(detailElement);
-      }
 
       chart.appendChild(column);
     });
@@ -679,7 +766,7 @@
     const gameplay = snapshot.gameplay || {};
     return JSON.stringify({
       beatmap: [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version,
-        beatmap.mapper, beatmap.bpmLabel, beatmap.backgroundUrl],
+        beatmap.mapper, beatmap.bpmLabel, backgroundUrlFor(beatmap)],
       gameplay: [gameplay.state, gameplay.isPlaying, gameplay.isPaused, gameplay.isFocused],
       difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys],
       ranks,
@@ -736,8 +823,7 @@
     if (snapshot) renderNow(snapshot, false);
   }
 
-  function render(snapshot, force) {
-    const effectiveSnapshot = mergeSnapshot(snapshot);
+  function scheduleSnapshot(effectiveSnapshot, force) {
     window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
     if (force) {
       pendingRenderSnapshot = null;
@@ -781,10 +867,41 @@
     }
   }
 
+  function render(snapshot, force) {
+    scheduleSnapshot(mergeSnapshot(snapshot), force);
+  }
+
   window.__overlayRenderAnalysisSnapshot = render;
+
+  function renderViewState(viewState, force) {
+    if (!viewState) return;
+    const version = Number(viewState.version);
+    const latestVersion = Number(window.__overlayLatestViewStateVersion);
+    if (!force && Number.isFinite(version) && Number.isFinite(latestVersion) && version < latestVersion) {
+      return;
+    }
+    if (Number.isFinite(version)) window.__overlayLatestViewStateVersion = version;
+    window.__overlayLatestViewState = viewState;
+    const snapshot = viewStateToSnapshot(viewState);
+    if (String(viewState.producer || "").toLowerCase() === "native" && viewState.realtime) {
+      // The application composer has already reconciled beatmap, difficulty,
+      // replay, and Pause Coach slots. Do not merge this authoritative frame
+      // with a browser producer or an older DOM snapshot.
+      window.__overlayNativePauseCoachSnapshot = snapshot;
+      scheduleSnapshot(snapshot, force);
+      return;
+    }
+    render(snapshot, force);
+  }
+
+  window.__overlayRenderViewState = renderViewState;
 
   window.addEventListener("analysis:snapshot", function (event) {
     if (event && event.detail) render(event.detail);
+  });
+
+  window.addEventListener("overlay:view-state", function (event) {
+    if (event && event.detail) renderViewState(event.detail);
   });
 
   if (window.__overlayLatestAnalysisSnapshot) render(window.__overlayLatestAnalysisSnapshot);

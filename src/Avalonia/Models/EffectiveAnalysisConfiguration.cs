@@ -17,6 +17,18 @@ public sealed record EffectiveAnalysisConfiguration
 {
     public const int CurrentSchemaVersion = 1;
 
+    private static readonly ImmutableArray<string> _defaultSkillMetricIds =
+    [
+        "skills.overall",
+        "skills.stream",
+        "skills.jumpstream",
+        "skills.handstream",
+        "skills.stamina",
+        "skills.jackspeed",
+        "skills.chordjack",
+        "skills.technical"
+    ];
+
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
 
     public string DefaultEngineId { get; init; } = "mania-map-analyser-headless";
@@ -95,39 +107,123 @@ public sealed record EffectiveAnalysisConfiguration
         var rcNumericBinding = new EffectiveWidgetBinding(
             "dan.rc.numeric",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.rc.numeric")));
+        var lnPercentBinding = new EffectiveWidgetBinding(
+            "difficulty.lnPercent",
+            [
+                new SourceMetricCandidate("headless-primary", "difficulty.lnPercent"),
+                new SourceMetricCandidate("headless-primary", "pattern.lnPercent")
+            ]);
+        var lnLabelBinding = new EffectiveWidgetBinding(
+            "dan.ln.label",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.ln.label")));
+        var bindings = ImmutableArray.CreateBuilder<EffectiveWidgetBinding>();
+        bindings.Add(binding);
+        bindings.Add(difficultyLabelBinding);
+        bindings.Add(rcLabelBinding);
+        bindings.Add(rcNumericBinding);
+        bindings.Add(lnPercentBinding);
+        bindings.Add(lnLabelBinding);
+        foreach (string metricId in _defaultSkillMetricIds)
+        {
+            bindings.Add(new EffectiveWidgetBinding(
+                metricId,
+                ImmutableArray.Create(new SourceMetricCandidate("headless-primary", metricId))));
+        }
         return new EffectiveWidgetSpec(
             "headless-overlay",
             ImmutableArray.Create(source),
-            ImmutableArray.Create(binding, difficultyLabelBinding, rcLabelBinding, rcNumericBinding));
+            bindings);
     }
 
     private static EffectiveWidgetSpec MigrateLegacyDefaultWidget(EffectiveWidgetSpec widget)
     {
-        // Configurations written before DAN became a normalized headless metric
-        // contain only difficulty.star. Extend only that exact generated default;
-        // leave user-authored mappings untouched.
+        // Configurations written before all normalized DAN/LN metrics were
+        // exposed contain only the generated default bindings. Extend only
+        // that known generated shape; leave user-authored mappings untouched.
         if (!string.Equals(widget.WidgetId, "headless-overlay", StringComparison.OrdinalIgnoreCase)
             || widget.Sources.Length != 1
             || !string.Equals(widget.Sources[0].SourceId, "headless-primary", StringComparison.OrdinalIgnoreCase)
-            || widget.Bindings.Length != 1
-            || !string.Equals(widget.Bindings[0].TargetMetricId, "difficulty.star", StringComparison.OrdinalIgnoreCase))
+            || widget.Bindings.Any(binding => !IsGeneratedDefaultBinding(binding, widget.Sources[0].SourceId)))
         {
             return widget;
         }
 
         var sourceId = widget.Sources[0].SourceId;
-        var bindings = widget.Bindings
-            .Append(new EffectiveWidgetBinding(
+        var bindings = widget.Bindings.ToBuilder();
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
                 "dan.rc.label",
-                [new SourceMetricCandidate(sourceId, "dan.rc.label")]))
-            .Append(new EffectiveWidgetBinding(
+                [new SourceMetricCandidate(sourceId, "dan.rc.label")]));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
                 "dan.rc.numeric",
-                [new SourceMetricCandidate(sourceId, "dan.rc.numeric")]))
-            .Append(new EffectiveWidgetBinding(
+                [new SourceMetricCandidate(sourceId, "dan.rc.numeric")]));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
                 "difficulty.label",
-                [new SourceMetricCandidate(sourceId, "difficulty.label")]))
-            .ToImmutableArray();
+                [new SourceMetricCandidate(sourceId, "difficulty.label")]));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "difficulty.lnPercent",
+                [
+                    new SourceMetricCandidate(sourceId, "difficulty.lnPercent"),
+                    new SourceMetricCandidate(sourceId, "pattern.lnPercent")
+                ]));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "dan.ln.label",
+                [new SourceMetricCandidate(sourceId, "dan.ln.label")]));
+        foreach (string metricId in _defaultSkillMetricIds)
+        {
+            AppendGeneratedBindingIfMissing(
+                bindings,
+                new EffectiveWidgetBinding(
+                    metricId,
+                    [new SourceMetricCandidate(sourceId, metricId)]));
+        }
         return new EffectiveWidgetSpec(widget.WidgetId, widget.Sources, bindings);
+    }
+
+    private static bool IsGeneratedDefaultBinding(EffectiveWidgetBinding binding, string sourceId)
+    {
+        if (binding.AllowsNull || binding.Candidates.Any(candidate =>
+                !string.Equals(candidate.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return binding.TargetMetricId switch
+        {
+            "difficulty.star" or "difficulty.label" or "dan.rc.label" or "dan.rc.numeric" or "dan.ln.label"
+                => binding.Candidates.Length == 1
+                    && string.Equals(binding.Candidates[0].MetricId, binding.TargetMetricId, StringComparison.OrdinalIgnoreCase),
+            "difficulty.lnPercent" => binding.Candidates.All(candidate =>
+                string.Equals(candidate.MetricId, "difficulty.lnPercent", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate.MetricId, "pattern.lnPercent", StringComparison.OrdinalIgnoreCase)),
+            _ when binding.TargetMetricId.StartsWith("skills.", StringComparison.OrdinalIgnoreCase)
+                => _defaultSkillMetricIds.Contains(binding.TargetMetricId, StringComparer.OrdinalIgnoreCase)
+                    && binding.Candidates.Length == 1
+                    && string.Equals(binding.Candidates[0].MetricId, binding.TargetMetricId, StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+    }
+
+    private static void AppendGeneratedBindingIfMissing(
+        ImmutableArray<EffectiveWidgetBinding>.Builder bindings,
+        EffectiveWidgetBinding binding)
+    {
+        if (!bindings.Any(existing => string.Equals(
+                existing.TargetMetricId,
+                binding.TargetMetricId,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            bindings.Add(binding);
+        }
     }
 }
 

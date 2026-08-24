@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ManiaMapAnalyzerOverlay.Avalonia.Platform;
+using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -79,50 +80,12 @@ public sealed class TosuService : IDisposable
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (!document.RootElement.TryGetProperty("state", out var state))
-            {
-                return null;
-            }
-
-            var stateName = string.Empty;
-            if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("name", out var name) &&
-                name.ValueKind == JsonValueKind.String)
-            {
-                stateName = name.GetString()?.Trim().ToLowerInvariant() ?? string.Empty;
-            }
-
-            int? stateNumber = null;
-            if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("number", out var number))
-            {
-                if (number.TryGetInt32(out var numericState))
-                {
-                    stateNumber = numericState;
-                }
-            }
-
-            bool? isPlaying = stateName switch
-            {
-                "play" or "gameplay" or "playing" or "spectating" or "watchingreplay" or "replay" => true,
-                "menu" or "edit" or "selectplay" or "selectedit" or "selectdrawings" or "resultscreen" or "result" or "results" or "options" or "songselect" or "exit" => false,
-                _ when stateNumber is int numberValue => numberValue == 2,
-                _ => null
-            };
-
-            bool? isPaused = stateName switch
-            {
-                "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options" or "result" or "results" or "resultscreen" or "exit" => false,
-                "pause" or "paused" or "break" => true,
-                _ => null
-            };
-            if (isPaused is null && document.RootElement.TryGetProperty("game", out var game) &&
-                game.ValueKind == JsonValueKind.Object &&
-                game.TryGetProperty("paused", out var paused) &&
-                paused.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                isPaused = paused.GetBoolean();
-            }
-
-            return new TosuGameplayState(stateName, stateNumber, isPlaying, isPaused);
+            return TosuRealtimePayloadNormalizer.TryReadGameplayState(
+                document.RootElement,
+                DateTimeOffset.UtcNow,
+                out var gameplay)
+                ? gameplay
+                : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -355,7 +318,6 @@ public sealed class TosuService : IDisposable
         _httpClient.Dispose();
     }
 }
-
 public sealed class TosuStateChangedEventArgs : EventArgs
 {
     public TosuStateChangedEventArgs(string message, bool isRunning)
@@ -373,5 +335,3 @@ public sealed class TosuStateChangedEventArgs : EventArgs
         get;
     }
 }
-
-public sealed record TosuGameplayState(string Name, int? Number, bool? IsPlaying, bool? IsPaused);

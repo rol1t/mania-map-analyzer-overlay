@@ -25,6 +25,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D6497AA2
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.ReplayAnalysis.Tests", "tests\ReplayAnalysis.Tests\ManiaMapAnalyzerOverlay.ReplayAnalysis.Tests.csproj", "{20B15FAF-0277-4A93-8661-039A662B09CA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.Application", "src\Application\ManiaMapAnalyzerOverlay.Application.csproj", "{CFE59F38-22CE-4056-8954-BD5FFFBE5F68}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiaMapAnalyzerOverlay.Application.Tests", "tests\Application.Tests\ManiaMapAnalyzerOverlay.Application.Tests.csproj", "{2086013C-E1DE-4ABA-B1D2-0C771CFC7554}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -62,6 +66,14 @@ Global
 		{20B15FAF-0277-4A93-8661-039A662B09CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{20B15FAF-0277-4A93-8661-039A662B09CA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{20B15FAF-0277-4A93-8661-039A662B09CA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CFE59F38-22CE-4056-8954-BD5FFFBE5F68}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CFE59F38-22CE-4056-8954-BD5FFFBE5F68}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CFE59F38-22CE-4056-8954-BD5FFFBE5F68}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CFE59F38-22CE-4056-8954-BD5FFFBE5F68}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2086013C-E1DE-4ABA-B1D2-0C771CFC7554}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2086013C-E1DE-4ABA-B1D2-0C771CFC7554}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2086013C-E1DE-4ABA-B1D2-0C771CFC7554}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2086013C-E1DE-4ABA-B1D2-0C771CFC7554}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A2D7D546-7045-44DC-A65D-43B55D720CA0} = {FDF0992B-4AD7-4248-B4C0-C44DB2ADD3E8}
@@ -71,5 +83,7 @@ Global
 		{E16DBA6B-38C7-4D22-9F18-AFB6E5A490FA} = {780C9DF2-548B-486C-8517-64069139AEC1}
 		{D3BB4930-F560-421A-91FA-B6BD72DAAA83} = {2734CA77-2F1A-4AD2-9113-A600E5BEA06A}
 		{20B15FAF-0277-4A93-8661-039A662B09CA} = {D6497AA2-DEE0-49BC-BA89-7C6F23A3781A}
+		{CFE59F38-22CE-4056-8954-BD5FFFBE5F68} = {2734CA77-2F1A-4AD2-9113-A600E5BEA06A}
+		{2086013C-E1DE-4ABA-B1D2-0C771CFC7554} = {D6497AA2-DEE0-49BC-BA89-7C6F23A3781A}
 	EndGlobalSection
 EndGlobal

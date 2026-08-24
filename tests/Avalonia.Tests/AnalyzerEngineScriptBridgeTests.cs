@@ -114,6 +114,33 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TreatsBeatmapParseFailureAsNonFatalPerBeatmapFallback()
+    {
+        var analysisTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(ReadyMessage());
+        var requestScript = await _host.WaitForScriptAsync();
+        var correlationId = ReadCorrelationId(requestScript);
+        _host.Publish(ErrorMessage(correlationId, "ANALYSIS_FAILED", "Beatmap parse failed"));
+
+        var result = await analysisTask;
+
+        Assert.Equal(AnalysisOutcome.Failed, result.Outcome);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalysisDiagnosticSeverity.Warning);
+        Assert.Contains(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Warning);
+        Assert.DoesNotContain(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Error);
+    }
+
+    [Fact]
     public async Task RecoversAfterWorkerBootstrapFailureOnNextRequest()
     {
         var firstTask = _bridge.AnalyzeAsync(CreateRequest());
@@ -306,7 +333,10 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
         });
     }
 
-    private static string ErrorMessage(string correlationId) =>
+    private static string ErrorMessage(
+        string correlationId,
+        string code = "PIPELINE_IMPORT_FAILED",
+        string message = "Pipeline import failed") =>
         AnalyzerEngineScriptBridge.NativeMessagePrefix + JsonSerializer.Serialize(new
         {
             protocol = "test.headless",
@@ -316,8 +346,8 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
             status = "error",
             error = new
             {
-                code = "PIPELINE_IMPORT_FAILED",
-                message = "Pipeline import failed",
+                code,
+                message,
                 stage = "pipeline-import"
             }
         });

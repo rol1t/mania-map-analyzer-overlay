@@ -18,6 +18,25 @@ public sealed class DanSnapshotTests
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.label");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.label");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.numeric");
+        EffectiveWidgetBinding lnPercent = Assert.Single(
+            widget.Bindings.Where(binding => binding.TargetMetricId == "difficulty.lnPercent"));
+        Assert.Contains(lnPercent.Candidates, candidate => candidate.MetricId == "difficulty.lnPercent");
+        Assert.Contains(lnPercent.Candidates, candidate => candidate.MetricId == "pattern.lnPercent");
+        Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.ln.label");
+        foreach (string metricId in new[]
+        {
+            "skills.overall",
+            "skills.stream",
+            "skills.jumpstream",
+            "skills.handstream",
+            "skills.stamina",
+            "skills.jackspeed",
+            "skills.chordjack",
+            "skills.technical"
+        })
+        {
+            Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == metricId);
+        }
     }
 
     [Fact]
@@ -40,6 +59,35 @@ public sealed class DanSnapshotTests
         EffectiveWidgetSpec widget = Assert.Single(migrated.Widgets);
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.label");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.numeric");
+        Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.lnPercent");
+        Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.ln.label");
+
+        EffectiveAnalysisConfiguration previouslyMigrated = legacy with
+        {
+            Widgets =
+            [
+                new EffectiveWidgetSpec(
+                    "headless-overlay",
+                    legacy.Widgets[0].Sources,
+                    [
+                        legacy.Widgets[0].Bindings[0],
+                        new EffectiveWidgetBinding(
+                            "difficulty.label",
+                            [new SourceMetricCandidate("headless-primary", "difficulty.label")]),
+                        new EffectiveWidgetBinding(
+                            "dan.rc.label",
+                            [new SourceMetricCandidate("headless-primary", "dan.rc.label")]),
+                        new EffectiveWidgetBinding(
+                            "dan.rc.numeric",
+                            [new SourceMetricCandidate("headless-primary", "dan.rc.numeric")])
+                    ])
+            ]
+        };
+
+        EffectiveWidgetSpec migratedExisting = previouslyMigrated.Normalize().Widgets[0];
+        Assert.Contains(migratedExisting.Bindings, binding => binding.TargetMetricId == "difficulty.lnPercent");
+        Assert.Contains(migratedExisting.Bindings, binding => binding.TargetMetricId == "dan.ln.label");
+        Assert.Contains(migratedExisting.Bindings, binding => binding.TargetMetricId == "skills.stream");
 
         EffectiveAnalysisConfiguration custom = legacy with
         {
@@ -53,6 +101,21 @@ public sealed class DanSnapshotTests
         };
 
         Assert.Single(custom.Normalize().Widgets[0].Bindings);
+
+        EffectiveAnalysisConfiguration customHeadlessId = legacy with
+        {
+            Widgets =
+            [
+                new EffectiveWidgetSpec(
+                    "headless-overlay",
+                    legacy.Widgets[0].Sources,
+                    [new EffectiveWidgetBinding(
+                        "difficulty.star",
+                        [new SourceMetricCandidate("headless-primary", "custom.star")])])
+            ]
+        };
+
+        Assert.Single(customHeadlessId.Normalize().Widgets[0].Bindings);
     }
 
     [Fact]
@@ -81,6 +144,55 @@ public sealed class DanSnapshotTests
         RankEstimate ln = Assert.Single(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
         Assert.Equal("3.77 SR", rc.Value);
         Assert.Equal("LN 5", ln.Value);
+    }
+
+    [Fact]
+    public void SkillsUseDisplayLabelsInsteadOfMetricIds()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("skills.overall", 15.2),
+                Metric("skills.stream", 13.5),
+                Metric("skills.jackspeed", 7.7)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+
+        Assert.Equal("Overall", Assert.Single(snapshot.Skills, skill => skill.Id == "skills.overall").Label);
+        Assert.Equal("Stream", Assert.Single(snapshot.Skills, skill => skill.Id == "skills.stream").Label);
+        Assert.Equal("JackSpeed", Assert.Single(snapshot.Skills, skill => skill.Id == "skills.jackspeed").Label);
+    }
+
+    [Fact]
+    public void UsesBeatmapCircleSizeWhenAnalyzerOmitsKeyCountMetric()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test", CircleSize = 7 },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Partial,
+            [Metric("difficulty.star", 5.25)],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+
+        Assert.Equal(7, snapshot.Difficulty.Keys);
     }
 
     [Fact]
@@ -158,6 +270,33 @@ public sealed class DanSnapshotTests
             []);
 
         AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.Contains(snapshot.Ranks, rank => rank.SystemId == "ln-dan" && rank.Value == "LN 6");
+    }
+
+    [Fact]
+    public void PatternLnPercentPopulatesCanonicalDifficultyAndLnDan()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [
+                Metric("dan.rc.label", "Reform 4"),
+                Metric("dan.ln.label", "LN 6"),
+                Metric("pattern.lnPercent", 51.4),
+                Metric("difficulty.star", 4.2)
+            ],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+        Assert.Equal(51.4, snapshot.Difficulty.LnPercent);
         Assert.Contains(snapshot.Ranks, rank => rank.SystemId == "ln-dan" && rank.Value == "LN 6");
     }
 

@@ -25,6 +25,23 @@ public sealed class OverlayPresentationServiceTests
     }
 
     [Fact]
+    public void FullscreenRuntimePollsTheApplicationViewStateTransport()
+    {
+        var settings = new LauncherSettings
+        {
+            AnalyzerProviderId = "mania-map-analyser",
+            OverlayLayoutMode = "default",
+            OverlayPresetId = "default"
+        };
+
+        var scripts = new OverlayPresentationService().Build(settings, overlayMode: true);
+
+        Assert.Contains("view-state.json", scripts.FullscreenObserverScript, StringComparison.Ordinal);
+        Assert.Contains("overlay:view-state", scripts.FullscreenObserverScript, StringComparison.Ordinal);
+        Assert.Contains("\"overlayMode\":false", scripts.FullscreenObserverScript, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PauseCoachCardPresentationIsAvailable()
     {
         var settings = new LauncherSettings

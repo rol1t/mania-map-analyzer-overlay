@@ -40,6 +40,15 @@
     ? (window.__overlayPauseCoachRuntime || (window.__overlayPauseCoachRuntime = window.__createRealtimePauseCoachRuntime()))
     : null;
   let lastPlayingHits = null;
+  let nativePauseCoachDisabled = false;
+
+  function onNativeViewState(event) {
+    const viewState = event && event.detail;
+    if (!viewState || String(viewState.producer || "").toLowerCase() !== "native" || !viewState.realtime) return;
+    nativePauseCoachDisabled = true;
+  }
+
+  window.addEventListener("overlay:view-state", onNativeViewState);
 
   function emptyBeatmap() {
     return {
@@ -549,6 +558,16 @@
     };
   }
 
+  function nativePauseCoachAuthoritative() {
+    if (nativePauseCoachDisabled) return true;
+    const snapshot = window.__overlayNativePauseCoachSnapshot;
+    if (!snapshot || !snapshot.pauseCoach) return false;
+    if (snapshot.nativePauseCoach === true) return true;
+    const extensions = snapshot.extensions || {};
+    return extensions.nativePauseCoach === true
+      && String(extensions.realtimeProducer || "").toLowerCase() === "native";
+  }
+
   function buildSnapshot() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -830,7 +849,15 @@
       lastPlayingHits = null;
     }
 
-    if (pauseCoachRuntime) {
+    // Once the application has delivered an authoritative native view-state,
+    // the browser adapter remains a telemetry fallback for metadata only. Do
+    // not create/update a second Pause Coach session that could alternate its
+    // rolling metrics with the native producer. Preview/fullscreen documents
+    // without a native snapshot keep the browser runtime unchanged.
+    const nativeAuthoritative = nativePauseCoachAuthoritative();
+    if (nativeAuthoritative) {
+      pauseCoach = null;
+    } else if (pauseCoachRuntime) {
       pauseCoach = pauseCoachRuntime.process({
         beatmap: {
           id: beatmap.id,
@@ -968,6 +995,9 @@
       if (publishTimer) clearTimeout(publishTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (statePollTimer) window.clearInterval(statePollTimer);
+      if (typeof window.removeEventListener === "function") {
+        window.removeEventListener("overlay:view-state", onNativeViewState);
+      }
       if (socket) {
         try { socket.close(); } catch (exception) { reportRuntimeError("Disposing analyzer websocket", exception); }
       }
@@ -984,6 +1014,7 @@
       statePollTimer = 0;
       statePollInFlight = false;
       httpPauseState = null;
+      nativePauseCoachDisabled = false;
     },
   };
   // Test-only access to the same raw-payload adapter boundary used by the

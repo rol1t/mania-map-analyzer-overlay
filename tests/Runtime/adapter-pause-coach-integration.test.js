@@ -117,6 +117,9 @@ function createScenario(source) {
       await window.__overlayAnalyzerAdapterTest.pollState();
       window.__overlayAnalyzerAdapterTest.publish();
     },
+    notifyNativeViewState(viewState) {
+      window.dispatchEvent({ type: "overlay:view-state", detail: viewState });
+    },
     dispose() { window.__overlayAnalyzerAdapter.dispose(); },
   };
 }
@@ -191,7 +194,20 @@ async function run(source) {
   scenario.dispose();
 }
 
-Promise.all([run("websocket"), run("browser-http")]).then(() => {
+async function runNativeAuthoritySuppression() {
+  const scenario = createScenario("websocket");
+  scenario.notifyNativeViewState({
+    producer: "native",
+    realtime: { state: 3, mapTimeMs: 25_000 },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  scenario.apply(payload("Play", true, 25_000, 25000, 97.5, 34, [0, 1, -1, 2]));
+  const latest = scenario.snapshots.at(-1);
+  assert.equal(latest.pauseCoach, null, "browser must not publish a second coach after native authority exists");
+  scenario.dispose();
+}
+
+Promise.all([run("websocket"), run("browser-http"), runNativeAuthoritySuppression()]).then(() => {
   console.log("adapter-pause-coach-integration.test.js: all assertions passed");
 }).catch(error => {
   console.error(error);

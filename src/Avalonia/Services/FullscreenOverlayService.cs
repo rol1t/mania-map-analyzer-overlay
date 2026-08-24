@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
@@ -17,6 +18,17 @@ public sealed class FullscreenOverlayService
     private const string CounterName = "ManiaMapAnalyzerOverlay";
     private const string BaseUrl = "http://127.0.0.1:24050";
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly FullscreenViewStateFileSink _viewStateSink;
+
+    public FullscreenOverlayService()
+        : this(new FullscreenViewStateFileSink(CounterDirectory))
+    {
+    }
+
+    public FullscreenOverlayService(FullscreenViewStateFileSink viewStateSink)
+    {
+        _viewStateSink = viewStateSink ?? throw new ArgumentNullException(nameof(viewStateSink));
+    }
 
     public bool IsSupported => OperatingSystem.IsWindows();
 
@@ -139,6 +151,21 @@ public sealed class FullscreenOverlayService
         File.WriteAllText(runtimePath, runtime, new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(CounterDirectory, "runtime.version"),
             DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture), new UTF8Encoding(false));
+    }
+
+    /// <summary>
+    /// Publishes the latest application-owned view state to the static Tosu
+    /// overlay surface. The temporary file and replace keep a browser fetch
+    /// from observing a partially-written JSON document.
+    /// </summary>
+    public void WriteViewState(OverlayViewState viewState)
+    {
+        _viewStateSink.Write(viewState);
+    }
+
+    public void ClearViewState()
+    {
+        _viewStateSink.Clear();
     }
 
     private static (int Width, int Height) GetOverlaySize(LauncherSettings settings)

@@ -4,6 +4,8 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
 namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
@@ -23,6 +25,19 @@ public sealed record TosuRealtimeTelemetry(
 
     public int HitErrorSampleCount => Sample.HitErrorArray.Length;
 }
+
+/// <summary>
+/// Transport-neutral source for normalized Tosu realtime telemetry.
+/// </summary>
+public interface IRealtimeTelemetrySource
+{
+    Task<TosuRealtimeTelemetry?> ReadAsync(CancellationToken cancellationToken = default);
+
+    void Reset();
+}
+
+/// <summary>Gameplay state projected from one raw Tosu v2 payload.</summary>
+public sealed record TosuGameplayState(string Name, int? Number, bool? IsPlaying, bool? IsPaused);
 
 /// <summary>
 /// Native, visibility-independent Tosu v2 collector. It owns the raw-payload
@@ -78,6 +93,39 @@ public sealed record TosuRealtimeNormalizedPayload(
 
 public static class TosuRealtimePayloadNormalizer
 {
+    public static bool TryReadGameplayState(
+        JsonElement payload,
+        DateTimeOffset receivedAt,
+        out TosuGameplayState gameplay)
+    {
+        gameplay = null!;
+        if (!TryNormalize(payload, previous: null, receivedAt, out var normalized))
+        {
+            return false;
+        }
+
+        bool? isPlaying = normalized.Sample.State switch
+        {
+            RealtimePlayState.Playing or RealtimePlayState.Paused or RealtimePlayState.Replay or RealtimePlayState.Spectating => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results => false,
+            _ when normalized.RawStateNumber == 2 => true,
+            _ => null
+        };
+        bool? isPaused = normalized.Sample.State switch
+        {
+            RealtimePlayState.Paused => true,
+            RealtimePlayState.Playing => false,
+            RealtimePlayState.Menu or RealtimePlayState.Results => false,
+            _ => normalized.RawPaused
+        };
+        gameplay = new TosuGameplayState(
+            normalized.RawStateName,
+            normalized.RawStateNumber,
+            isPlaying,
+            isPaused);
+        return true;
+    }
+
     public static bool TryNormalize(
         JsonElement payload,
         RealtimeTelemetrySample? previous,
