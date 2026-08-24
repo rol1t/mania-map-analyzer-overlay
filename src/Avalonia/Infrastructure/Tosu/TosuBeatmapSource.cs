@@ -515,7 +515,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
         var name = ReadString(state, "name");
         var token = new string(name.Where(char.IsLetter).ToArray()).ToLowerInvariant();
-        return token is "results" or "result" or "ranking";
+        return token is "results" or "result" or "resultscreen" or "ranking";
     }
 
     private static void CollectModCodes(JsonElement value, ISet<string> result)

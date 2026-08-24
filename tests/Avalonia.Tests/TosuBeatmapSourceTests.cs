@@ -63,7 +63,7 @@ public sealed class TosuBeatmapSourceTests
     {
         const string payload = """
         {
-          "state": { "name": "Results" },
+          "state": { "name": "ResultScreen" },
           "beatmap": {
             "id": 101, "md5": "hash-a", "set": 7,
             "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",

@@ -957,6 +957,10 @@ public partial class MainWindow : Window
         var html = "<!doctype html><html><head><meta charset='utf-8'><style>" + loadingCss + "</style></head><body><div class='box'><div class='ring" + (error ? " error" : "") + "'></div><h1>" + safeTitle + "</h1><p>" + safeMessage + "</p></div></body></html>";
         try
         {
+            // NavigateToString also replaces the document. Invalidate any
+            // pending analysis navigation so its continuation cannot mark
+            // this error page as a ready analyzer document.
+            InvalidateBrowserNavigation();
             Browser.NavigateToString(html, new Uri(BaseUrl));
         }
         catch (Exception exception)
