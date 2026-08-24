@@ -108,6 +108,21 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
+    public void HitErrorArrayTruncateThenGrowDoesNotDuplicateKnownOffsets()
+    {
+        var collector = NewCollector();
+        collector.Process(Payload("Play", 2, false, 5_000, 5_000, 98, 3, 0, [1, 2, 3]), "native-http", _start);
+        collector.Process(Payload("Play", 2, false, 6_000, 6_000, 98, 3, 0, [1, 2]), "native-http", _start.AddSeconds(1));
+        TosuRealtimeTelemetry grown = collector.Process(
+            Payload("Play", 2, false, 7_000, 7_000, 98, 4, 0, [1, 2, 3, 4]),
+            "native-http",
+            _start.AddSeconds(2))!;
+
+        Assert.Equal(4, grown.Snapshot.Timing.SampleCount);
+        Assert.Equal([1d, 2d, 3d, 4d], grown.Snapshot.RecentOffsets);
+    }
+
+    [Fact]
     public void NamedMenuStateWinsOverStalePausedFlag()
     {
         var collector = NewCollector();

@@ -601,7 +601,13 @@ public sealed class RealtimePlayAnalyzer
             _judgements.RemoveRange(0, _judgements.Count - _options.MaxTimelineEvents);
         }
 
-        _previousHitErrorArray = sample.HitErrorArray;
+        // Keep the longest cumulative prefix through a transient truncation.
+        // A following full payload can then append only truly new offsets
+        // instead of re-adding the truncated tail.
+        if (!IsStrictPrefix(sample.HitErrorArray, _previousHitErrorArray))
+        {
+            _previousHitErrorArray = sample.HitErrorArray;
+        }
     }
 
     private void AppendNewOffsets(ImmutableArray<double> current, DateTimeOffset receivedAt, int mapTimeMs)
@@ -630,6 +636,24 @@ public sealed class RealtimePlayAnalyzer
         {
             _offsets.RemoveRange(0, _offsets.Count - _options.MaxTimingSamples);
         }
+    }
+
+    private static bool IsStrictPrefix(ImmutableArray<double> prefix, ImmutableArray<double> value)
+    {
+        if (prefix.Length >= value.Length)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < prefix.Length; index++)
+        {
+            if (Math.Abs(prefix[index] - value[index]) >= 0.001)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private RealtimeAnalysisSnapshot BuildSnapshot(RealtimeTelemetrySample sample)

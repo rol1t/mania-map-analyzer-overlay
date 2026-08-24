@@ -875,6 +875,17 @@
 
   function renderViewState(viewState, force) {
     if (!viewState) return;
+    const epoch = String(viewState.presentationEpoch || "");
+    const previousEpoch = String(window.__overlayPresentationEpoch || "");
+    if (epoch && epoch !== previousEpoch) {
+      // A fullscreen document may outlive the native process. Versions restart
+      // per process, so discard old renderer/native authority before applying
+      // a new epoch.
+      window.__overlayLatestViewStateVersion = undefined;
+      window.__overlayLatestViewState = undefined;
+      window.__overlayNativePauseCoachSnapshot = null;
+    }
+    if (epoch) window.__overlayPresentationEpoch = epoch;
     const version = Number(viewState.version);
     const latestVersion = Number(window.__overlayLatestViewStateVersion);
     if (!force && Number.isFinite(version) && Number.isFinite(latestVersion) && version < latestVersion) {

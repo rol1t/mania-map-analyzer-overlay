@@ -323,6 +323,7 @@ public sealed class OverlayRuntimeReducerTests
         OverlayViewState view = OverlayViewStateComposer.Compose(state);
 
         Assert.Equal(state.Version, view.Version);
+        Assert.NotEmpty(view.PresentationEpoch);
         Assert.Equal(state.BeatmapGeneration, view.BeatmapGeneration);
         Assert.Equal("674175", view.BeatmapId);
         Assert.Equal("674175", view.Beatmap.Id);

@@ -10,6 +10,12 @@ namespace ManiaMapAnalyzerOverlay.Application;
 /// </summary>
 public sealed record OverlayViewState
 {
+    /// <summary>
+    /// Changes on every application process start. Presentation documents can
+    /// outlive the process, so Version alone is not a globally ordered value.
+    /// </summary>
+    public string PresentationEpoch { get; init; } = string.Empty;
+
     public long Version
     {
         get; init;

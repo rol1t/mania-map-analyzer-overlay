@@ -10,6 +10,8 @@ namespace ManiaMapAnalyzerOverlay.Application;
 /// </summary>
 public static class OverlayViewStateComposer
 {
+    private static readonly string _presentationEpoch = Guid.NewGuid().ToString("N");
+
     public static OverlayViewState Compose(OverlayRuntimeState runtime)
     {
         ArgumentNullException.ThrowIfNull(runtime);
@@ -36,6 +38,7 @@ public static class OverlayViewStateComposer
 
         return new OverlayViewState
         {
+            PresentationEpoch = _presentationEpoch,
             Version = runtime.Version,
             BeatmapGeneration = runtime.BeatmapGeneration,
             Producer = realtime is not null

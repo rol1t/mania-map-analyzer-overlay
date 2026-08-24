@@ -357,6 +357,15 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         catch (TosuBeatmapSourceException exception)
         {
             AppLogger.Debug("Headless snapshot freshness", $"Could not verify analysis map before publishing: {exception.Message}");
+            // The result is intentionally not published without a verified
+            // identity, but the same map must be eligible for the next poll.
+            // Otherwise a single transient Tosu 404 permanently suppresses
+            // the already completed analysis.
+            lock (_sync)
+            {
+                _lastAnalysisKey = null;
+                _lastSceneKey = null;
+            }
             return false;
         }
     }

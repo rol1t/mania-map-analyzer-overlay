@@ -59,6 +59,35 @@ public sealed class TosuBeatmapSourceTests
     }
 
     [Fact]
+    public async Task UsesResultsModsInsteadOfAnEmptyStalePlayObject()
+    {
+        const string payload = """
+        {
+          "state": { "name": "Results" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "play": { "mods": { "array": [] } },
+          "resultsScreen": { "mods": { "array": [{ "acronym": "NC" }] } }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["NC"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
     public async Task ReadsManiaKeyCountFromCurrentTosuV2StatsShape()
     {
         var payload = CreatePayload("101", "hash-a", "7", "menu")

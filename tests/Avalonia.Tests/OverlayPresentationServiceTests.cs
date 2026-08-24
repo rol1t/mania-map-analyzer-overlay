@@ -38,6 +38,7 @@ public sealed class OverlayPresentationServiceTests
 
         Assert.Contains("view-state.json", scripts.FullscreenObserverScript, StringComparison.Ordinal);
         Assert.Contains("overlay:view-state", scripts.FullscreenObserverScript, StringComparison.Ordinal);
+        Assert.Contains("presentationEpoch", scripts.FullscreenObserverScript, StringComparison.Ordinal);
         Assert.Contains("\"overlayMode\":false", scripts.FullscreenObserverScript, StringComparison.Ordinal);
     }
 

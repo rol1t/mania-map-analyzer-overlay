@@ -312,7 +312,7 @@ public partial class MainWindow : Window
 
     private void ReplaceBrowser(IBrush background, bool offscreen)
     {
-        Interlocked.Increment(ref _browserNavigationGeneration);
+        InvalidateBrowserNavigation();
         BeginNativePresentationSession();
         var previous = Browser;
         previous.NavigationCompleted -= Browser_NavigationCompleted;
@@ -937,7 +937,7 @@ public partial class MainWindow : Window
             // previous document. Keep the latest native snapshot so the new
             // document can replay it after NavigationCompleted in either
             // launcher-preview or overlay mode.
-            SetNativeBrowserReady(false);
+            InvalidateBrowserNavigation();
 
             Browser.Navigate(new Uri(url));
         }
@@ -1409,6 +1409,12 @@ public partial class MainWindow : Window
         }
 
         return true;
+    }
+
+    private void InvalidateBrowserNavigation()
+    {
+        Interlocked.Increment(ref _browserNavigationGeneration);
+        SetNativeBrowserReady(false);
     }
 
     private static bool TryHandlePauseCoachTrace(string message)
@@ -2179,7 +2185,7 @@ public partial class MainWindow : Window
         _model.SetStatus(L(_model.Tosu.IsRunning ? "status.tosu_running" : "status.tosu_not_running"), _model.Tosu.IsRunning);
         if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
         {
-            SetNativeBrowserReady(false);
+            InvalidateBrowserNavigation();
             Browser.Refresh();
         }
     }

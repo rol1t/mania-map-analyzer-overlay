@@ -440,9 +440,15 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
     {
         var candidates = new List<JsonElement>();
         var menuFirst = IsMenuState(root);
+        var resultsFirst = IsResultsState(root);
         if (menuFirst)
         {
             AddModsCandidate(root, candidates, "menu");
+        }
+        else if (resultsFirst)
+        {
+            AddModsCandidate(root, candidates, "resultsScreen");
+            AddModsCandidate(root, candidates, "play");
         }
         else
         {
@@ -457,7 +463,10 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         }
         if (!menuFirst)
         {
-            AddModsCandidate(root, candidates, "resultsScreen");
+            if (!resultsFirst)
+            {
+                AddModsCandidate(root, candidates, "resultsScreen");
+            }
             AddModsCandidate(root, candidates, "menu");
         }
 
@@ -495,6 +504,18 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         var name = ReadString(state, "name");
         var token = new string(name.Where(char.IsLetter).ToArray()).ToLowerInvariant();
         return token is "menu" or "select" or "songselect" or "selectplay" or "selectedit" or "edit" or "options" or "exit";
+    }
+
+    private static bool IsResultsState(JsonElement root)
+    {
+        if (!TryGetPath(root, out var state, "state") || state.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var name = ReadString(state, "name");
+        var token = new string(name.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        return token is "results" or "result" or "ranking";
     }
 
     private static void CollectModCodes(JsonElement value, ISet<string> result)
@@ -555,6 +576,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
     private static double ExtractRate(JsonElement root, ImmutableArray<string> mods)
     {
         var menuFirst = IsMenuState(root);
+        var resultsFirst = IsResultsState(root);
         var paths = menuFirst
             ? new[]
             {
@@ -565,7 +587,16 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
                 new[] { "game", "speedRate" },
                 new[] { "game", "rate" }
             }
-            : new[]
+            : resultsFirst
+                ? new[]
+                {
+                    new[] { "resultsScreen", "speedRate" },
+                    new[] { "resultsScreen", "rate" },
+                    new[] { "play", "speedRate" },
+                    new[] { "play", "rate" },
+                    new[] { "rate" }
+                }
+                : new[]
             {
                 new[] { "play", "speedRate" },
                 new[] { "play", "rate" },
@@ -606,6 +637,8 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
         var modObjects = menuFirst
             ? new[] { new[] { "menu" } }
+            : resultsFirst
+                ? new[] { new[] { "resultsScreen" }, new[] { "play" }, new[] { "menu" } }
             : new[] { new[] { "play" }, new[] { "menu" } };
         foreach (var objectPath in modObjects)
         {
