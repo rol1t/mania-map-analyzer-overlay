@@ -13,6 +13,7 @@
   let mutationObserver = null;
   let reportFrame = 0;
   let delayedReportTimer = 0;
+  let settledReportTimer = 0;
   let lastReportedWidth = 0;
   let lastReportedHeight = 0;
   let dragGesture = null;
@@ -227,6 +228,26 @@
     reportFrame = requestAnimationFrame(reportSize);
   }
 
+  // A renderer pass mutates text/visibility synchronously, but WebView2 can
+  // commit the resulting grid reflow one compositor tick later. Take one
+  // immediate measurement and one settled measurement; both are idempotent
+  // and the native side ignores sub-pixel noise, so this does not make the
+  // HWND resize on every telemetry tick.
+  function queueSettledSizeReport() {
+    queueSizeReport();
+    if (settledReportTimer) return;
+    settledReportTimer = window.setTimeout(function () {
+      settledReportTimer = 0;
+      queueSizeReport();
+    }, 120);
+  }
+
+  // Renderer updates can change the card height without changing the
+  // observed root's border box in WebView2's offscreen compositor. Expose a
+  // debounced, idempotent measurement hook so a new Pause Coach section can
+  // request one explicit native size reconciliation.
+  window.__overlayHostQueueSizeReport = queueSettledSizeReport;
+
   if (card) {
     card.setAttribute("unselectable", "on");
     card.ondragstart = function () { return false; };
@@ -267,9 +288,13 @@
     if (window.ResizeObserver) {
       resizeObserver = new ResizeObserver(queueSizeReport);
       resizeObserver.observe(card);
+    } else if (window.MutationObserver) {
+      // ResizeObserver already tracks layout changes. Observing every text and
+      // child mutation as well makes each realtime poll schedule another HWND
+      // size negotiation, even when the rendered card dimensions are stable.
+      mutationObserver = new MutationObserver(queueSizeReport);
+      mutationObserver.observe(card, { attributes: true, childList: true, characterData: true, subtree: true });
     }
-    mutationObserver = new MutationObserver(queueSizeReport);
-    mutationObserver.observe(card, { attributes: true, childList: true, characterData: true, subtree: true });
     queueSizeReport();
     window.setTimeout(queueSizeReport, 120);
     window.setTimeout(queueSizeReport, 600);
@@ -286,7 +311,9 @@
       if (mutationObserver) mutationObserver.disconnect();
       if (reportFrame) cancelAnimationFrame(reportFrame);
       if (delayedReportTimer) clearTimeout(delayedReportTimer);
+      if (settledReportTimer) clearTimeout(settledReportTimer);
       if (window.__overlayHostSend === send) delete window.__overlayHostSend;
+      if (window.__overlayHostQueueSizeReport === queueSettledSizeReport) delete window.__overlayHostQueueSizeReport;
     },
   };
 })();

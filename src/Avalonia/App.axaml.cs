@@ -11,7 +11,7 @@ using ManiaMapAnalyzerOverlay.Avalonia.Views;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia;
 
-public partial class App : Application
+public partial class App : global::Avalonia.Application
 {
     public override void Initialize()
     {

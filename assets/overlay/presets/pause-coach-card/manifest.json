@@ -1,0 +1,14 @@
+{
+  "id": "pause-coach-card",
+  "name": "Pause Coach Card",
+  "nameRu": "Pause Coach — карточка",
+  "description": "Standalone realtime Pause Coach with evidence-first findings and provenance labels.",
+  "descriptionRu": "Отдельный realtime Pause Coach с наглядными инсайтами, доказательствами и качеством данных.",
+  "template": "template.html",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".pause-coach-card-root",
+  "supportsFullscreen": true,
+  "minWidth": 420,
+  "minHeight": 260
+}

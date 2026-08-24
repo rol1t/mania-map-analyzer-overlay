@@ -46,6 +46,7 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
     private readonly IAnalyzerScriptHost _scriptHost;
     private readonly IAnalyzerEngineDiagnosticSink _diagnosticSink;
     private readonly IAnalysisDiagnostics _analysisDiagnostics;
+    private readonly string? _deploymentDirectory;
     private readonly object _sync = new();
     private readonly List<AnalyzerEngineDiagnostic> _diagnostics = [];
     private AnalyzerEngineScriptBridge? _bridge;
@@ -60,13 +61,17 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
         AnalyzerEnginePackageDeployer deployer,
         IAnalyzerScriptHost scriptHost,
         IAnalyzerEngineDiagnosticSink? diagnosticSink = null,
-        IAnalysisDiagnostics? analysisDiagnostics = null)
+        IAnalysisDiagnostics? analysisDiagnostics = null,
+        string? deploymentDirectory = null)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _deployer = deployer ?? throw new ArgumentNullException(nameof(deployer));
         _scriptHost = scriptHost ?? throw new ArgumentNullException(nameof(scriptHost));
         _diagnosticSink = diagnosticSink ?? new AppLoggerAnalyzerEngineDiagnosticSink();
         _analysisDiagnostics = analysisDiagnostics ?? new AppLoggerAnalysisDiagnosticsAdapter();
+        _deploymentDirectory = string.IsNullOrWhiteSpace(deploymentDirectory)
+            ? null
+            : Path.GetFullPath(deploymentDirectory);
     }
 
     public event EventHandler<AnalyzerEngineSupervisorState>? StateChanged;
@@ -703,8 +708,8 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var tosuDirectory = AppPaths.TosuDirectory;
-        var legacyDirectory = AppPaths.LegacyTosuDirectory;
+        var tosuDirectory = _deploymentDirectory ?? AppPaths.TosuDirectory;
+        var legacyDirectory = _deploymentDirectory is null ? AppPaths.LegacyTosuDirectory : null;
 
         string? targetDirectory = null;
         if (Directory.Exists(tosuDirectory))

@@ -1,0 +1,15 @@
+{
+  "state": { "number": 2, "name": "Playing" },
+  "game": { "focused": true, "paused": false },
+  "beatmap": { "id": "map-1", "hash": "hash-1", "time": { "live": 12345 } },
+  "play": {
+    "score": 123456,
+    "accuracy": 98.5,
+    "combo": { "current": 123, "max": 456 },
+    "healthBar": { "normal": 0.82, "smooth": 0.8 },
+    "mods": { "array": [{ "acronym": "DT" }, { "acronym": "NC" }] },
+    "hits": { "0": 2, "50": 1, "100": 3, "300": 40, "geki": 4, "katu": 5 },
+    "hitErrorArray": [-4, 2, 6],
+    "unstableRate": 32.1
+  }
+}

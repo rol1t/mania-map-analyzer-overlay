@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
@@ -17,6 +18,17 @@ public sealed class FullscreenOverlayService
     private const string CounterName = "ManiaMapAnalyzerOverlay";
     private const string BaseUrl = "http://127.0.0.1:24050";
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly FullscreenViewStateFileSink _viewStateSink;
+
+    public FullscreenOverlayService()
+        : this(new FullscreenViewStateFileSink(CounterDirectory))
+    {
+    }
+
+    public FullscreenOverlayService(FullscreenViewStateFileSink viewStateSink)
+    {
+        _viewStateSink = viewStateSink ?? throw new ArgumentNullException(nameof(viewStateSink));
+    }
 
     public bool IsSupported => OperatingSystem.IsWindows();
 
@@ -141,6 +153,21 @@ public sealed class FullscreenOverlayService
             DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture), new UTF8Encoding(false));
     }
 
+    /// <summary>
+    /// Publishes the latest application-owned view state to the static Tosu
+    /// overlay surface. The temporary file and replace keep a browser fetch
+    /// from observing a partially-written JSON document.
+    /// </summary>
+    public void WriteViewState(OverlayViewState viewState)
+    {
+        _viewStateSink.Write(viewState);
+    }
+
+    public void ClearViewState()
+    {
+        _viewStateSink.Clear();
+    }
+
     private static (int Width, int Height) GetOverlaySize(LauncherSettings settings)
     {
         var scale = Math.Clamp(settings.OverlayScalePercent, 50, 180) / 100d;
@@ -193,7 +220,7 @@ public sealed class FullscreenOverlayService
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ManiaMapAnalyzerOverlay/fullscreen.css">
 </head><body><iframe id="overlay-source" src="__OVERLAY_ANALYZER_SOURCE__" allowtransparency="true"></iframe>
 <script>(function(){const frame=document.getElementById('overlay-source');const base='/ManiaMapAnalyzerOverlay/';let appliedVersion='';
-async function apply(version){try{const doc=frame.contentDocument;if(!doc||!doc.head)throw new Error('Analyzer frame document is unavailable.');const previous=doc.getElementById('overlay-fullscreen-runtime');if(previous)previous.remove();const script=doc.createElement('script');script.id='overlay-fullscreen-runtime';script.src=base+'runtime.js?v='+encodeURIComponent(version);doc.head.appendChild(script);appliedVersion=version;}catch(exception){console.error('Applying fullscreen overlay runtime failed',exception);}}
+async function apply(version){try{const doc=frame.contentDocument;if(!doc||!doc.head)throw new Error('Analyzer frame document is unavailable.');const previous=doc.getElementById('overlay-fullscreen-runtime');if(previous)previous.remove();const script=doc.createElement('script');script.id='overlay-fullscreen-runtime';script.src=base+'runtime.js?v='+encodeURIComponent(version);await new Promise((resolve,reject)=>{script.onload=resolve;script.onerror=()=>reject(new Error('Fullscreen runtime script failed to load.'));doc.head.appendChild(script);});appliedVersion=version;}catch(exception){console.error('Applying fullscreen overlay runtime failed',exception);}}
 async function refresh(){try{const response=await fetch(base+'runtime.version?t='+Date.now(),{cache:'no-store'});if(!response.ok)throw new Error('Runtime version request failed with HTTP '+response.status+'.');const version=(await response.text()).trim();if(version&&version!==appliedVersion)await apply(version);}catch(exception){console.error('Refreshing fullscreen overlay runtime failed',exception);}}
 frame.addEventListener('load',function(){appliedVersion='';refresh();});setInterval(refresh,1000);refresh();})();</script></body></html>
 """.Replace("__OVERLAY_ANALYZER_SOURCE__", sourcePath, StringComparison.Ordinal);

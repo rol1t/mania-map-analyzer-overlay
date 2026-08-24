@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ManiaMapAnalyzerOverlay.Avalonia.Platform;
+using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -22,6 +23,41 @@ public sealed class TosuService : IDisposable
 
     public string? ExecutablePath => FindExecutable();
     public bool IsRunning => _process is { HasExited: false };
+
+    /// <summary>
+    /// Reads a complete Tosu v2 snapshot for the native realtime analyzer.
+    /// This call intentionally remains independent from the presentation
+    /// WebView, which may be hidden while osu! is playing.
+    /// </summary>
+    public async Task<JsonElement?> GetGameplayPayloadAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        try
+        {
+            using var response = await _httpClient.GetAsync(
+                ServerUrl + "json/v2?overlay_realtime=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            return document.RootElement.Clone();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidOperationException)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "The full gameplay payload could not be read.", exception);
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Reads the authoritative osu! gameplay state from tosu. The overlay uses
@@ -44,45 +80,12 @@ public sealed class TosuService : IDisposable
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (!document.RootElement.TryGetProperty("state", out var state))
-            {
-                return null;
-            }
-
-            var stateName = string.Empty;
-            if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("name", out var name) &&
-                name.ValueKind == JsonValueKind.String)
-            {
-                stateName = name.GetString()?.Trim().ToLowerInvariant() ?? string.Empty;
-            }
-
-            int? stateNumber = null;
-            if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("number", out var number))
-            {
-                if (number.TryGetInt32(out var numericState))
-                {
-                    stateNumber = numericState;
-                }
-            }
-
-            bool? isPlaying = stateName switch
-            {
-                "play" or "gameplay" or "playing" or "spectating" or "watchingreplay" or "replay" => true,
-                "menu" or "edit" or "selectplay" or "selectedit" or "selectdrawings" or "resultscreen" or "result" or "options" or "songselect" => false,
-                _ when stateNumber is int numberValue => numberValue == 2,
-                _ => null
-            };
-
-            bool? isPaused = null;
-            if (document.RootElement.TryGetProperty("game", out var game) &&
-                game.ValueKind == JsonValueKind.Object &&
-                game.TryGetProperty("paused", out var paused) &&
-                paused.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                isPaused = paused.GetBoolean();
-            }
-
-            return new TosuGameplayState(stateName, stateNumber, isPlaying, isPaused);
+            return TosuRealtimePayloadNormalizer.TryReadGameplayState(
+                document.RootElement,
+                DateTimeOffset.UtcNow,
+                out var gameplay)
+                ? gameplay
+                : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -315,7 +318,6 @@ public sealed class TosuService : IDisposable
         _httpClient.Dispose();
     }
 }
-
 public sealed class TosuStateChangedEventArgs : EventArgs
 {
     public TosuStateChangedEventArgs(string message, bool isRunning)
@@ -333,5 +335,3 @@ public sealed class TosuStateChangedEventArgs : EventArgs
         get;
     }
 }
-
-public sealed record TosuGameplayState(string Name, int? Number, bool? IsPlaying, bool? IsPaused);

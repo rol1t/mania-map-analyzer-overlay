@@ -199,8 +199,24 @@ public sealed partial class AnalyzerEngineScriptBridge
         var details = error.TryGetProperty("details", out var detailsElement)
             ? detailsElement.ToString()
             : null;
+        // WebView2 can report a worker termination while the document is
+        // navigating without exposing a useful ErrorEvent message. This is a
+        // transient runtime boundary failure; keep it visible in diagnostics
+        // but do not turn it into a user-facing fatal dialog.
+        // A beatmap parse failure is a per-beatmap fallback condition, not a
+        // broken analyzer runtime. The estimator returns it for maps it
+        // cannot model (for example a map with fewer than two notes after
+        // preprocessing), so it must not replace the application page with
+        // the global error screen.
+        var isBeatmapParseFailure =
+            string.Equals(code, "ANALYSIS_FAILED", StringComparison.OrdinalIgnoreCase) &&
+            errorMessage.Contains("Beatmap parse failed", StringComparison.OrdinalIgnoreCase);
+        var severity = string.Equals(code, "WORKER_CRASHED", StringComparison.OrdinalIgnoreCase) ||
+                       isBeatmapParseFailure
+            ? AnalysisDiagnosticSeverity.Warning
+            : AnalysisDiagnosticSeverity.Error;
         return new AnalysisDiagnostic(
-            AnalysisDiagnosticSeverity.Error,
+            severity,
             code,
             errorMessage,
             string.IsNullOrWhiteSpace(stage) ? details : stage + ": " + details);

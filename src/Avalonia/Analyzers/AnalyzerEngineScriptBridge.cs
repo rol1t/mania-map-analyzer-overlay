@@ -147,10 +147,14 @@ public sealed partial class AnalyzerEngineScriptBridge : IAnalyzerEngine, IAsync
         }
         catch (AnalyzerEngineBridgeException exception)
         {
-            var diagnostic = AnalysisDiagnostic.Error(
+            // Preserve the structured severity from the runtime boundary. A
+            // worker termination is recoverable after a fresh bootstrap and
+            // must not be promoted back to a fatal, user-visible error here.
+            var diagnostic = new AnalysisDiagnostic(
+                exception.Diagnostic.Severity,
                 exception.Diagnostic.Code,
                 exception.Diagnostic.Message,
-                exception,
+                exception.ToString(),
                 exception.Diagnostic.Properties);
             Report(diagnostic, exception);
             return AnalysisResult.Failure(request, Descriptor, diagnostic);
@@ -290,6 +294,24 @@ public sealed partial class AnalyzerEngineScriptBridge : IAnalyzerEngine, IAsync
             await _scriptHost.InjectScriptAsync(BuildBootstrapScript(sessionId)).ConfigureAwait(false);
             return await readySource.Task.ConfigureAwait(false);
         }
+        catch (AnalyzerEngineBridgeException)
+        {
+            // A worker can fail asynchronously (for example when the page is
+            // navigated while WebView2 is still starting it).  Do not leave a
+            // faulted initialization task cached forever: every later request
+            // must be able to create a fresh runtime/session and recover.
+            lock (_sync)
+            {
+                if (ReferenceEquals(_readySource, readySource))
+                {
+                    _readySource = null;
+                    _activeSessionId = null;
+                    _initializationTask = null;
+                }
+            }
+
+            throw;
+        }
         catch (Exception exception) when (exception is not AnalyzerEngineBridgeException)
         {
             var diagnostic = AnalysisDiagnostic.Error(
@@ -300,6 +322,11 @@ public sealed partial class AnalyzerEngineScriptBridge : IAnalyzerEngine, IAsync
             lock (_sync)
             {
                 _initializationTask = null;
+                if (ReferenceEquals(_readySource, readySource))
+                {
+                    _readySource = null;
+                    _activeSessionId = null;
+                }
             }
 
             readySource.TrySetException(new AnalyzerEngineBridgeException(diagnostic.Message, exception, diagnostic));

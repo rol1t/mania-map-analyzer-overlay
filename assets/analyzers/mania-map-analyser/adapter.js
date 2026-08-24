@@ -11,6 +11,8 @@
   let socket = null;
   let observer = null;
   let animationFrame = 0;
+  let publishTimer = 0;
+  let lastPublishAt = 0;
   let reconnectTimer = 0;
   let statePollTimer = 0;
   let statePollInFlight = false;
@@ -20,8 +22,33 @@
   let beatmap = emptyBeatmap();
   let gameplay = emptyGameplay();
   let replay = emptyReplay();
+  let lastPlayPayload = {};
   let pauseCoach = null;
+  // In native overlay mode the C# TosuRealtimeCollector is authoritative for
+  // Pause Coach. This browser adapter remains a compatibility fallback for
+  // preview/fullscreen documents and continues publishing the same contract.
+  // HTTP polling is the authoritative state source for the native game. Keep
+  // a confirmed pause through a stale websocket `paused:false` delta until
+  // HTTP confirms that gameplay actually resumed.
+  let httpPauseState = null;
+  let lastPauseCoachTraceSignature = "";
+  let lastPauseCoachTraceAt = 0;
+  // Presentation changes re-inject this adapter while the WebView stays
+  // alive. Keep the current-attempt coach across those re-initializations so
+  // resizing or changing a preset does not erase the paused snapshot.
+  let pauseCoachRuntime = typeof window.__createRealtimePauseCoachRuntime === "function"
+    ? (window.__overlayPauseCoachRuntime || (window.__overlayPauseCoachRuntime = window.__createRealtimePauseCoachRuntime()))
+    : null;
   let lastPlayingHits = null;
+  let nativePauseCoachDisabled = false;
+
+  function onNativeViewState(event) {
+    const viewState = event && event.detail;
+    if (!viewState || String(viewState.producer || "").toLowerCase() !== "native" || !viewState.realtime) return;
+    nativePauseCoachDisabled = true;
+  }
+
+  window.addEventListener("overlay:view-state", onNativeViewState);
 
   function emptyBeatmap() {
     return {
@@ -80,6 +107,15 @@
     return Number.isFinite(number) ? number : null;
   }
 
+  function booleanValue(value) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && (value === 0 || value === 1)) return value === 1;
+    const token = clean(value).toLowerCase();
+    if (["true", "1", "yes", "paused", "pause"].includes(token)) return true;
+    if (["false", "0", "no", "playing", "play"].includes(token)) return false;
+    return null;
+  }
+
   function firstNumber(value) {
     const match = String(value || "").match(/[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)/);
     return match ? finiteNumber(match[0]) : null;
@@ -102,22 +138,30 @@
     const sourceTime = sourceBeatmap.time && typeof sourceBeatmap.time === "object"
       ? sourceBeatmap.time
       : {};
-    const mapProgressMs = finiteNumber(sourceTime.live);
-    const score = finiteNumber(sourcePlay.score);
-    const accuracy = finiteNumber(sourcePlay.accuracy);
-    const aggregateUr = finiteNumber(sourcePlay.unstableRate);
-    const offsets = Array.isArray(sourcePlay.hitErrorArray)
+    const hasLiveTime = Object.prototype.hasOwnProperty.call(sourceTime, "live");
+    const hasScore = Object.prototype.hasOwnProperty.call(sourcePlay, "score");
+    const hasAccuracy = Object.prototype.hasOwnProperty.call(sourcePlay, "accuracy");
+    const hasUnstableRate = Object.prototype.hasOwnProperty.call(sourcePlay, "unstableRate");
+    const hasOffsets = Object.prototype.hasOwnProperty.call(sourcePlay, "hitErrorArray")
+      && Array.isArray(sourcePlay.hitErrorArray);
+    const mapProgressMs = hasLiveTime ? finiteNumber(sourceTime.live) : replay.mapProgressMs;
+    const score = hasScore ? finiteNumber(sourcePlay.score) : replay.score;
+    const accuracy = hasAccuracy ? finiteNumber(sourcePlay.accuracy) : replay.accuracy;
+    const aggregateUr = hasUnstableRate ? finiteNumber(sourcePlay.unstableRate) : null;
+    const offsets = hasOffsets
       ? sourcePlay.hitErrorArray.map(finiteNumber).filter(value => value !== null)
-      : [];
-    const meanMs = offsets.length ? offsets.reduce((sum, value) => sum + value, 0) / offsets.length : null;
-    const medianMs = median(offsets);
-    const variance = offsets.length
+      : (replay.recentOffsets || []);
+    const meanMs = hasOffsets
+      ? (offsets.length ? offsets.reduce((sum, value) => sum + value, 0) / offsets.length : null)
+      : replay.meanMs;
+    const medianMs = hasOffsets ? median(offsets) : replay.medianMs;
+    const variance = hasOffsets && offsets.length
       ? offsets.reduce((sum, value) => sum + Math.pow(value - meanMs, 2), 0) / offsets.length
       : null;
-    const sdMs = variance === null ? null : Math.sqrt(variance);
-    const ur = aggregateUr !== null && (aggregateUr !== 0 || offsets.length > 0)
-      ? aggregateUr
-      : (sdMs === null ? null : sdMs * 10);
+    const sdMs = hasOffsets ? (variance === null ? null : Math.sqrt(variance)) : replay.sdMs;
+    const ur = hasOffsets
+      ? (aggregateUr !== null && (aggregateUr !== 0 || offsets.length > 0) ? aggregateUr : (sdMs === null ? null : sdMs * 10))
+      : (hasUnstableRate ? aggregateUr : replay.ur);
 
     return {
       ...replay,
@@ -128,12 +172,23 @@
       meanMs,
       medianMs,
       sdMs,
-      earlyCount: offsets.filter(value => value < 0).length,
-      lateCount: offsets.filter(value => value > 0).length,
-      sampleCount: offsets.length,
-      recentOffsets: offsets.slice(-20),
-      hasData: mapProgressMs !== null || score !== null || offsets.length > 0,
+      earlyCount: hasOffsets ? offsets.filter(value => value < 0).length : replay.earlyCount,
+      lateCount: hasOffsets ? offsets.filter(value => value > 0).length : replay.lateCount,
+      sampleCount: hasOffsets ? offsets.length : replay.sampleCount,
+      recentOffsets: hasOffsets ? offsets.slice(-20) : replay.recentOffsets,
+      hasData: replay.hasData || mapProgressMs !== null || score !== null || offsets.length > 0,
     };
+  }
+
+  function mergePlayPayload(previous, incoming) {
+    const source = incoming && typeof incoming === "object" ? incoming : {};
+    const merged = { ...(previous || {}), ...source };
+    for (const key of ["hits", "combo", "healthBar"]) {
+      if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+        merged[key] = { ...((previous && previous[key]) || {}), ...source[key] };
+      }
+    }
+    return merged;
   }
 
   function text(id) {
@@ -503,10 +558,21 @@
     };
   }
 
+  function nativePauseCoachAuthoritative() {
+    if (nativePauseCoachDisabled) return true;
+    const snapshot = window.__overlayNativePauseCoachSnapshot;
+    if (!snapshot || !snapshot.pauseCoach) return false;
+    if (snapshot.nativePauseCoach === true) return true;
+    const extensions = snapshot.extensions || {};
+    return extensions.nativePauseCoach === true
+      && String(extensions.realtimeProducer || "").toLowerCase() === "native";
+  }
+
   function buildSnapshot() {
     return {
       schemaVersion: SCHEMA_VERSION,
       sourceId: SOURCE_ID,
+      realtimeProducer: "browser",
       beatmap,
       gameplay,
       difficulty: readDifficulty(),
@@ -559,6 +625,52 @@
     }
   }
 
+  // Keep the complete Tosu -> adapter -> runtime boundary observable. This is
+  // deliberately transition/throttled so a live map cannot flood the native
+  // host, while the important Play/2 + paused transition is always recorded.
+  function publishPauseCoachTrace(source, payload, stateNumber, stateName, rawPaused, isPlaying, isPaused, sourcePlay, coach) {
+    try {
+      const snapshot = coach || {};
+      const timing = snapshot.timing || {};
+      const overall = snapshot.overall || {};
+      const hits = overall.judgements || {};
+      const hitCount = [hits.count300, hits.count200, hits.count100, hits.count50, hits.countGeki, hits.countKatu, hits.countMiss]
+        .filter(value => value !== null && value !== undefined)
+        .reduce((sum, value) => sum + Number(value || 0), 0);
+      const rawState = payload && payload.state;
+      const rawStateName = rawState && typeof rawState === "object" ? clean(rawState.name) : clean(rawState);
+      const rawStateNumber = rawState && typeof rawState === "object" ? finiteNumber(rawState.number) : finiteNumber(rawState);
+      const rawGame = payload && payload.game && typeof payload.game === "object" ? payload.game : {};
+      const rawPauseValue = rawGame.paused !== undefined ? rawGame.paused : rawGame.isPaused;
+      const play = sourcePlay || {};
+      const signature = [source, rawStateName, rawStateNumber, rawPauseValue, isPlaying, isPaused, snapshot.state, snapshot.sessionId, replay.mapProgressMs, play.score, play.accuracy, hitCount, replay.recentOffsets.length].join("|");
+      const now = Date.now();
+      if (signature === lastPauseCoachTraceSignature && now - lastPauseCoachTraceAt < 5000) return;
+      lastPauseCoachTraceSignature = signature;
+      lastPauseCoachTraceAt = now;
+      sendToHost("overlay:pause-coach-debug:" + encodeURIComponent(JSON.stringify({
+        source: source || "unknown",
+        rawState: rawStateName || stateName || "",
+        rawStateNumber: rawStateNumber === null ? stateNumber : rawStateNumber,
+        rawPaused: rawPauseValue === undefined ? (rawPaused === undefined ? null : rawPaused) : booleanValue(rawPauseValue),
+        normalizedIsPlaying: typeof isPlaying === "boolean" ? isPlaying : null,
+        normalizedIsPaused: typeof isPaused === "boolean" ? isPaused : null,
+        runtimeState: snapshot.state || "",
+        beatmapId: beatmap.id || "",
+        mapTimeMs: replay.mapProgressMs,
+        score: play.score == null ? replay.score : finiteNumber(play.score),
+        accuracy: play.accuracy == null ? replay.accuracy : finiteNumber(play.accuracy),
+        judgementCount: hitCount,
+        hitErrorArrayLength: replay.recentOffsets.length,
+        sessionId: snapshot.sessionId || "",
+        coachState: snapshot.state || "",
+        timingSampleCount: timing.sampleCount == null ? null : timing.sampleCount,
+      })));
+    } catch (exception) {
+      reportRuntimeError("Publishing Pause Coach trace", exception);
+    }
+  }
+
   function reportRuntimeError(operation, exception) {
     const message = exception && exception.message ? exception.message : String(exception || "Unknown runtime error");
     console.error(operation, exception);
@@ -573,6 +685,8 @@
 
   function publish() {
     animationFrame = 0;
+    publishTimer = 0;
+    lastPublishAt = Date.now();
     const snapshot = buildSnapshot();
     const json = JSON.stringify(snapshot, function (_key, value) {
       return typeof value === "number" && !Number.isFinite(value) ? null : value;
@@ -584,7 +698,17 @@
   }
 
   function queuePublish() {
-    if (animationFrame) return;
+    if (animationFrame || publishTimer) return;
+    // Telemetry processing stays event-driven, but the DOM renderer only needs
+    // a few updates per second while the player is actively playing. Pause and
+    // results snapshots bypass the throttle for immediate feedback.
+    const isActivePlay = gameplay.isPlaying === true && gameplay.isPaused !== true;
+    const minimumInterval = isActivePlay ? 250 : 0;
+    const elapsed = Date.now() - lastPublishAt;
+    if (minimumInterval > elapsed) {
+      publishTimer = window.setTimeout(queuePublish, minimumInterval - elapsed);
+      return;
+    }
     animationFrame = requestAnimationFrame(publish);
   }
 
@@ -612,10 +736,11 @@
     return numeric !== null && numeric > 0 ? String(numeric) : "";
   }
 
-  function applyTosuPayload(payload, source) {
+  function applyTosuPayload(payload, source, options) {
+    const stateOnly = options && options.stateOnly === true;
     const previousGameplay = { ...gameplay };
     let beatmapIdentityChanged = false;
-    const sourceBeatmap = payload && payload.beatmap;
+    const sourceBeatmap = stateOnly ? null : payload && payload.beatmap;
     if (sourceBeatmap) {
       const metadata = sourceBeatmap.metadata || {};
       const stats = sourceBeatmap.stats || {};
@@ -623,30 +748,41 @@
       const setId = String(sourceBeatmap.set || sourceBeatmap.setId || sourceBeatmap.beatmapSetId || "");
       if (id && beatmap.id && id !== beatmap.id) {
         replay = emptyReplay();
+        lastPlayPayload = {};
         beatmapIdentityChanged = true;
         pauseCoach = null;
         lastPlayingHits = null;
       }
-      const identity = id || setId || `${metadata.artist || sourceBeatmap.artist || ""}-${metadata.title || sourceBeatmap.title || ""}-${sourceBeatmap.version || metadata.difficulty || metadata.version || ""}`;
+      const effectiveId = id || beatmap.id;
+      const effectiveSetId = setId || beatmap.setId;
+      const effectiveArtist = clean(sourceBeatmap.artist || metadata.artist) || beatmap.artist;
+      const effectiveTitle = clean(sourceBeatmap.title || metadata.title) || beatmap.title;
+      const effectiveVersion = clean(sourceBeatmap.version || metadata.difficulty || metadata.version) || beatmap.version;
+      const effectiveMapper = clean(sourceBeatmap.mapper || metadata.mapper || metadata.creator) || beatmap.mapper;
+      const identity = effectiveId || effectiveSetId || `${effectiveArtist}-${effectiveTitle}-${effectiveVersion}`;
       beatmap = {
-        id,
-        setId,
-        artist: clean(sourceBeatmap.artist || metadata.artist),
-        title: clean(sourceBeatmap.title || metadata.title),
-        version: clean(sourceBeatmap.version || metadata.difficulty || metadata.version),
-        mapper: clean(sourceBeatmap.mapper || metadata.mapper || metadata.creator),
-        bpmLabel: bpmLabel(sourceBeatmap, stats),
-        overallDifficulty: readObjectNumber(stats, ["OD", "od", "overallDifficulty"]),
-        healthDrain: readObjectNumber(stats, ["HP", "hp", "drainRate"]),
+        id: effectiveId,
+        setId: effectiveSetId,
+        artist: effectiveArtist,
+        title: effectiveTitle,
+        version: effectiveVersion,
+        mapper: effectiveMapper,
+        bpmLabel: bpmLabel(sourceBeatmap, stats) || beatmap.bpmLabel,
+        overallDifficulty: readObjectNumber(stats, ["OD", "od", "overallDifficulty"]) ?? beatmap.overallDifficulty,
+        healthDrain: readObjectNumber(stats, ["HP", "hp", "drainRate"]) ?? beatmap.healthDrain,
         backgroundUrl: identity
           ? `http://${location.host}/files/beatmap/background?ts=${encodeURIComponent(identity)}`
           : "",
       };
     }
 
-    replay = readLiveReplay(payload);
-    const sourcePlayForCoach = payload && payload.play && typeof payload.play === "object" ? payload.play : {};
-    const currentHits = parsePlayHits(sourcePlayForCoach);
+    if (!stateOnly) {
+      replay = readLiveReplay(payload);
+    }
+    const incomingPlay = !stateOnly && payload && payload.play && typeof payload.play === "object" ? payload.play : null;
+    let sourcePlayForCoach = mergePlayPayload(lastPlayPayload, incomingPlay);
+    if (incomingPlay) lastPlayPayload = sourcePlayForCoach;
+    let currentHits = parsePlayHits(sourcePlayForCoach);
 
     const rawState = payload && payload.state;
     const state = rawState && typeof rawState === "object" ? rawState : null;
@@ -659,7 +795,7 @@
     // values can differ between older stable integrations. Use the numeric
     // enum only when the name is missing or unknown.
     const namedPlaying = ["play", "gameplay", "playing", "spectating", "watchingreplay", "replay"].includes(stateToken);
-    const namedNonPlaying = ["menu", "edit", "selectplay", "selectedit", "selectdrawings", "resultscreen", "result", "options", "songselect"].includes(stateToken);
+    const namedNonPlaying = ["menu", "edit", "selectplay", "selectedit", "selectdrawings", "resultscreen", "result", "results", "options", "songselect", "exit"].includes(stateToken);
     const isPlaying = namedPlaying
       ? true
       : namedNonPlaying
@@ -670,7 +806,30 @@
     const hasState = Boolean(stateToken) || stateNumber !== null;
     const nextState = hasState ? stateName : gameplay.state;
     const nextIsPlaying = hasState ? isPlaying : gameplay.isPlaying;
-    const nextIsPaused = game && typeof game.paused === "boolean" ? game.paused : gameplay.isPaused;
+    const pauseCandidates = [
+      game && game.paused,
+      game && game.isPaused,
+      state && state.paused,
+      state && state.isPaused,
+      payload && payload.paused,
+      payload && payload.isPaused,
+    ];
+    const explicitPause = pauseCandidates.map(booleanValue).find(value => value !== null);
+    if (source === "browser-http" && explicitPause !== undefined) {
+      httpPauseState = explicitPause;
+    }
+    const websocketPauseStale = source !== "browser-http"
+      && explicitPause === false
+      && httpPauseState === true;
+    // Tosu may keep game.paused=true while it emits the next menu/song-select
+    // state. A named non-playing state must clear that stale pause flag or the
+    // overlay can remain stuck in its previous paused lifecycle.
+    const nextIsPaused = namedNonPlaying
+      ? false
+      : stateToken === "pause" || stateToken === "paused" || stateToken === "break"
+        ? true
+        : websocketPauseStale ? true
+        : explicitPause !== undefined ? explicitPause : gameplay.isPaused;
     const isFocused = game && typeof game.focused === "boolean" ? game.focused : gameplay.isFocused;
     gameplay = {
       state: nextState,
@@ -681,10 +840,43 @@
 
     const isNewPlayingAttempt = gameplay.isPlaying === true && gameplay.isPaused !== true && previousGameplay.isPlaying !== true;
     if (beatmapIdentityChanged || isNewPlayingAttempt) {
+      if (isNewPlayingAttempt) {
+        lastPlayPayload = mergePlayPayload({}, incomingPlay);
+        sourcePlayForCoach = lastPlayPayload;
+        currentHits = parsePlayHits(sourcePlayForCoach);
+      }
       pauseCoach = null;
-      if (isNewPlayingAttempt) lastPlayingHits = null;
+      lastPlayingHits = null;
     }
-    if (gameplay.isPlaying === true && gameplay.isPaused !== true) {
+
+    // Once the application has delivered an authoritative native view-state,
+    // the browser adapter remains a telemetry fallback for metadata only. Do
+    // not create/update a second Pause Coach session that could alternate its
+    // rolling metrics with the native producer. Preview/fullscreen documents
+    // without a native snapshot keep the browser runtime unchanged.
+    const nativeAuthoritative = nativePauseCoachAuthoritative();
+    if (nativeAuthoritative) {
+      pauseCoach = null;
+    } else if (pauseCoachRuntime) {
+      pauseCoach = pauseCoachRuntime.process({
+        beatmap: {
+          id: beatmap.id,
+          setId: beatmap.setId,
+          hash: sourceBeatmap && (sourceBeatmap.hash || sourceBeatmap.md5 || sourceBeatmap.checksum) || "",
+          time: sourceBeatmap && sourceBeatmap.time,
+        },
+        gameplay: {
+          state: nextState,
+          isPlaying: nextIsPlaying,
+          isPaused: nextIsPaused,
+          isFocused,
+          isReplay: stateToken === "replay" || stateToken === "watchingreplay",
+          isSpectating: stateToken === "spectating",
+        },
+        play: sourcePlayForCoach,
+        mapTimeMs: replay.mapProgressMs,
+      });
+    } else if (gameplay.isPlaying === true && gameplay.isPaused !== true) {
       lastPlayingHits = currentHits;
       pauseCoach = null;
     } else if (gameplay.isPaused === true && previousGameplay.isPlaying === true && previousGameplay.isPaused !== true) {
@@ -696,6 +888,7 @@
     }
 
     publishGameplayTrace(source || "unknown", stateNumber, stateName, nextIsPlaying, nextIsPaused, isFocused);
+    publishPauseCoachTrace(source || "unknown", payload, stateNumber, stateName, explicitPause, nextIsPlaying, nextIsPaused, sourcePlayForCoach, pauseCoach);
     keepSourceHostAvailable();
     window.dispatchEvent(new CustomEvent("overlay:gameplay-state", { detail: gameplay }));
     publishGameplayState();
@@ -713,7 +906,14 @@
         cache: "no-store",
       });
       if (!response.ok) return;
-      applyTosuPayload(await response.json(), "browser-http");
+      // The native collector is authoritative in overlay mode, but keep the
+      // browser fallback fully populated for normal/preview presentation too.
+      // applyTosuPayload deep-merges partial fields instead of discarding the
+      // last known gameplay telemetry.
+      const payload = await response.json();
+      // dispose() may run while fetch/json parsing is in flight. Never let
+      // an old adapter generation publish into the reinjected renderer.
+      if (!disposed) applyTosuPayload(payload, "browser-http");
     } catch (exception) {
       const now = Date.now();
       if (now - lastStatePollWarningAt >= 5000) {
@@ -753,6 +953,7 @@
       ]));
     });
     socket.addEventListener("message", function (event) {
+      if (disposed) return;
       try { applyTosuPayload(JSON.parse(event.data), "websocket"); }
       catch (exception) { reportRuntimeError("Processing analyzer websocket payload", exception); }
     });
@@ -795,17 +996,34 @@
       disposed = true;
       if (observer) observer.disconnect();
       if (animationFrame) cancelAnimationFrame(animationFrame);
+      if (publishTimer) clearTimeout(publishTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (statePollTimer) window.clearInterval(statePollTimer);
+      if (typeof window.removeEventListener === "function") {
+        window.removeEventListener("overlay:view-state", onNativeViewState);
+      }
       if (socket) {
         try { socket.close(); } catch (exception) { reportRuntimeError("Disposing analyzer websocket", exception); }
       }
+      // Do not dispose the singleton coach here: setup/resize re-injects the
+      // adapter without navigating the WebView, and its bounded session must
+      // survive that lifecycle event. A full document navigation recreates
+      // the window and releases it naturally.
+      pauseCoachRuntime = null;
       observer = null;
       socket = null;
       animationFrame = 0;
+      publishTimer = 0;
       reconnectTimer = 0;
       statePollTimer = 0;
       statePollInFlight = false;
+      httpPauseState = null;
+      nativePauseCoachDisabled = false;
     },
   };
+  // Test-only access to the same raw-payload adapter boundary used by the
+  // websocket and /json/v2 paths. Production never enables this hook.
+  if (window.__overlayAdapterTestMode === true) {
+    window.__overlayAnalyzerAdapterTest = { applyTosuPayload: applyTosuPayload, publish: publish, pollState: pollState };
+  }
 })();

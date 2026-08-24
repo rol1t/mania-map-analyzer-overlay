@@ -114,6 +114,75 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TreatsBeatmapParseFailureAsNonFatalPerBeatmapFallback()
+    {
+        var analysisTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(ReadyMessage());
+        var requestScript = await _host.WaitForScriptAsync();
+        var correlationId = ReadCorrelationId(requestScript);
+        _host.Publish(ErrorMessage(correlationId, "ANALYSIS_FAILED", "Beatmap parse failed"));
+
+        var result = await analysisTask;
+
+        Assert.Equal(AnalysisOutcome.Failed, result.Outcome);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalysisDiagnosticSeverity.Warning);
+        Assert.Contains(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Warning);
+        Assert.DoesNotContain(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public async Task RecoversAfterWorkerBootstrapFailureOnNextRequest()
+    {
+        var firstTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(AnalyzerEngineScriptBridge.NativeMessagePrefix + JsonSerializer.Serialize(new
+        {
+            protocol = "test.headless",
+            protocolVersion = 1,
+            type = "runtime.ready",
+            status = "error",
+            error = new
+            {
+                code = "WORKER_CRASHED",
+                message = "Headless analyzer worker crashed.",
+                stage = "worker"
+            }
+        }));
+
+        var firstResult = await firstTask;
+        Assert.Equal(AnalysisOutcome.Failed, firstResult.Outcome);
+        Assert.Contains(
+            firstResult.Diagnostics,
+            diagnostic => diagnostic.Code == "WORKER_CRASHED" &&
+                          diagnostic.Severity == AnalysisDiagnosticSeverity.Warning);
+        Assert.Contains(
+            _diagnosticSink.Entries,
+            diagnostic => diagnostic.Code == "WORKER_CRASHED" &&
+                          diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Warning);
+
+        var secondTask = _bridge.AnalyzeAsync(CreateRequest());
+        await _host.WaitForScriptAsync();
+        _host.Publish(ReadyMessage());
+        var requestScript = await _host.WaitForScriptAsync();
+        var correlationId = ReadCorrelationId(requestScript);
+        _host.Publish(ResultMessage(correlationId, "ok", """{"difficulty.star":{"id":"difficulty.star","value":4.5}}"""));
+
+        var secondResult = await secondTask;
+        Assert.Equal(AnalysisOutcome.Success, secondResult.Outcome);
+        Assert.Equal(4.5, secondResult.Metrics["difficulty.star"].Value.GetDouble());
+    }
+
+    [Fact]
     public async Task CancellationIsCorrelationScopedAndDispatchesCancelScript()
     {
         using var cancellation = new CancellationTokenSource();
@@ -264,7 +333,10 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
         });
     }
 
-    private static string ErrorMessage(string correlationId) =>
+    private static string ErrorMessage(
+        string correlationId,
+        string code = "PIPELINE_IMPORT_FAILED",
+        string message = "Pipeline import failed") =>
         AnalyzerEngineScriptBridge.NativeMessagePrefix + JsonSerializer.Serialize(new
         {
             protocol = "test.headless",
@@ -274,8 +346,8 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
             status = "error",
             error = new
             {
-                code = "PIPELINE_IMPORT_FAILED",
-                message = "Pipeline import failed",
+                code,
+                message,
                 stage = "pipeline-import"
             }
         });

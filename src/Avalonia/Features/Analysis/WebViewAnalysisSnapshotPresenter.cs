@@ -41,9 +41,10 @@ public sealed class WebViewAnalysisSnapshotPresenter : IAnalysisSnapshotPresente
         cancellationToken.ThrowIfCancellationRequested();
 
         var json = JsonSerializer.Serialize(snapshot, _jsonOptions);
-        var script =
-            $"window.dispatchEvent(new CustomEvent('analysis:snapshot', {{detail: {json}}})); " +
-            $"if (typeof window.__overlayRenderAnalysisSnapshot === 'function') window.__overlayRenderAnalysisSnapshot({json});";
+        // The renderer subscribes to analysis:snapshot. Do not also invoke
+        // __overlayRenderAnalysisSnapshot directly: doing both renders every
+        // headless frame twice and visibly flickers the Pause Coach DOM.
+        var script = $"window.dispatchEvent(new CustomEvent('analysis:snapshot', {{detail: {json}}}));";
 
         if (Dispatcher.UIThread.CheckAccess())
         {

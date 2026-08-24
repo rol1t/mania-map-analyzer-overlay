@@ -237,6 +237,139 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         return supervisor?.NotifyNavigationAsync(cancellationToken) ?? Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Replays the last completed analysis snapshot into the current WebView
+    /// document. Navigation replaces the JavaScript renderer, while the
+    /// headless engine intentionally keeps its cached result. Without this
+    /// explicit replay the first realtime adapter frame can clear the map
+    /// summary (it only contains the numeric beatmap id) until the next full
+    /// analysis run completes.
+    /// </summary>
+    public async Task RepublishLastSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        AnalysisSnapshot? snapshot;
+        lock (_sync)
+        {
+            snapshot = _lastSnapshot;
+        }
+
+        if (snapshot is null)
+        {
+            return;
+        }
+
+        // Navigation can happen immediately after the player selects another
+        // map. The cached analysis belongs to the previous map and must not be
+        // replayed into the new widget document while the new headless run is
+        // still being prepared. Verify the current Tosu identity before
+        // replaying the cache; realtime adapter frames remain responsible for
+        // the live transition.
+        try
+        {
+            var currentBeatmap = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsSameBeatmap(snapshot, currentBeatmap))
+            {
+                AppLogger.Info(
+                    "Headless snapshot replay",
+                    $"Skipped cached snapshot for map {snapshot.Beatmap.Id} because Tosu now reports {currentBeatmap.Identity.Id}.");
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TosuBeatmapSourceException exception)
+        {
+            // A replay after an unknown source transition can put a previous
+            // map back on screen. Wait for a verified live identity instead.
+            AppLogger.Debug("Headless snapshot replay", $"Skipped unverified cached map: {exception.Message}");
+            return;
+        }
+
+        var replayExtensions = new Dictionary<string, object?>(snapshot.Extensions, StringComparer.OrdinalIgnoreCase)
+        {
+            ["headlessReplay"] = true
+        };
+        await _presenter.PresentAsync(
+            snapshot with
+            {
+                Extensions = replayExtensions
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsSameBeatmap(AnalysisSnapshot snapshot, TosuBeatmapSnapshot current)
+    {
+        var cachedId = snapshot.Beatmap.Id?.Trim() ?? string.Empty;
+        var currentId = current.Identity.Id?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(cachedId) && !string.IsNullOrWhiteSpace(currentId))
+        {
+            return string.Equals(cachedId, currentId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var cachedSet = snapshot.Beatmap.SetId?.Trim() ?? string.Empty;
+        var currentSet = current.Identity.SetId?.Trim() ?? string.Empty;
+        var cachedVersion = snapshot.Beatmap.Version?.Trim() ?? string.Empty;
+        var currentVersion = current.Metadata.Version?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(cachedSet) && !string.IsNullOrWhiteSpace(currentSet))
+        {
+            return string.Equals(cachedSet, currentSet, StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrWhiteSpace(cachedVersion)
+                    || string.IsNullOrWhiteSpace(currentVersion)
+                    || string.Equals(cachedVersion, currentVersion, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return string.Equals(snapshot.Beatmap.Artist?.Trim(), current.Metadata.Artist?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(snapshot.Beatmap.Title?.Trim(), current.Metadata.Title?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(cachedVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> IsCurrentBeatmapAsync(
+        TosuBeatmapSnapshot expected,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var current = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
+            var expectedId = expected.Identity.Id?.Trim() ?? string.Empty;
+            var currentId = current.Identity.Id?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(expectedId) && !string.IsNullOrWhiteSpace(currentId))
+            {
+                return string.Equals(expectedId, currentId, StringComparison.OrdinalIgnoreCase);
+            }
+
+            var expectedHash = expected.Identity.Hash?.Trim() ?? string.Empty;
+            var currentHash = current.Identity.Hash?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(expectedHash) && !string.IsNullOrWhiteSpace(currentHash))
+            {
+                return string.Equals(expectedHash, currentHash, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(expected.Identity.SetId?.Trim(), current.Identity.SetId?.Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(expected.Metadata.Version?.Trim(), current.Metadata.Version?.Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(expected.Metadata.Title?.Trim(), current.Metadata.Title?.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TosuBeatmapSourceException exception)
+        {
+            AppLogger.Debug("Headless snapshot freshness", $"Could not verify analysis map before publishing: {exception.Message}");
+            // The result is intentionally not published without a verified
+            // identity, but the same map must be eligible for the next poll.
+            // Otherwise a single transient Tosu 404 permanently suppresses
+            // the already completed analysis.
+            lock (_sync)
+            {
+                _lastAnalysisKey = null;
+                _lastSceneKey = null;
+            }
+            return false;
+        }
+    }
+
     public Task NotifyTosuRestartAsync(CancellationToken cancellationToken = default)
     {
         AnalyzerEngineSupervisor? supervisor;
@@ -720,7 +853,32 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         WidgetAnalysisSceneSnapshot sceneSnapshot,
         CancellationToken cancellationToken)
     {
+        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        {
+            AppLogger.Info("Headless snapshot push", $"Skipped stale scene result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
+            return;
+        }
+
         LogSceneResult(sceneSnapshot);
+
+        // A WebView2 worker can terminate while a navigation or Tosu restart
+        // is in flight. The scene runner still returns a valid failed
+        // snapshot, so the polling key would otherwise mark this beatmap as
+        // complete forever and no later request could recreate the runtime.
+        // Let the next poll retry transient worker/bootstrap failures while
+        // keeping ordinary beatmap parse failures cached as before.
+        if (sceneSnapshot.OrderedSnapshots.Any(HasTransientEngineFailure))
+        {
+            lock (_sync)
+            {
+                _lastAnalysisKey = null;
+                _lastSceneKey = null;
+            }
+
+            AppLogger.Warning(
+                "Headless scene",
+                $"Transient analyzer failure for beatmap {snapshot.Identity.StableKey}; retrying on the next poll.");
+        }
 
         var firstWidget = sceneSnapshot.OrderedSnapshots.FirstOrDefault();
         if (firstWidget is null)
@@ -741,11 +899,26 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             isSceneResult: true));
     }
 
+    private static bool HasTransientEngineFailure(ComposedWidgetSnapshot widget)
+    {
+        return widget.Diagnostics.Any(diagnostic =>
+            diagnostic.Code.Equals("WORKER_CRASHED", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.bootstrap_failed", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.request_dispatch_failed", StringComparison.OrdinalIgnoreCase)
+            || diagnostic.Code.Equals("engine.analysis_bridge_failed", StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task PushAnalysisResultSnapshotAsync(
         TosuBeatmapSnapshot snapshot,
         AnalysisResult result,
         CancellationToken cancellationToken)
     {
+        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        {
+            AppLogger.Info("Headless snapshot push", $"Skipped stale analysis result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
+            return;
+        }
+
         var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
         await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
 
@@ -897,7 +1070,9 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         var message = exception.Message ?? string.Empty;
         if (message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase))
+            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase) ||
+            (exception.StatusCode == System.Net.HttpStatusCode.NotFound &&
+             string.Equals(exception.Route, "files/beatmap/file", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }

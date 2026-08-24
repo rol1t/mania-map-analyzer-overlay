@@ -39,6 +39,7 @@ public sealed class WindowsOverlayController : IDisposable
     private readonly Window _window;
     private readonly Win32Properties.CustomWndProcHookCallback _callback;
     private readonly DispatcherTimer _guardTimer;
+    private readonly OsuWindowPresenceTracker _osuWindowPresence = new();
     private bool _registered;
     private bool _overlayMode;
     private bool _clickThrough;
@@ -75,6 +76,7 @@ public sealed class WindowsOverlayController : IDisposable
     public event Action<bool>? ClickThroughChanged;
     public event Action<bool>? InteractionChanged;
     public event Action<bool>? OsuProcessChanged;
+    public event Action<bool>? OsuWindowPresenceChanged;
     public event Action<bool>? OsuWindowMinimizedChanged;
     public bool IsSupported => OperatingSystem.IsWindows();
     public bool IsClickThrough => _clickThrough;
@@ -126,6 +128,7 @@ public sealed class WindowsOverlayController : IDisposable
         // current value.
         _osuFocused = false;
         _osuProcessRunning = null;
+        _osuWindowPresence.Reset();
         SetClickThrough(osuWasForeground);
         _guardTimer.Start();
         // Do not synchronously transfer focus after disabling the overlay
@@ -176,6 +179,7 @@ public sealed class WindowsOverlayController : IDisposable
         _osuFocused = false;
         SetOsuMinimized(false);
         _osuProcessRunning = null;
+        _osuWindowPresence.Reset();
         var handle = Handle;
         // Protected overlay mode disables the top-level _window. Re-enable it
         // before changing mode so Avalonia/WebView can be used normally again.
@@ -536,6 +540,7 @@ public sealed class WindowsOverlayController : IDisposable
         // normal launcher instead of leaving a detached widget on screen.
         if (!processRunning)
         {
+            ReportOsuWindowPresence(processRunning, windowPresent: false);
             SetCursorHiddenForOsu(false);
             SetOsuMinimized(false);
             SetClickThrough(false);
@@ -543,6 +548,11 @@ public sealed class WindowsOverlayController : IDisposable
         }
 
         var windowState = GetOsuWindowState();
+        ReportOsuWindowPresence(
+            processRunning,
+            windowState == OsuWindowState.Unknown
+                ? null
+                : windowState is OsuWindowState.Minimized or OsuWindowState.Restored);
         var minimized = windowState == OsuWindowState.Minimized;
         SetOsuMinimized(minimized);
         if (minimized)
@@ -584,6 +594,24 @@ public sealed class WindowsOverlayController : IDisposable
     }
 
     private bool IsOsuInteractionBlocked() => _osuFocused || IsForegroundOsuProcess();
+
+    private void ReportOsuWindowPresence(bool processRunning, bool? windowPresent)
+    {
+        var changed = _osuWindowPresence.Observe(processRunning, windowPresent);
+        if (changed is null)
+        {
+            return;
+        }
+
+        try
+        {
+            OsuWindowPresenceChanged?.Invoke(changed.Value);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Reporting osu! window presence", exception, userVisible: false);
+        }
+    }
 
     private void SetOsuMinimized(bool minimized)
     {

@@ -11,9 +11,9 @@
 
 - Automatic tosu and [ManiaMapAnalyser](https://github.com/LeoBlackMT/osumania_map_analyser) setup, compatibility checks, hash verification, and lifecycle management.
 - Works with osu!stable and osu!lazer; lazer compatibility offsets are checked during setup.
-- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Companella Replay card.
+- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Companella Replay / Pause Coach cards.
 - Lightweight transparent overlay for windowed or borderless osu!, with automatic hiding while a map is being played.
-- Default, Horizontal, Companella, and Custom CSS layouts with live preview in the launcher.
+- Default, Horizontal, Companella, Companella Replay, three Pause Coach variants, and Custom CSS layouts with live preview in the launcher.
 - Resizable overlay with DPI-aware rendering; resize by dragging an edge/corner or with `Ctrl` + mouse wheel.
 - Optional tosu In-Game Overlay integration for osu!stable exclusive fullscreen on Windows.
 - Startup update checks for the launcher and bundled analysis components; settings and custom CSS are preserved.
@@ -60,7 +60,7 @@ For osu!stable exclusive fullscreen, enable **Stable FS**, confirm the tosu rest
 
 ## Appearance and CSS
 
-Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` is the `companella` layout duplicated with an integrated `Replay analysis` card (UR, bias, per-column, pattern insights).
+Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, `Pause Coach Card`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` includes replay metrics and a realtime Pause Coach block; `Pause Coach Card` is the only standalone Pause Coach layout. See [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md) for telemetry provenance and limitations.
 
 Overlay visibility is configured per preset in `manifest.json`. Set
 `visibilityPolicy` to `always`, `outside-play`, `during-play`, `paused-only`,
@@ -239,9 +239,9 @@ Until the first gameplay snapshot arrives, the desktop overlay stays visible for
 
 ### 6. Live data and the Companella exception
 
-The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, an optional `replay` block, and an optional provisional `pauseCoach` block that appears only while paused. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
+The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, an optional `replay` block, and an optional realtime `pauseCoach` block. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
 
-For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below), and `pauseCoach` (provisional aggregate-only timing and recent hit/miss while paused — `timing.timingMargin`, `timing.meanMs`/`driftMs`, `timing.unstableRate`, `performance.recentHits`/`recentMisses`, and `insights`; no per-column, per-object, finger, or LN claims; see below). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
+For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below), and `pauseCoach` (session state, data quality, bounded recent/overall metrics, reconstructed recent section, evidence-backed insights and diagnostics; per-column and canonical live pattern data remain explicitly unavailable unless Tosu supplies reliable correlation). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
 
 There is one current renderer limitation: the built-in Companella renderer updates a fixed set of IDs only when the selected layout id is exactly `companella`. Those IDs are:
 

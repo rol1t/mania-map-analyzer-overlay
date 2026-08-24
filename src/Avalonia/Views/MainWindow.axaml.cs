@@ -15,6 +15,7 @@ using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
@@ -39,7 +40,7 @@ public partial class MainWindow : Window
     private readonly FullscreenOverlayService _fullscreen = new();
     private readonly UpdateService _updates = new();
     private readonly WindowsOverlayController _windowsOverlay;
-    private readonly DispatcherTimer _overlayGameplayPollTimer;
+    private DispatcherTimer? _overlayGameplayPollTimer;
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
     private readonly SemaphoreSlim _overlayScaleGate = new(1, 1);
     private readonly AnalyzerEngineCatalog _analyzerEngineCatalog = new();
@@ -47,7 +48,14 @@ public partial class MainWindow : Window
     private readonly EffectiveAnalysisConfigurationStore _effectiveAnalysisStore = new();
     private readonly ReplayAnalysisSession _replayAnalysisSession = new();
     private readonly OverlayDragSession _overlayDragSession = new();
+    private readonly IRealtimeTelemetrySource _overlayRealtimeSource;
+    private readonly IOverlayWindow _overlayWindow;
+    private readonly OverlayRuntimeCoordinator _runtimeCoordinator = new();
+    private readonly LatestWinsSnapshotPublisher<OverlayViewState> _nativePauseCoachPublisher;
+    private readonly LatestWinsSnapshotPublisher<OverlayViewState> _fullscreenViewStatePublisher;
+    private static readonly JsonSerializerOptions _overlaySnapshotJsonOptions = new(JsonSerializerDefaults.Web);
     private NativeWebView Browser { get; set; } = null!;
+    private long _browserNavigationGeneration;
     private MainViewModel? _model;
     private CancellationTokenSource? _previewPresentationCancellation;
     private CancellationTokenSource? _overlayGameplayPollCancellation;
@@ -75,22 +83,56 @@ public partial class MainWindow : Window
     // Avalonia UI queue so WM_NCLBUTTONDOWN is never entered re-entrantly.
     private int _overlayNativeDragPending;
     private int _overlayGameplayPollInFlight;
+    private long _overlayGameplayPollGeneration;
+    private bool _shadowPresentationReady;
+    private bool _shadowPresentationVisible;
+    private string _lastShadowRuntimeDiagnostic = string.Empty;
+    private DateTimeOffset _lastShadowRuntimeDiagnosticAt;
+    private string _lastShadowRuntimeMismatch = string.Empty;
+    private DateTimeOffset _lastShadowRuntimeMismatchAt;
+    private string _lastNativePauseCoachDiagnostic = string.Empty;
+    private DateTimeOffset _lastNativePauseCoachDiagnosticAt;
+    private string _lastNativePollBoundaryDiagnostic = string.Empty;
+    private DateTimeOffset _lastNativePollBoundaryDiagnosticAt;
     private bool _componentPreparationFailed;
     private bool _updatingLanguageSelector;
+    private bool _isClosing;
     private readonly Dictionary<string, string> _lastGameplayTraceBySource = new(StringComparer.OrdinalIgnoreCase);
     private bool _showingLoggedError;
     private bool _overlayWindowVisible = true;
     private PixelPoint _normalPosition;
     private Size _normalClientSize;
+    private NativeWebView? _headlessBrowser;
+    private TaskCompletionSource<bool>? _headlessBrowserReady;
+    private CancellationTokenSource? _overlayLayoutReconciliationCancellation;
+    private long _overlayLayoutReconciliationGeneration;
 
     public MainWindow()
     {
         AppLogger.ErrorRaised += AppLogger_ErrorRaised;
         InitializeComponent();
-        Browser = CreateBrowser(new SolidColorBrush(Color.Parse("#0E1016")));
+        _overlayRealtimeSource = new TosuRealtimeTelemetrySource(
+            cancellationToken => _model?.Tosu.GetGameplayPayloadAsync(cancellationToken)
+                ?? Task.FromResult<JsonElement?>(null),
+            "native-http");
+        _runtimeCoordinator.TransitionApplied += ShadowRuntimeCoordinator_TransitionApplied;
+        _runtimeCoordinator.ViewStateChanged += RuntimeCoordinator_ViewStateChanged;
+        // The launcher is an ordinary opaque window. Keep its WebView2 on the
+        // regular child-HWND path so the first document paint is not dependent
+        // on the offscreen compositor being attached during Window.Opened.
+        // Transparent overlay and headless surfaces opt into offscreen mode
+        // explicitly below.
+        Browser = CreateBrowser(new SolidColorBrush(Color.Parse("#0E1016")), offscreen: false);
         BrowserHost.Child = Browser;
         _presentation = new OverlayPresentationService(_presetCatalog, _analyzerCatalog);
+        _nativePauseCoachPublisher = new LatestWinsSnapshotPublisher<OverlayViewState>(
+            PublishNativePauseCoachSnapshotToBrowserAsync,
+            exception => AppLogger.Error("Publishing native Pause Coach snapshot", exception, userVisible: false));
+        _fullscreenViewStatePublisher = new LatestWinsSnapshotPublisher<OverlayViewState>(
+            WriteFullscreenViewStateAsync,
+            exception => AppLogger.Error("Publishing fullscreen view state", exception, userVisible: false));
         _windowsOverlay = new WindowsOverlayController(this);
+        _overlayWindow = new WindowsOverlayWindowAdapter(_windowsOverlay);
         _windowsOverlay.ExitRequested += (_, _) => LeaveOverlayMode();
         _windowsOverlay.ClickThroughChanged += enabled => Browser.IsHitTestVisible = !enabled;
         _windowsOverlay.InteractionChanged += interactive =>
@@ -124,22 +166,61 @@ public partial class MainWindow : Window
                     "status.osu_closed");
             });
         };
+        _windowsOverlay.OsuWindowPresenceChanged += present =>
+        {
+            if (present || !_overlayMode)
+            {
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                ReturnToLauncherAfterGameExit(
+                    "status.osu_closed");
+            });
+        };
         _windowsOverlay.OsuWindowMinimizedChanged += minimized =>
         {
+            PostShadowRuntimeEvent(sequence => new OsuWindowStateChanged(sequence, minimized));
             if (_overlayMode)
             {
                 ApplyOverlayWindowAppearance(minimized);
-                UpdateOverlayVisibility();
+                // Minimized osu! is an explicit presentation state: the
+                // widget must remain visible and the latest native snapshot
+                // must be flushed even when the reducer/UI queue is still
+                // processing the preceding gameplay frame. Waiting for the
+                // queued shadow event here can leave the publisher marked
+                // hidden until the next navigation/reload.
+                if (minimized)
+                {
+                    SetOverlayWindowVisibility(true);
+                    SetNativePresentationVisible(true);
+                    if (_overlayGameplayPollTimer is null && _model?.Tosu.IsRunning == true)
+                    {
+                        StartOverlayGameplayPolling();
+                    }
+                }
+                else
+                {
+                    UpdateOverlayVisibility();
+                }
             }
         };
-        _overlayGameplayPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-        _overlayGameplayPollTimer.Tick += OverlayGameplayPollTimer_Tick;
         Deactivated += (_, _) => CancelOverlayGestures();
         Opened += async (_, _) =>
         {
             try
             {
                 await InitializeAsync();
+                // Navigation can complete before the first native snapshot
+                // arrives. Store the visible launcher state independently so
+                // the publisher can flush that snapshot as soon as the
+                // document reports ready, even if the initial navigation
+                // happened during the Opened lifecycle transition.
+                if (!_overlayMode && IsVisible)
+                {
+                    SetNativePresentationVisible(true);
+                }
             }
             catch (Exception exception)
             {
@@ -150,7 +231,10 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _isClosing = true;
         AppLogger.ErrorRaised -= AppLogger_ErrorRaised;
+        BeginNativePresentationSession();
+        SetFullscreenViewStatePresentation(false);
         StopOverlayGameplayPolling();
         _previewPresentationCancellation?.Cancel();
         _previewPresentationCancellation?.Dispose();
@@ -170,21 +254,32 @@ public partial class MainWindow : Window
             _ = ObserveControllerDisposeAsync(disposeTask);
         }
 
+        if (_headlessBrowser is not null)
+        {
+            _headlessBrowser.NavigationCompleted -= HeadlessBrowser_NavigationCompleted;
+            HeadlessBrowserHost.Child = null;
+            _headlessBrowser = null;
+        }
+
+        CancelOverlayLayoutReconciliation();
         _model?.Dispose();
+        _runtimeCoordinator.TransitionApplied -= ShadowRuntimeCoordinator_TransitionApplied;
+        _runtimeCoordinator.ViewStateChanged -= RuntimeCoordinator_ViewStateChanged;
+        _ = ObserveControllerDisposeAsync(_runtimeCoordinator.StopAsync());
         base.OnClosed(e);
     }
 
-    private NativeWebView CreateBrowser(IBrush background)
+    private NativeWebView CreateBrowser(IBrush background, bool offscreen)
     {
         var browser = new NativeWebView { Background = background };
-        // A WebView2 child HWND cannot be composed reliably into a transparent,
-        // click-through top-level window.  Keep the browser in Avalonia's surface
-        // instead, so the overlay remains visible and can switch hit testing
-        // without exposing the desktop through the whole window.
         browser.EnvironmentRequested += (_, args) =>
         {
-            if (args is WindowsWebView2EnvironmentRequestedEventArgs webView2)
+            if (offscreen && args is WindowsWebView2EnvironmentRequestedEventArgs webView2)
             {
+                // A WebView2 child HWND cannot be composed reliably into a
+                // transparent, click-through top-level window. Only the
+                // overlay needs this offscreen path; using it for the opaque
+                // launcher can leave a valid DOM on an unpainted surface.
                 webView2.ExperimentalOffscreen = true;
             }
         };
@@ -194,14 +289,50 @@ public partial class MainWindow : Window
         return browser;
     }
 
-    private void ReplaceBrowser(IBrush background)
+    private NativeWebView CreateHeadlessBrowser()
     {
+        var browser = new NativeWebView
+        {
+            Background = Brushes.Transparent,
+            IsHitTestVisible = false
+        };
+        browser.EnvironmentRequested += (_, args) =>
+        {
+            if (args is WindowsWebView2EnvironmentRequestedEventArgs webView2)
+            {
+                // Headless analysis has no visible native surface and must
+                // always use the offscreen WebView2 path.
+                webView2.ExperimentalOffscreen = true;
+            }
+        };
+        browser.NavigationCompleted += HeadlessBrowser_NavigationCompleted;
+        HeadlessBrowserHost.Child = browser;
+        return browser;
+    }
+
+    private void ReplaceBrowser(IBrush background, bool offscreen)
+    {
+        InvalidateBrowserNavigation();
+        BeginNativePresentationSession();
         var previous = Browser;
         previous.NavigationCompleted -= Browser_NavigationCompleted;
         previous.WebMessageReceived -= Browser_WebMessageReceived;
         previous.NewWindowRequested -= Browser_NewWindowRequested;
         BrowserHost.Child = null;
-        Browser = CreateBrowser(background);
+        Browser = CreateBrowser(background, offscreen);
+    }
+
+    private void RecreateOverlayBrowser()
+    {
+        // The offscreen WebView2 compositor can retain the last launcher frame
+        // when the existing NativeWebView is moved into the transparent overlay
+        // HWND. Recreating the control gives the overlay a fresh composition
+        // surface, while the providers created by the headless controller keep
+        // resolving the current Browser instance. Keep it detached until the
+        // overlay HWND has its final size/styles; attaching a WebView2 surface
+        // while Avalonia is still resizing the transparent window can fail in
+        // SizeChangedCore and leave the first page visually blank until reload.
+        ReplaceBrowser(Brushes.Transparent, offscreen: true);
     }
 
     private static async Task ObserveControllerDisposeAsync(Task disposeTask)
@@ -292,6 +423,11 @@ public partial class MainWindow : Window
             _model.SetStatus(L("status.tosu_running"), true);
             SetControlsEnabled(true);
             Navigate(AnalysisUrl);
+            // Keep the normal launcher preview fed by the same native Tosu
+            // realtime stream as the overlay. The preview is a visible
+            // presentation surface too; otherwise it only changes after a
+            // navigation/reload while the overlay updates continuously.
+            StartOverlayGameplayPolling();
         }
         else
         {
@@ -309,13 +445,14 @@ public partial class MainWindow : Window
         {
             var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
             var beatmapSource = new TosuBeatmapSource(httpClient, _tosuBaseUri);
-            var scriptHostFactory = () => new WebViewAnalyzerScriptHost(() => Browser);
-            // Resolve the current control for every snapshot. Leaving overlay
-            // mode recreates the NativeWebView, so a presenter that captured
-            // the detached overlay instance can otherwise keep flooding the
-            // UI queue with InvokeScript failures while the launcher is being
-            // restored.
-            var presenter = new WebViewAnalysisSnapshotPresenter(() => Browser);
+            _headlessBrowser ??= CreateHeadlessBrowser();
+            var scriptHostFactory = () => new WebViewAnalyzerScriptHost(() =>
+                _headlessBrowser ?? throw new InvalidOperationException("The headless analyzer WebView is unavailable."));
+            // Headless analysis has its own offscreen WebView. Presentation
+            // navigation and overlay recreation therefore cannot reset the
+            // analyzer runtime or deliver messages to a detached document.
+            var presenter = new RuntimeAnalysisSnapshotPresenter(snapshot =>
+                PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(sequence, snapshot)));
 
             _headlessAnalysisController = new HeadlessAnalysisController(
                 new HeadlessEngineServices(_analyzerEngineCatalog, _analyzerEngineDeployer, scriptHostFactory),
@@ -333,7 +470,7 @@ public partial class MainWindow : Window
             // bootstrapping the headless runtime. Injecting the runtime too early
             // makes globalThis.location.href point at the previous document and
             // the subsequent navigation resets the bridge, producing engine.runtime_reset.
-            await WaitForAnalysisWebViewReadyAsync();
+            await EnsureHeadlessBrowserReadyAsync();
             await _headlessAnalysisController.StartAsync();
         }
         catch (Exception exception)
@@ -350,19 +487,24 @@ public partial class MainWindow : Window
             if (e.IsRunning)
             {
                 SetControlsEnabled(true);
+                StartOverlayGameplayPolling();
                 if (_headlessAnalysisController is not null)
                 {
                     _ = _headlessAnalysisController.NotifyTosuRestartAsync();
                 }
             }
-            else if (_initialized && _overlayMode)
+            else
             {
-                ReturnToLauncherAfterGameExit(
-                    "status.osu_stopped");
-            }
-            else if (_initialized)
-            {
-                SetControlsEnabled(false, keepRestart: true);
+                StopOverlayGameplayPolling();
+                if (_initialized && _overlayMode)
+                {
+                    ReturnToLauncherAfterGameExit(
+                        "status.osu_stopped");
+                }
+                else if (_initialized)
+                {
+                    SetControlsEnabled(false, keepRestart: true);
+                }
             }
         });
     }
@@ -385,33 +527,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task WaitForAnalysisWebViewReadyAsync()
+    private async Task EnsureHeadlessBrowserReadyAsync()
     {
         try
         {
-            if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            _headlessBrowser ??= CreateHeadlessBrowser();
+            if (ActiveAnalyzer.MatchesAnalysisUri(_headlessBrowser.Source))
             {
-                await Task.Delay(500);
+                await Task.Delay(400);
                 return;
             }
 
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            void Handler(object? sender, WebViewNavigationCompletedEventArgs e)
-            {
-                if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
-                {
-                    completion.TrySetResult(true);
-                }
-            }
-
-            Browser.NavigationCompleted += Handler;
+            _headlessBrowserReady = completion;
             try
             {
-                // Ensure navigation is attempted.
-                if (!ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
-                {
-                    Navigate(AnalysisUrl);
-                }
+                _headlessBrowser.Navigate(new Uri(AnalysisUrl));
 
                 var completed = await Task.WhenAny(completion.Task, Task.Delay(3000));
                 if (completed == completion.Task)
@@ -431,13 +562,52 @@ public partial class MainWindow : Window
             }
             finally
             {
-                Browser.NavigationCompleted -= Handler;
+                if (ReferenceEquals(_headlessBrowserReady, completion))
+                {
+                    _headlessBrowserReady = null;
+                }
             }
         }
         catch (Exception exception)
         {
             AppLogger.Warning("Waiting for analysis WebView", $"Could not confirm WebView readiness before bootstrapping headless engine: {exception.Message}", exception);
             await Task.Delay(800);
+        }
+    }
+
+    private async void HeadlessBrowser_NavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
+    {
+        try
+        {
+            if (!ReferenceEquals(sender, _headlessBrowser))
+            {
+                return;
+            }
+
+            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(_headlessBrowser.Source))
+            {
+                _headlessBrowserReady?.TrySetResult(true);
+            }
+
+            if (_headlessAnalysisController is null)
+            {
+                return;
+            }
+
+            var status = _headlessAnalysisController.CurrentState.Status;
+            if (status is not (AnalyzerEngineSupervisorStatus.Ready
+                or AnalyzerEngineSupervisorStatus.Fallback
+                or AnalyzerEngineSupervisorStatus.Error))
+            {
+                return;
+            }
+
+            await _headlessAnalysisController.NotifyNavigationAsync();
+            await _headlessAnalysisController.RepublishLastSnapshotAsync();
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Handling headless WebView navigation", exception, userVisible: false);
         }
     }
 
@@ -763,6 +933,12 @@ public partial class MainWindow : Window
     {
         try
         {
+            // A navigation/reinjection invalidates any call targeting the
+            // previous document. Keep the latest native snapshot so the new
+            // document can replay it after NavigationCompleted in either
+            // launcher-preview or overlay mode.
+            InvalidateBrowserNavigation();
+
             Browser.Navigate(new Uri(url));
         }
         catch (Exception exception)
@@ -781,6 +957,10 @@ public partial class MainWindow : Window
         var html = "<!doctype html><html><head><meta charset='utf-8'><style>" + loadingCss + "</style></head><body><div class='box'><div class='ring" + (error ? " error" : "") + "'></div><h1>" + safeTitle + "</h1><p>" + safeMessage + "</p></div></body></html>";
         try
         {
+            // NavigateToString also replaces the document. Invalidate any
+            // pending analysis navigation so its continuation cannot mark
+            // this error page as a ready analyzer document.
+            InvalidateBrowserNavigation();
             Browser.NavigateToString(html, new Uri(BaseUrl));
         }
         catch (Exception exception)
@@ -793,24 +973,64 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+            if (!ReferenceEquals(sender, Browser))
             {
-                await ApplyPresentationAsync();
+                return;
+            }
+
+            var browser = Browser;
+            long navigationGeneration = Volatile.Read(ref _browserNavigationGeneration);
+
+            var analysisDocumentReady = e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source);
+            if (analysisDocumentReady)
+            {
+                var presentationApplied = await ApplyPresentationAsync(
+                    _model?.Settings ?? new LauncherSettings(),
+                    _overlayMode,
+                    updateFullscreen: true,
+                    reportErrors: false,
+                    CancellationToken.None);
+                if (!ReferenceEquals(browser, Browser) ||
+                    navigationGeneration != Volatile.Read(ref _browserNavigationGeneration))
+                {
+                    return;
+                }
+                if (!presentationApplied)
+                {
+                    // WebView2 can complete navigation while its composition
+                    // controller is still replacing the root visual target
+                    // (notably during osu! minimize/restore). Do not mark the
+                    // document ready in that interval: a publisher call would
+                    // otherwise be accepted by a page with no renderer.
+                    SetNativeBrowserReady(false);
+                    _ = RetryBrowserPresentationAsync();
+                    return;
+                }
                 if (_overlayMode)
                 {
                     await FitOverlayWindowToRenderedWidgetAsync();
+                    if (!ReferenceEquals(browser, Browser) ||
+                        navigationGeneration != Volatile.Read(ref _browserNavigationGeneration))
+                    {
+                        return;
+                    }
+                    ScheduleOverlayLayoutReconciliation();
                 }
             }
 
-            if (_headlessAnalysisController is not null)
+            if (analysisDocumentReady)
             {
-                var status = _headlessAnalysisController.CurrentState.Status;
-                if (status == AnalyzerEngineSupervisorStatus.Ready ||
-                    status == AnalyzerEngineSupervisorStatus.Fallback ||
-                    status == AnalyzerEngineSupervisorStatus.Error)
-                {
-                    await _headlessAnalysisController.NotifyNavigationAsync();
-                }
+                // Mark readiness only after the fresh renderer and any cached
+                // headless snapshot have been injected. The coalescer then
+                // flushes its newest native frame when this document is
+                // visible, including the normal launcher preview.
+                SetNativeBrowserReady(true);
+                // Avalonia's IsVisible describes the top-level control, not
+                // the native overlay HWND. The HWND may be SW_HIDE/opacity 0
+                // while the WebView document remains loaded; do not flush
+                // realtime frames into that hidden presentation surface.
+                SetNativePresentationVisible(
+                    _overlayMode ? _overlayWindowVisible && Opacity > 0 : IsVisible);
             }
         }
         catch (Exception exception)
@@ -870,6 +1090,10 @@ public partial class MainWindow : Window
             return;
         }
         if (TryHandleGameplayStateTrace(message))
+        {
+            return;
+        }
+        if (TryHandlePauseCoachTrace(message))
         {
             return;
         }
@@ -1191,6 +1415,58 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private void InvalidateBrowserNavigation()
+    {
+        Interlocked.Increment(ref _browserNavigationGeneration);
+        SetNativeBrowserReady(false);
+    }
+
+    private static bool TryHandlePauseCoachTrace(string message)
+    {
+        const string adapterPrefix = "overlay:pause-coach-debug:";
+        const string renderPrefix = "overlay:pause-coach-render-debug:";
+        string? sourcePrefix = message.StartsWith(adapterPrefix, StringComparison.Ordinal)
+            ? adapterPrefix
+            : message.StartsWith(renderPrefix, StringComparison.Ordinal)
+                ? renderPrefix
+                : null;
+        if (sourcePrefix is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Uri.UnescapeDataString(message[sourcePrefix.Length..]));
+            var root = document.RootElement;
+            string GetString(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+            string GetNumber(string name) => root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                ? value.ToString()
+                : "null";
+            string GetBool(string name) => root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? value.GetBoolean().ToString()
+                : "null";
+
+            AppLogger.Info(
+                sourcePrefix == adapterPrefix ? "PauseCoach adapter telemetry" : "PauseCoach renderer telemetry",
+                $"source={GetString("source")}; rawState={GetString("rawState")}; rawStateNumber={GetNumber("rawStateNumber")}; " +
+                $"rawPaused={GetBool("rawPaused")}; normalizedIsPlaying={GetBool("normalizedIsPlaying")}; " +
+                $"normalizedIsPaused={GetBool("normalizedIsPaused")}; runtimeState={GetString("runtimeState")}; " +
+                $"beatmap={GetString("beatmapId")}; mapTimeMs={GetNumber("mapTimeMs")}; score={GetNumber("score")}; " +
+                $"accuracy={GetNumber("accuracy")}; judgementCount={GetNumber("judgementCount")}; " +
+                $"hitErrorArrayLength={GetNumber("hitErrorArrayLength")}; sessionId={GetString("sessionId")}; " +
+                $"coachState={GetString("coachState")}");
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Reading Pause Coach trace", exception, userVisible: false);
+        }
+
+        return true;
+    }
+
     private void TraceGameplayState(
         string source,
         string name,
@@ -1252,10 +1528,17 @@ public partial class MainWindow : Window
 
     private void AnalyzerSnapshotChanged(AnalysisSnapshot snapshot)
     {
-        if (_headlessAnalysisController is not { IsHeadlessActive: true })
+        // The presentation adapter is intentionally a fallback. Once the
+        // headless analyzer is active it can emit incomplete DOM snapshots
+        // for an old selection; those must not replace the headless result in
+        // the authoritative runtime reducer.
+        if (_headlessAnalysisController is { IsHeadlessActive: true })
         {
-            _lastAnalyzerSnapshot = snapshot;
+            return;
         }
+
+        PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(sequence, snapshot));
+        _lastAnalyzerSnapshot = snapshot;
         if (!_overlayMode || _overlayNativePlayStateKnown || snapshot.Gameplay.IsPlaying is not bool isPlaying)
         {
             return;
@@ -1280,7 +1563,7 @@ public partial class MainWindow : Window
         await ApplyPresentationAsync(_model.Settings, _overlayMode, updateFullscreen: true, reportErrors: true, CancellationToken.None);
     }
 
-    private async Task ApplyPresentationAsync(
+    private async Task<bool> ApplyPresentationAsync(
         LauncherSettings settings,
         bool presentationOverlayMode,
         bool updateFullscreen,
@@ -1288,6 +1571,7 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         var entered = false;
+        var applied = false;
         try
         {
             await _presentationGate.WaitAsync(cancellationToken);
@@ -1298,7 +1582,7 @@ public partial class MainWindow : Window
             await Browser.InvokeScript(scripts.ObserverScript);
             if (presentationOverlayMode && _overlayMode)
             {
-                await ApplyOverlayDocumentAppearanceScriptAsync(_windowsOverlay.IsOsuMinimized);
+                await ApplyOverlayDocumentAppearanceScriptAsync(_overlayWindow.IsMinimized);
             }
             try
             {
@@ -1341,7 +1625,14 @@ public partial class MainWindow : Window
                     analyzer.Descriptor,
                     scripts.FullscreenSetupScript,
                     scripts.FullscreenObserverScript);
+                SetFullscreenViewStatePresentation(true);
+                SubmitCurrentFullscreenViewState();
             }
+            else if (updateFullscreen)
+            {
+                SetFullscreenViewStatePresentation(false);
+            }
+            applied = true;
         }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -1369,6 +1660,56 @@ public partial class MainWindow : Window
                 _presentationGate.Release();
             }
         }
+
+        return applied;
+    }
+
+    private async Task RetryBrowserPresentationAsync()
+    {
+        // A failed composition-controller attach is transient. Retry a few
+        // times without navigating again so the current document keeps its
+        // native collector and the latest snapshot can be replayed when the
+        // renderer becomes ready.
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)));
+                if (_isClosing || !ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
+                {
+                    return;
+                }
+
+                if (!await ApplyPresentationAsync(
+                        _model?.Settings ?? new LauncherSettings(),
+                        _overlayMode,
+                        updateFullscreen: true,
+                        reportErrors: false,
+                        CancellationToken.None))
+                {
+                    continue;
+                }
+
+                SetNativeBrowserReady(true);
+                SetNativePresentationVisible(
+                    _overlayMode ? _overlayWindowVisible && Opacity > 0 : IsVisible);
+                if (_overlayMode)
+                {
+                    await FitOverlayWindowToRenderedWidgetAsync();
+                    ScheduleOverlayLayoutReconciliation();
+                }
+
+                return;
+            }
+            catch (Exception exception)
+            {
+                AppLogger.Debug("Retrying browser presentation", exception.Message);
+            }
+        }
+
+        AppLogger.Warning(
+            "Retrying browser presentation",
+            "The WebView document did not become ready after transient composition failures.");
     }
 
     private void ApplyOverlayWindowAppearance(bool osuMinimized)
@@ -1392,7 +1733,7 @@ public partial class MainWindow : Window
         _ = ApplyOverlayDocumentAppearanceScriptAsync(osuMinimized);
         Dispatcher.UIThread.Post(() =>
         {
-            if (_overlayMode && _windowsOverlay.IsOsuMinimized == osuMinimized)
+            if (_overlayMode && _overlayWindow.IsMinimized == osuMinimized)
             {
                 try
                 {
@@ -1824,7 +2165,7 @@ public partial class MainWindow : Window
         if (running && _headlessAnalysisController is not null)
         {
             Navigate(AnalysisUrl);
-            await WaitForAnalysisWebViewReadyAsync();
+            await EnsureHeadlessBrowserReadyAsync();
             await _headlessAnalysisController.RestartAsync();
         }
 
@@ -1848,6 +2189,7 @@ public partial class MainWindow : Window
         _model.SetStatus(L(_model.Tosu.IsRunning ? "status.tosu_running" : "status.tosu_not_running"), _model.Tosu.IsRunning);
         if (ActiveAnalyzer.MatchesAnalysisUri(Browser.Source))
         {
+            InvalidateBrowserNavigation();
             Browser.Refresh();
         }
     }
@@ -1883,6 +2225,7 @@ public partial class MainWindow : Window
         _normalPosition = Position;
         _normalClientSize = ClientSize;
         _overlayMode = true;
+        CancelOverlayLayoutReconciliation();
         _overlayWidgetSized = false;
         _overlayRenderedBaseHeight = null;
         _overlayPlayStateKnown = false;
@@ -1890,10 +2233,20 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
+        // The native collector is presentation-independent and has already
+        // accumulated the current attempt in launcher preview. Keep that
+        // session across the WebView swap so opening the overlay does not
+        // briefly replace a complete window with a one-sample session.
+        _lastNativePauseCoachDiagnostic = string.Empty;
+        _lastNativePauseCoachDiagnosticAt = default;
+        _lastNativePollBoundaryDiagnostic = string.Empty;
+        _lastNativePollBoundaryDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
         _overlayVisibilityPolicy = ResolveOverlayVisibilityPolicy();
+        PostShadowRuntimeEvent(sequence => new VisibilityPolicyChanged(sequence, _overlayVisibilityPolicy));
+        PostShadowRuntimeEvent(sequence => new OverlayModeChanged(sequence, true));
         _overlayInteractive = false;
         CancelOverlayGestures();
         Opacity = 1;
@@ -1912,13 +2265,32 @@ public partial class MainWindow : Window
         // the safe edit state, where an activatable/task-switchable HWND is
         // required for reliable WebView2 pointer input.
         ShowInTaskbar = true;
-        ApplyOverlayWindowAppearance(_windowsOverlay.IsOsuMinimized);
+        RecreateOverlayBrowser();
+        ApplyOverlayWindowAppearance(_overlayWindow.IsMinimized);
 
-        var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
+                              (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
+            ? _model.Settings.OverlayLayoutMode
+            : _model.Settings.OverlayPresetId;
+        var layout = OverlayPresentationService.NormalizeLayout(requestedPreset);
         _overlayUsesAuthoritativeSize = layout != "custom";
         var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
-        var width = (layout == "horizontal" ? 920 : layout is "companella" or "companella-replay" ? 760 : 475) * scale;
-        var height = (layout == "horizontal" ? 360 : layout is "companella" or "companella-replay" ? 340 : 540) * scale;
+        var baseWidth = layout switch
+        {
+            "horizontal" => 920d,
+            "companella" or "companella-replay" => 760d,
+            "pause-coach-card" => 620d,
+            _ => 475d
+        };
+        var baseHeight = layout switch
+        {
+            "horizontal" => 360d,
+            "companella" or "companella-replay" => 340d,
+            "pause-coach-card" => 300d,
+            _ => 540d
+        };
+        var width = baseWidth * scale;
+        var height = baseHeight * scale;
         ClientSize = new Size(width, height);
         _overlayWidgetSized = _overlayUsesAuthoritativeSize;
         var working = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
@@ -1935,7 +2307,14 @@ public partial class MainWindow : Window
         // invisible overlay when tosu is unavailable or still starting.
         _windowsOverlay.ReapplyNativeState(visible: true);
         UpdateOverlayVisibility();
+        BrowserHost.Child = Browser;
         Navigate(AnalysisUrl);
+        // The first WebView2 composition/layout pass can complete after
+        // NavigationCompleted (especially while the transparent HWND is being
+        // recreated). Keep a small, cancellable reconciliation window so the
+        // initial overlay does not depend on a user resize to receive the
+        // final card bounds.
+        ScheduleOverlayLayoutReconciliation();
         StartOverlayGameplayPolling();
     }
 
@@ -1947,6 +2326,7 @@ public partial class MainWindow : Window
         }
 
         SaveOverlayBounds();
+        CancelOverlayLayoutReconciliation();
         _overlayInteractive = false;
         StopOverlayGameplayPolling();
         CancelOverlayGestures();
@@ -1967,7 +2347,7 @@ public partial class MainWindow : Window
         // NativeWebView retains its composition adapter across a normal visual
         // detach. Replace the control itself so the launcher cannot inherit the
         // transparent WebView2 adapter used by overlay mode.
-        ReplaceBrowser(launcherBackground);
+        ReplaceBrowser(launcherBackground, offscreen: false);
         Browser.IsHitTestVisible = true;
         BrowserHost.IsHitTestVisible = true;
         TransparencyLevelHint = new[] { WindowTransparencyLevel.None };
@@ -1979,11 +2359,20 @@ public partial class MainWindow : Window
         _lastGameplayTraceBySource.Clear();
         _overlayIsPlaying = false;
         _overlayIsPaused = null;
+        // Keep the collector session when returning to the launcher. The
+        // next Tosu frame handles map/retry transitions, while resetting here
+        // would make the preview briefly show a freshly empty window.
+        _lastNativePauseCoachDiagnostic = string.Empty;
+        _lastNativePauseCoachDiagnosticAt = default;
+        _lastNativePollBoundaryDiagnostic = string.Empty;
+        _lastNativePollBoundaryDiagnosticAt = default;
         _overlaySuppressedByPolicy = false;
         _overlayScaleUpdateInProgress = false;
         Interlocked.Exchange(ref _queuedOverlayScaleDelta, 0);
         Volatile.Write(ref _overlayNativeDragPending, 0);
         _overlayVisibilityPolicy = OverlayVisibilityPolicy.Always;
+        PostShadowRuntimeEvent(sequence => new VisibilityPolicyChanged(sequence, _overlayVisibilityPolicy));
+        PostShadowRuntimeEvent(sequence => new OverlayModeChanged(sequence, false));
         Opacity = 1;
         Toolbar.IsVisible = true;
         RootGrid.RowDefinitions[0].Height = new GridLength(150);
@@ -1996,6 +2385,14 @@ public partial class MainWindow : Window
         Position = _normalPosition;
         ClientSize = _normalClientSize;
         SetOverlayWindowVisibility(true);
+        // Overlay mode owns the polling lifetime while the native HWND is
+        // active. Restart it when returning to the launcher so the preview
+        // keeps receiving the same realtime stream without requiring reload.
+        if (_model.Tosu.IsRunning)
+        {
+            StartOverlayGameplayPolling();
+        }
+        SetNativePresentationVisible(IsVisible);
         Dispatcher.UIThread.Post(() =>
         {
             if (_overlayMode || BrowserHost.Child is not null)
@@ -2074,8 +2471,9 @@ public partial class MainWindow : Window
             _overlayRenderedBaseHeight = targetSize.Height / scale;
         }
 
-        if (Math.Abs(ClientSize.Width - targetSize.Width) <= 0.5 &&
-            Math.Abs(ClientSize.Height - targetSize.Height) <= 0.5)
+        const double sizeTolerance = 2.0;
+        if (Math.Abs(ClientSize.Width - targetSize.Width) <= sizeTolerance &&
+            Math.Abs(ClientSize.Height - targetSize.Height) <= sizeTolerance)
         {
             _overlayWidgetSized = true;
             UpdateOverlayVisibility();
@@ -2098,11 +2496,16 @@ public partial class MainWindow : Window
 
         var currentScale = Math.Clamp(currentScalePercent, 50, 180) / 100d;
         var nextScale = Math.Clamp(nextScalePercent, 50, 180) / 100d;
-        var layout = OverlayPresentationService.NormalizeLayout(_model.Settings.OverlayLayoutMode);
+        var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||
+                              (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
+            ? _model.Settings.OverlayLayoutMode
+            : _model.Settings.OverlayPresetId;
+        var layout = OverlayPresentationService.NormalizeLayout(requestedPreset);
         var baseWidth = layout switch
         {
             "horizontal" => 920d,
             "companella" or "companella-replay" => 760d,
+            "pause-coach-card" => 620d,
             "default" => 475d,
             _ => ClientSize.Width / currentScale
         };
@@ -2110,8 +2513,9 @@ public partial class MainWindow : Window
         var targetSize = new Size(
             Math.Ceiling(baseWidth * nextScale),
             Math.Ceiling(baseHeight * nextScale));
-        if (Math.Abs(ClientSize.Width - targetSize.Width) < 0.5 &&
-            Math.Abs(ClientSize.Height - targetSize.Height) < 0.5)
+        const double sizeTolerance = 2.0;
+        if (Math.Abs(ClientSize.Width - targetSize.Width) <= sizeTolerance &&
+            Math.Abs(ClientSize.Height - targetSize.Height) <= sizeTolerance)
         {
             return;
         }
@@ -2119,6 +2523,78 @@ public partial class MainWindow : Window
         var position = Position;
         ClientSize = targetSize;
         Position = position;
+    }
+
+    private void ScheduleOverlayLayoutReconciliation()
+    {
+        if (!_overlayMode || _isClosing)
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(
+            ref _overlayLayoutReconciliationCancellation,
+            cancellation);
+        previous?.Cancel();
+        var generation = Interlocked.Increment(ref _overlayLayoutReconciliationGeneration);
+        _ = ReconcileOverlayLayoutAsync(cancellation, generation);
+    }
+
+    private void CancelOverlayLayoutReconciliation()
+    {
+        Interlocked.Increment(ref _overlayLayoutReconciliationGeneration);
+        var cancellation = Interlocked.Exchange(
+            ref _overlayLayoutReconciliationCancellation,
+            null);
+        cancellation?.Cancel();
+    }
+
+    private async Task ReconcileOverlayLayoutAsync(
+        CancellationTokenSource cancellation,
+        long generation)
+    {
+        try
+        {
+            // Use a few settled compositor frames instead of resizing on every
+            // telemetry update. The later passes cover slow WebView2 startup
+            // and the native HWND recreation that can happen on overlay entry.
+            foreach (var delay in new[] { 120, 420, 900, 1_600 })
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(delay), cancellation.Token);
+                if (cancellation.IsCancellationRequested ||
+                    generation != Volatile.Read(ref _overlayLayoutReconciliationGeneration) ||
+                    !_overlayMode ||
+                    _isClosing)
+                {
+                    return;
+                }
+
+                await FitOverlayWindowToRenderedWidgetAsync();
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Expected when leaving/re-entering overlay or replacing its WebView.
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Debug("Reconciling initial overlay layout", exception.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(
+                    Volatile.Read(ref _overlayLayoutReconciliationCancellation),
+                    cancellation))
+            {
+                Interlocked.CompareExchange(
+                    ref _overlayLayoutReconciliationCancellation,
+                    null,
+                    cancellation);
+            }
+
+            cancellation.Dispose();
+        }
     }
 
     private async Task FitOverlayWindowToRenderedWidgetAsync()
@@ -2153,8 +2629,9 @@ public partial class MainWindow : Window
                 var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
                 _overlayRenderedBaseHeight = targetSize.Height / scale;
                 var position = Position;
-                if (Math.Abs(ClientSize.Width - targetSize.Width) > 0.5 ||
-                    Math.Abs(ClientSize.Height - targetSize.Height) > 0.5)
+                const double sizeTolerance = 2.0;
+                if (Math.Abs(ClientSize.Width - targetSize.Width) > sizeTolerance ||
+                    Math.Abs(ClientSize.Height - targetSize.Height) > sizeTolerance)
                 {
                     ClientSize = targetSize;
                     Position = position;
@@ -2253,51 +2730,63 @@ public partial class MainWindow : Window
         StopOverlayGameplayPolling();
         if (_model is null)
         {
+            LogNativePollBoundary("not-started:model-null");
             return;
         }
 
-        _overlayGameplayPollCancellation = new CancellationTokenSource();
-        _overlayGameplayPollTimer.Start();
-        _ = PollOverlayGameplayStateAsync();
+        LogNativePollBoundary("started");
+        var pollingCancellation = new CancellationTokenSource();
+        var generation = Interlocked.Increment(ref _overlayGameplayPollGeneration);
+        _overlayGameplayPollCancellation = pollingCancellation;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        timer.Tick += (_, _) => _ = PollOverlayGameplayStateAsync(generation, pollingCancellation);
+        _overlayGameplayPollTimer = timer;
+        timer.Start();
+        _ = PollOverlayGameplayStateAsync(generation, pollingCancellation);
     }
 
     private void StopOverlayGameplayPolling()
     {
-        _overlayGameplayPollTimer.Stop();
-        _overlayGameplayPollCancellation?.Cancel();
-        _overlayGameplayPollCancellation?.Dispose();
+        Interlocked.Increment(ref _overlayGameplayPollGeneration);
+        var timer = _overlayGameplayPollTimer;
+        _overlayGameplayPollTimer = null;
+        timer?.Stop();
+        var pollingCancellation = _overlayGameplayPollCancellation;
         _overlayGameplayPollCancellation = null;
+        pollingCancellation?.Cancel();
+        pollingCancellation?.Dispose();
     }
 
-    private async void OverlayGameplayPollTimer_Tick(object? sender, EventArgs e) =>
-        await PollOverlayGameplayStateAsync();
-
-    private async Task PollOverlayGameplayStateAsync()
+    private async Task PollOverlayGameplayStateAsync(long generation, CancellationTokenSource pollingCancellation)
     {
-        if (!_overlayMode || _model is null || Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
+        if (_model is null || !IsActiveOverlayGameplayPoll(generation, pollingCancellation) ||
+            Interlocked.Exchange(ref _overlayGameplayPollInFlight, 1) != 0)
         {
             return;
         }
 
-        var cancellationToken = _overlayGameplayPollCancellation?.Token ?? CancellationToken.None;
+        var cancellationToken = pollingCancellation.Token;
         try
         {
-            var state = await _model.Tosu.GetGameplayStateAsync(cancellationToken);
-            if (state is not null)
+            TosuRealtimeTelemetry? telemetry = await _overlayRealtimeSource.ReadAsync(cancellationToken);
+            if (telemetry is not null)
             {
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (_overlayMode)
+                    // The request may finish after overlay exit/re-entry. Do
+                    // not deliver a stale response into the new WebView
+                    // session, but do feed both visible launcher and overlay
+                    // presentations from the same collector.
+                    if (!cancellationToken.IsCancellationRequested &&
+                        IsActiveOverlayGameplayPoll(generation, pollingCancellation))
                     {
-                        _overlayNativePlayStateKnown = true;
-                        if (state.IsPlaying is bool isPlaying)
-                        {
-                            SetOverlaySuppressedByPlay(isPlaying, state.IsPaused);
-                        }
-
-                        TraceGameplayState("native-http", state.Name, state.Number, state.IsPlaying, state.IsPaused, null);
+                        ApplyNativeRealtimeTelemetry(telemetry);
                     }
                 });
+            }
+            else
+            {
+                LogNativePollBoundary("payload-null-or-normalization-failed");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2314,12 +2803,362 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool IsActiveOverlayGameplayPoll(long generation, CancellationTokenSource pollingCancellation) =>
+        generation == Volatile.Read(ref _overlayGameplayPollGeneration) &&
+        ReferenceEquals(_overlayGameplayPollCancellation, pollingCancellation) &&
+        !pollingCancellation.IsCancellationRequested;
+
+    private void LogNativePollBoundary(string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(reason, _lastNativePollBoundaryDiagnostic, StringComparison.Ordinal) &&
+            now - _lastNativePollBoundaryDiagnosticAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastNativePollBoundaryDiagnostic = reason;
+        _lastNativePollBoundaryDiagnosticAt = now;
+        AppLogger.Info(
+            "PauseCoach native polling",
+            $"source=native-http; boundary={reason}; overlayMode={_overlayMode}; modelReady={_model is not null}; " +
+            $"pollInFlight={Volatile.Read(ref _overlayGameplayPollInFlight)}; cancellation={_overlayGameplayPollCancellation?.IsCancellationRequested ?? false}");
+    }
+
+    private void PostShadowRuntimeEvent(Func<long, OverlayRuntimeEvent> createEvent)
+    {
+        _runtimeCoordinator.TryPost(createEvent);
+    }
+
+    private void BeginNativePresentationSession()
+    {
+        _nativePauseCoachPublisher.BeginPresentationSession();
+        bool changed = _shadowPresentationReady || _shadowPresentationVisible;
+        _shadowPresentationReady = false;
+        _shadowPresentationVisible = false;
+        if (changed)
+        {
+            PostShadowRuntimeEvent(sequence => new PresentationAvailabilityChanged(sequence, false, false));
+        }
+    }
+
+    private void SetNativeBrowserReady(bool ready)
+    {
+        _nativePauseCoachPublisher.SetBrowserReady(ready);
+        if (_shadowPresentationReady == ready)
+        {
+            return;
+        }
+
+        _shadowPresentationReady = ready;
+        PostShadowRuntimeEvent(sequence => new PresentationAvailabilityChanged(
+            sequence,
+            _shadowPresentationReady,
+            _shadowPresentationVisible));
+    }
+
+    private void SetNativePresentationVisible(bool visible)
+    {
+        _nativePauseCoachPublisher.SetPresentationVisible(visible);
+        if (_shadowPresentationVisible == visible)
+        {
+            return;
+        }
+
+        _shadowPresentationVisible = visible;
+        PostShadowRuntimeEvent(sequence => new PresentationAvailabilityChanged(
+            sequence,
+            _shadowPresentationReady,
+            _shadowPresentationVisible));
+    }
+
+    private void ShadowRuntimeCoordinator_TransitionApplied(
+        object? sender,
+        OverlayRuntimeTransition transition)
+    {
+        if (!transition.Accepted)
+        {
+            return;
+        }
+
+        OverlayRuntimeState previous = transition.Previous;
+        OverlayRuntimeState next = transition.Next;
+        bool important = previous.GameplayState != next.GameplayState
+            || !string.Equals(previous.BeatmapId, next.BeatmapId, StringComparison.Ordinal)
+            || !string.Equals(previous.SessionId, next.SessionId, StringComparison.Ordinal)
+            || previous.OverlayMode != next.OverlayMode
+            || !string.Equals(previous.VisibilityPolicy, next.VisibilityPolicy, StringComparison.Ordinal)
+            || previous.OsuWindowMinimized != next.OsuWindowMinimized
+            || previous.PresentationReady != next.PresentationReady
+            || previous.PresentationVisible != next.PresentationVisible;
+        bool affectsVisibility = transition.Event is RealtimeTelemetryReceived
+            or OverlayModeChanged
+            or OsuWindowStateChanged
+            or VisibilityPolicyChanged;
+        // The coordinator is the authoritative native realtime boundary.
+        // Submit the reducer's accepted snapshot before posting the UI
+        // visibility effect so a paused/results frame is the first frame
+        // flushed when a hidden overlay becomes visible.
+        if (important)
+        {
+            Dispatcher.UIThread.Post(() => ApplyCoordinatorRuntimeState(next, affectsVisibility));
+        }
+
+        if (!important)
+        {
+            return;
+        }
+
+        RealtimeAnalysisSnapshot? realtime = next.LatestRealtime;
+        string signature = $"{transition.Event.GetType().Name}|{next.GameplayState}|{next.BeatmapId}|{next.SessionId}|{next.OverlayMode}|{next.OsuWindowMinimized}|{next.PresentationReady}|{next.PresentationVisible}";
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (string.Equals(signature, _lastShadowRuntimeDiagnostic, StringComparison.Ordinal)
+            && now - _lastShadowRuntimeDiagnosticAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastShadowRuntimeDiagnostic = signature;
+        _lastShadowRuntimeDiagnosticAt = now;
+        AppLogger.Debug(
+            "Overlay runtime shadow transition",
+            $"eventType={transition.Event.GetType().Name}; accepted=true; runtimeVersion={next.Version}; "
+            + $"beatmapId={next.BeatmapId}; attemptId={next.SessionId}; mapTimeMs={realtime?.MapTimeMs}; "
+            + $"gameplayState={next.GameplayState}; isPlaying={next.IsPlaying}; isPaused={next.IsPaused}; "
+            + $"overlayMode={next.OverlayMode}; osuWindowMinimized={next.OsuWindowMinimized}; "
+            + $"presentationReady={next.PresentationReady}; presentationVisible={next.PresentationVisible}; "
+            + $"source={next.LastRealtimeSource}");
+        Dispatcher.UIThread.Post(() => CompareShadowRuntimeWithLegacy(
+            next,
+            includePresentation: transition.Event is PresentationAvailabilityChanged));
+    }
+
+    private void RuntimeCoordinator_ViewStateChanged(
+        object? sender,
+        OverlayViewStateChangedEventArgs e)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        _nativePauseCoachPublisher.Submit(e.ViewState);
+        _fullscreenViewStatePublisher.Submit(e.ViewState);
+    }
+
+    private void ApplyCoordinatorRuntimeState(OverlayRuntimeState runtime, bool applyVisibility)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        _overlayVisibilityPolicy = runtime.VisibilityPolicy;
+        if (runtime.GameplayStateKnown)
+        {
+            _overlayPlayStateKnown = true;
+            _overlayIsPlaying = runtime.IsPlaying;
+            _overlayIsPaused = runtime.IsPaused;
+            _overlaySuppressedByPolicy = !OverlayVisibilityPolicy.ShouldShow(
+                runtime.VisibilityPolicy,
+                runtime.IsPlaying,
+                runtime.IsPaused);
+            if (runtime.LatestRealtime is not null)
+            {
+                _overlayNativePlayStateKnown = true;
+            }
+        }
+
+        if (!applyVisibility || !_overlayMode || !runtime.OverlayMode)
+        {
+            return;
+        }
+
+        SetOverlayWindowVisibility(OverlayVisibilityDerivation.ShouldShowNativeOverlay(runtime));
+    }
+
+    private void CompareShadowRuntimeWithLegacy(OverlayRuntimeState shadow, bool includePresentation)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        var legacy = new OverlayRuntimeLegacyProjection(
+            _overlayMode,
+            _overlayPlayStateKnown,
+            _overlayIsPlaying,
+            _overlayIsPaused,
+            _overlayVisibilityPolicy,
+            _overlayWindow.IsMinimized,
+            _shadowPresentationReady,
+            _shadowPresentationVisible,
+            _overlayWindowVisible);
+        OverlayRuntimeParityResult parity = OverlayRuntimeParityComparer.Compare(shadow, legacy, includePresentation);
+        if (parity.IsMatch)
+        {
+            return;
+        }
+
+        string signature = string.Join('|', parity.Differences);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (string.Equals(signature, _lastShadowRuntimeMismatch, StringComparison.Ordinal)
+            && now - _lastShadowRuntimeMismatchAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastShadowRuntimeMismatch = signature;
+        _lastShadowRuntimeMismatchAt = now;
+        AppLogger.Warning(
+            "Overlay runtime shadow mismatch",
+            $"runtimeVersion={shadow.Version}; eventSequence={shadow.LastEventSequence}; differences={signature}");
+    }
+
+    private void ApplyNativeRealtimeTelemetry(TosuRealtimeTelemetry telemetry)
+    {
+        PostShadowRuntimeEvent(sequence => new RealtimeTelemetryReceived(sequence, telemetry));
+        _overlayNativePlayStateKnown = true;
+        bool? isPlaying = telemetry.Snapshot.State switch
+        {
+            RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+            _ => null
+        };
+        bool? isPaused = telemetry.Snapshot.State == RealtimePlayState.Paused
+            ? true
+            : telemetry.Snapshot.State == RealtimePlayState.Playing
+                ? false
+                : null;
+        TraceGameplayState("native-http", telemetry.RawStateName, telemetry.RawStateNumber, isPlaying, isPaused, telemetry.Sample.Focused);
+        LogNativePauseCoachTelemetry(telemetry);
+    }
+
+    private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
+    {
+        var snapshot = telemetry.Snapshot;
+        bool? normalizedIsPlaying = snapshot.State switch
+        {
+            RealtimePlayState.Playing or RealtimePlayState.Paused => true,
+            RealtimePlayState.Menu or RealtimePlayState.Results or RealtimePlayState.Replay or RealtimePlayState.Spectating => false,
+            _ => null
+        };
+        bool? normalizedIsPaused = snapshot.State switch
+        {
+            RealtimePlayState.Paused => true,
+            RealtimePlayState.Playing => false,
+            _ => null
+        };
+        string signature = string.Join(
+            '|',
+            telemetry.RawStateName,
+            telemetry.RawStateNumber?.ToString(CultureInfo.InvariantCulture) ?? "null",
+            telemetry.RawPaused?.ToString() ?? "null",
+            snapshot.State,
+            snapshot.SessionId,
+            snapshot.WidgetState,
+            snapshot.BeatmapId);
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(signature, _lastNativePauseCoachDiagnostic, StringComparison.Ordinal) &&
+            now - _lastNativePauseCoachDiagnosticAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastNativePauseCoachDiagnostic = signature;
+        _lastNativePauseCoachDiagnosticAt = now;
+        AppLogger.Info(
+            "PauseCoach telemetry",
+            $"source=native-http; rawState={telemetry.RawStateName}; number={telemetry.RawStateNumber?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"paused={telemetry.RawPaused?.ToString() ?? "null"}; normalized={snapshot.State}; " +
+            $"normalizedIsPlaying={normalizedIsPlaying?.ToString() ?? "null"}; normalizedIsPaused={normalizedIsPaused?.ToString() ?? "null"}; " +
+            $"map={snapshot.BeatmapId}; mapTime={snapshot.MapTimeMs}; score={snapshot.Score?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"accuracy={snapshot.Accuracy?.ToString(CultureInfo.InvariantCulture) ?? "null"}; " +
+            $"hits={telemetry.JudgementTotal}; timingSamples={telemetry.HitErrorSampleCount}; " +
+            $"session={snapshot.SessionId}; coach={snapshot.WidgetState}");
+    }
+
+    private Task PublishNativePauseCoachSnapshotToBrowserAsync(OverlayViewState viewState)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            return PublishNativePauseCoachSnapshotToBrowserCoreAsync(viewState);
+        }
+
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                await PublishNativePauseCoachSnapshotToBrowserCoreAsync(viewState);
+                completion.TrySetResult(null);
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        });
+        return completion.Task;
+    }
+
+    private Task WriteFullscreenViewStateAsync(OverlayViewState viewState)
+    {
+        _fullscreen.WriteViewState(viewState);
+        return Task.CompletedTask;
+    }
+
+    private void SetFullscreenViewStatePresentation(bool enabled)
+    {
+        if (!enabled)
+        {
+            _fullscreenViewStatePublisher.SetPresentationVisible(false);
+            _fullscreenViewStatePublisher.SetBrowserReady(false);
+            _fullscreen.ClearViewState();
+            return;
+        }
+
+        _fullscreenViewStatePublisher.BeginPresentationSession();
+        _fullscreenViewStatePublisher.SetBrowserReady(true);
+        _fullscreenViewStatePublisher.SetPresentationVisible(true);
+    }
+
+    private void SubmitCurrentFullscreenViewState()
+    {
+        OverlayRuntimeState runtime = _runtimeCoordinator.Current;
+        if (runtime.LatestRealtime is null && runtime.LatestAnalysis is null)
+        {
+            return;
+        }
+
+        _fullscreenViewStatePublisher.Submit(OverlayViewStateComposer.Compose(runtime));
+    }
+
+    private async Task PublishNativePauseCoachSnapshotToBrowserCoreAsync(OverlayViewState viewState)
+    {
+        var browser = Browser;
+        string json = JsonSerializer.Serialize(viewState, _overlaySnapshotJsonOptions);
+        // The renderer handles the event and performs one render. Calling its
+        // exported function as well would rebuild the DOM twice and cause
+        // visible jitter. The publisher guarantees this is the newest frame
+        // for the current browser/document session.
+        string script = "window.dispatchEvent(new CustomEvent('overlay:view-state',{detail:" + json + "}));";
+        await browser.InvokeScript(script).ConfigureAwait(true);
+    }
+
     private void UpdateOverlayVisibility()
     {
         if (!_overlayMode)
         {
             return;
         }
+
+        OverlayRuntimeState runtime = _runtimeCoordinator.Current;
+        if (runtime.OverlayMode && runtime.GameplayStateKnown)
+        {
+            SetOverlayWindowVisibility(OverlayVisibilityDerivation.ShouldShowNativeOverlay(runtime));
+            return;
+        }
+
         // A size report is an optimization for synchronizing the native
         // window bounds, not a prerequisite for visibility. If WebView has
         // not reported its first measurement yet, the saved/default client
@@ -2329,8 +3168,8 @@ public partial class MainWindow : Window
                 _overlayVisibilityPolicy,
                 _overlayIsPlaying,
                 _overlayIsPaused,
-                _windowsOverlay.IsOsuMinimized)
-            : _windowsOverlay.IsOsuMinimized || OverlayVisibilityPolicy.ShouldShowBeforeGameplayStateIsKnown(_overlayVisibilityPolicy);
+                _overlayWindow.IsMinimized)
+            : _overlayWindow.IsMinimized || OverlayVisibilityPolicy.ShouldShowBeforeGameplayStateIsKnown(_overlayVisibilityPolicy);
         SetOverlayWindowVisibility(visible);
     }
 
@@ -2342,11 +3181,12 @@ public partial class MainWindow : Window
         // based on that cache can leave the launcher HWND permanently hidden
         // when entering overlay mode.
         var actualVisible = OperatingSystem.IsWindows()
-            ? _windowsOverlay.IsWindowShown
+            ? _overlayWindow.IsVisible
             : IsVisible;
         var expectedOpacity = visible ? GetOverlayOpacity() : 0d;
         if (_overlayWindowVisible == visible && actualVisible == visible && Math.Abs(Opacity - expectedOpacity) < 0.001)
         {
+            SetNativePresentationVisible(_overlayMode && visible);
             return;
         }
 
@@ -2355,7 +3195,7 @@ public partial class MainWindow : Window
         {
             if (OperatingSystem.IsWindows())
             {
-                _windowsOverlay.SetWindowVisible(visible);
+                _overlayWindow.SetVisible(visible);
             }
             else if (visible)
             {
@@ -2368,6 +3208,7 @@ public partial class MainWindow : Window
 
             Opacity = visible ? GetOverlayOpacity() : 0;
             _overlayWindowVisible = visible;
+            SetNativePresentationVisible(_overlayMode && visible);
         }
         catch (Exception exception)
         {
@@ -2381,10 +3222,11 @@ public partial class MainWindow : Window
             try
             {
                 var nativeVisible = OperatingSystem.IsWindows()
-                    ? _windowsOverlay.IsWindowShown
+                    ? _overlayWindow.IsVisible
                     : IsVisible;
                 Opacity = nativeVisible ? GetOverlayOpacity() : 0;
                 _overlayWindowVisible = nativeVisible;
+                SetNativePresentationVisible(_overlayMode && nativeVisible);
             }
             catch
             {
@@ -2401,13 +3243,13 @@ public partial class MainWindow : Window
     private void LogOverlayGameplayState(string visibilityPolicy, bool isPlaying, bool? isPaused)
     {
         var nativeVisible = OperatingSystem.IsWindows()
-            ? _windowsOverlay.IsWindowShown
+            ? _overlayWindow.IsVisible
             : IsVisible;
         AppLogger.Info(
             "Overlay gameplay state",
             $"visibilityPolicy={visibilityPolicy}; " +
             $"isPlaying={isPlaying}; paused={isPaused?.ToString() ?? "null"}; " +
-            $"osuMinimized={_windowsOverlay.IsOsuMinimized}; " +
+            $"osuMinimized={_overlayWindow.IsMinimized}; " +
             $"requestedVisible={_overlayWindowVisible}; " +
             $"nativeVisible={nativeVisible}; opacity={Opacity:0.##}");
     }
@@ -2423,7 +3265,9 @@ public partial class MainWindow : Window
                               (_model.Settings.OverlayPresetId == "default" && _model.Settings.OverlayLayoutMode != "default")
             ? _model.Settings.OverlayLayoutMode
             : _model.Settings.OverlayPresetId;
-        return OverlayVisibilityPolicy.Normalize(_presetCatalog.Get(requestedPreset).VisibilityPolicy);
+        var requestedLayout = OverlayPresentationService.NormalizeLayout(requestedPreset);
+        var effectivePresetId = requestedLayout == "custom" ? requestedPreset : requestedLayout;
+        return OverlayVisibilityPolicy.Normalize(_presetCatalog.Get(effectivePresetId).VisibilityPolicy);
     }
 
     private void SaveOverlayBounds()

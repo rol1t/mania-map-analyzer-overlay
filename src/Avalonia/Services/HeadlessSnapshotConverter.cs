@@ -3,11 +3,25 @@ using System.Collections.Generic;
 using System.Linq;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
+using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
 public static class HeadlessSnapshotConverter
 {
+    private static readonly IReadOnlyDictionary<string, string> _skillLabels =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["skills.overall"] = "Overall",
+            ["skills.stream"] = "Stream",
+            ["skills.jumpstream"] = "Jumpstream",
+            ["skills.handstream"] = "Handstream",
+            ["skills.stamina"] = "Stamina",
+            ["skills.jackspeed"] = "JackSpeed",
+            ["skills.chordjack"] = "Chordjack",
+            ["skills.technical"] = "Technical"
+        };
+
     public static AnalysisSnapshot FromAnalysisResult(
         TosuBeatmapSnapshot beatmap,
         TosuGameplayState? gameplay,
@@ -88,7 +102,7 @@ public static class HeadlessSnapshotConverter
         ArgumentNullException.ThrowIfNull(beatmap);
         ArgumentNullException.ThrowIfNull(composed);
 
-        var difficulty = BuildDifficulty(composed);
+        var difficulty = BuildDifficulty(beatmap, composed);
         var ranks = BuildRanks(composed);
         var skills = BuildSkills(composed);
         var gameplaySnapshot = BuildGameplay(gameplay);
@@ -122,11 +136,19 @@ public static class HeadlessSnapshotConverter
         };
     }
 
-    private static DifficultySnapshot BuildDifficulty(ComposedWidgetSnapshot composed)
+    private static DifficultySnapshot BuildDifficulty(
+        TosuBeatmapSnapshot beatmap,
+        ComposedWidgetSnapshot composed)
     {
         double? star = TryGetDouble(composed, "difficulty.star");
-        double? lnPercent = TryGetDouble(composed, "difficulty.lnPercent");
-        int? keys = TryGetInt(composed, "difficulty.keys");
+        // Some analyzer pipelines expose the same ratio under
+        // pattern.lnPercent rather than difficulty.lnPercent. Keep the
+        // presentation contract canonical so LN DAN is not hidden merely
+        // because the selected engine used the pattern metric namespace.
+        double? lnPercent = TryGetDouble(composed, "difficulty.lnPercent")
+            ?? TryGetDouble(composed, "pattern.lnPercent");
+        int? keys = TryGetInt(composed, "difficulty.keys")
+            ?? ToKeyCount(beatmap.Metadata.CircleSize);
         var rawLabel = TryGetString(composed, "difficulty.label") ?? string.Empty;
         // MMA's difficulty.label can contain a DAN category such as
         // "Reform ...", not a star-rating label. Keep that value available
@@ -147,6 +169,19 @@ public static class HeadlessSnapshotConverter
             LnPercent = lnPercent,
             Keys = keys
         };
+    }
+
+    private static int? ToKeyCount(double? circleSize)
+    {
+        if (!circleSize.HasValue || !double.IsFinite(circleSize.Value))
+        {
+            return null;
+        }
+
+        var rounded = (int)Math.Round(circleSize.Value, MidpointRounding.AwayFromZero);
+        return rounded is >= 1 and <= 18 && Math.Abs(circleSize.Value - rounded) < 0.001
+            ? rounded
+            : null;
     }
 
     private static IReadOnlyList<RankEstimate> BuildRanks(ComposedWidgetSnapshot composed)
@@ -219,7 +254,7 @@ public static class HeadlessSnapshotConverter
             skills.Add(new SkillMetric
             {
                 Id = id,
-                Label = metric.Metric.Id,
+                Label = GetSkillLabel(id),
                 ValueLabel = value?.ToString("0.##") ?? string.Empty,
                 Value = value,
                 NormalizedValue = normalized,
@@ -236,7 +271,7 @@ public static class HeadlessSnapshotConverter
                 skills.Add(new SkillMetric
                 {
                     Id = entry.Key,
-                    Label = entry.Value.Metric.Id,
+                    Label = GetSkillLabel(entry.Key),
                     ValueLabel = value?.ToString("0.##") ?? entry.Value.Metric.Value.ToString() ?? string.Empty,
                     Value = value,
                     NormalizedValue = value.HasValue ? Math.Clamp(value.Value, 0, 100) : 0,
@@ -247,6 +282,13 @@ public static class HeadlessSnapshotConverter
 
         return skills.Take(8).ToArray();
     }
+
+    private static string GetSkillLabel(string id) =>
+        _skillLabels.TryGetValue(id, out var label)
+            ? label
+            : id.StartsWith("skills.", StringComparison.OrdinalIgnoreCase)
+                ? id["skills.".Length..]
+                : id;
 
     private static GameplaySnapshot BuildGameplay(TosuGameplayState? gameplay)
     {

@@ -349,6 +349,15 @@ html.overlay-layout-companella .overlay-comp-chart[hidden] {
   display:none!important;
 }
 
+/* Keep the overlay's intrinsic height stable while headless skill metrics
+   are still loading. The chart remains invisible until values arrive, but
+   its reserved space prevents a one-second card jump when the analysis
+   snapshot is published after the realtime frame. */
+html.overlay-layout-companella.launcher-transparent-overlay .overlay-comp-chart[hidden] {
+  display:grid!important;
+  visibility:hidden!important;
+}
+
 html.overlay-layout-companella .overlay-comp-chart:empty {
   place-items:center!important;
   color:#9297a8!important;

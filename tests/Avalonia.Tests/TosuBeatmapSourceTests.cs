@@ -38,6 +38,96 @@ public sealed class TosuBeatmapSourceTests
     }
 
     [Fact]
+    public async Task UsesCurrentMenuModsWhenPlayContainsStaleMods()
+    {
+        var payload = CreatePayload("101", "hash-a", "7", "play");
+        var stateAndMenu = "\"state\": { \"name\": \"edit\" }, " +
+                           "\"menu\": { \"mods\": { \"array\": [{ \"acronym\": \"DT\" }] } }, ";
+        payload = payload.Insert(payload.IndexOf("\"play\"", StringComparison.Ordinal), stateAndMenu);
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        var diagnostics = new RecordingDiagnostics();
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"), diagnostics);
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["DT"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task UsesResultsModsInsteadOfAnEmptyStalePlayObject()
+    {
+        const string payload = """
+        {
+          "state": { "name": "ResultScreen" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "play": { "mods": { "array": [] } },
+          "resultsScreen": { "mods": { "array": [{ "acronym": "NC" }] } }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["NC"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task ReadsManiaKeyCountFromCurrentTosuV2StatsShape()
+    {
+        var payload = CreatePayload("101", "hash-a", "7", "menu")
+            .Replace(
+                "\"circle_size\": 4,",
+                "\"stats\": { \"cs\": { \"original\": 4, \"converted\": 7 } },",
+                StringComparison.Ordinal);
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(7, snapshot.Metadata.CircleSize);
+    }
+
+    [Fact]
+    public async Task IgnoresZeroConvertedKeyCountAndUsesOriginalCircleSize()
+    {
+        var payload = CreatePayload("101", "hash-a", "7", "menu")
+            .Replace(
+                "\"circle_size\": 4,",
+                "\"stats\": { \"cs\": { \"original\": 4, \"converted\": 0 } },",
+                StringComparison.Ordinal);
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(4, snapshot.Metadata.CircleSize);
+    }
+
+    [Fact]
     public async Task RetriesWhenMapChangesDuringRawFileFetch()
     {
         var handler = new RecordingHandler(
@@ -105,6 +195,45 @@ public sealed class TosuBeatmapSourceTests
     }
 
     [Fact]
+    public async Task FallsBackToBeatmapPathWhenCurrentShortcutReturnsNotFound()
+    {
+        const string beatmapPath = @"3\38\Example.osu";
+        var handler = new RecordingHandler(
+            JsonResponse(CreatePayload("101", "hash-a", "7", "play", beatmapPath)),
+            new HttpResponseMessage(HttpStatusCode.NotFound),
+            TextResponse("fallback osu file"),
+            JsonResponse(CreatePayload("101", "hash-a", "7", "play", beatmapPath)));
+        var diagnostics = new RecordingDiagnostics();
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"), diagnostics);
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal("fallback osu file", snapshot.RawBeatmap);
+        Assert.Equal(
+            ["/json/v2", "/files/beatmap/file", "/files/beatmap/3/38/Example.osu", "/json/v2"],
+            handler.RequestedPaths);
+        Assert.Contains(diagnostics.Entries, entry => entry.Code == "tosu.beatmap_file_fallback");
+    }
+
+    [Fact]
+    public async Task TreatsMissingCurrentFileAsNoBeatmapInsteadOfSourceFailure()
+    {
+        var handler = new RecordingHandler(
+            JsonResponse(CreatePayload("101", "hash-a", "7", "play")),
+            new HttpResponseMessage(HttpStatusCode.NotFound));
+        var diagnostics = new RecordingDiagnostics();
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"), diagnostics);
+
+        var exception = await Assert.ThrowsAsync<TosuBeatmapSourceException>(() => source.GetCurrentAsync());
+
+        Assert.Contains("HTTP 404", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(diagnostics.Entries, entry => entry.Code == "tosu.no_beatmap");
+        Assert.DoesNotContain(diagnostics.Entries, entry => entry.Code == "tosu.beatmap_source_failed");
+    }
+
+    [Fact]
     public async Task PropagatesCallerCancellationWithoutReportingAsFailure()
     {
         using var cancellation = new CancellationTokenSource();
@@ -130,7 +259,12 @@ public sealed class TosuBeatmapSourceTests
         Content = new StringContent(content, Encoding.UTF8, "text/plain")
     };
 
-    private static string CreatePayload(string id, string hash, string setId, string section)
+    private static string CreatePayload(
+        string id,
+        string hash,
+        string setId,
+        string section,
+        string? beatmapPath = null)
     {
         var map = $$"""
             {
@@ -152,12 +286,23 @@ public sealed class TosuBeatmapSourceTests
         var mods = section == "play"
             ? "\"mods\":{\"array\":[{\"acronym\":\"NC\"},{\"acronym\":\"HD\",\"settings\":{\"speed_change\":1.25}}]}"
             : "\"mods\":{\"array\":[]}";
-        return $$"""
+        var payload = $$"""
             {
               "beatmap": {{map}},
               "{{section}}": { {{mods}} }
             }
             """;
+        if (string.IsNullOrWhiteSpace(beatmapPath))
+        {
+            return payload;
+        }
+
+        var serializedPath = System.Text.Json.JsonSerializer.Serialize(beatmapPath);
+        var hints = $@",
+              ""files"": {{ ""beatmap"": {serializedPath} }},
+              ""directPath"": {{ ""beatmapFile"": {serializedPath} }}
+            }}";
+        return payload[..payload.LastIndexOf('}')].TrimEnd() + hints;
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
