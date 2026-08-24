@@ -79,6 +79,26 @@ public sealed class TosuBeatmapSourceTests
     }
 
     [Fact]
+    public async Task IgnoresZeroConvertedKeyCountAndUsesOriginalCircleSize()
+    {
+        var payload = CreatePayload("101", "hash-a", "7", "menu")
+            .Replace(
+                "\"circle_size\": 4,",
+                "\"stats\": { \"cs\": { \"original\": 4, \"converted\": 0 } },",
+                StringComparison.Ordinal);
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(4, snapshot.Metadata.CircleSize);
+    }
+
+    [Fact]
     public async Task RetriesWhenMapChangesDuringRawFileFetch()
     {
         var handler = new RecordingHandler(

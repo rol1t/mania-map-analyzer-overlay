@@ -17,6 +17,14 @@ public static class OverlayViewStateComposer
         AnalysisSnapshot? analysis = runtime.LatestAnalysis;
         RealtimeAnalysisSnapshot? realtime = runtime.LatestRealtime;
         string beatmapId = FirstNonEmpty(realtime?.BeatmapId, analysis?.Beatmap.Id, runtime.BeatmapId);
+        // The reducer intentionally retains the previous completed analysis
+        // through transient song-select ids. Never project its difficulty or
+        // skills onto a different realtime map while it is being retained.
+        bool analysisMatchesBeatmap = analysis is not null &&
+            (string.IsNullOrWhiteSpace(analysis.Beatmap.Id) ||
+             string.IsNullOrWhiteSpace(beatmapId) ||
+             string.Equals(analysis.Beatmap.Id, beatmapId, StringComparison.Ordinal));
+        AnalysisSnapshot? presentationAnalysis = analysisMatchesBeatmap ? analysis : null;
         var gameplay = runtime.GameplayStateKnown
             ? new GameplaySnapshot
             {
@@ -24,7 +32,7 @@ public static class OverlayViewStateComposer
                 IsPlaying = runtime.IsPlaying,
                 IsPaused = runtime.IsPaused
             }
-            : analysis?.Gameplay ?? new GameplaySnapshot();
+            : presentationAnalysis?.Gameplay ?? new GameplaySnapshot();
 
         return new OverlayViewState
         {
@@ -36,19 +44,19 @@ public static class OverlayViewStateComposer
                     ? "headless"
                     : "application",
             BeatmapId = beatmapId,
-            Beatmap = analysis?.Beatmap is { } beatmap &&
+            Beatmap = presentationAnalysis?.Beatmap is { } beatmap &&
                       (string.IsNullOrWhiteSpace(beatmap.Id) || string.Equals(beatmap.Id, beatmapId, StringComparison.Ordinal))
                 ? beatmap
                 : new BeatmapSnapshot { Id = beatmapId },
             Gameplay = gameplay,
-            Difficulty = analysis?.Difficulty ?? new DifficultySnapshot(),
-            Ranks = analysis?.Ranks ?? Array.Empty<RankEstimate>(),
-            Skills = analysis?.Skills ?? Array.Empty<SkillMetric>(),
-            Replay = analysis?.Replay,
+            Difficulty = presentationAnalysis?.Difficulty ?? new DifficultySnapshot(),
+            Ranks = presentationAnalysis?.Ranks ?? Array.Empty<RankEstimate>(),
+            Skills = presentationAnalysis?.Skills ?? Array.Empty<SkillMetric>(),
+            Replay = presentationAnalysis?.Replay,
             RealtimeReplay = realtime is not null ? BuildRealtimeReplay(realtime) : null,
             PauseCoach = realtime is not null
                 ? PauseCoachSnapshotMapper.ToSnapshot(realtime)
-                : analysis?.PauseCoach,
+                : presentationAnalysis?.PauseCoach,
             Realtime = realtime,
             Presentation = new OverlayPresentationViewState
             {

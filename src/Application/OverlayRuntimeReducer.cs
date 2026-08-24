@@ -72,10 +72,14 @@ public static class OverlayRuntimeReducer
                 pendingAnalysis.Beatmap.Id,
                 snapshot.BeatmapId,
                 StringComparison.Ordinal);
-        AnalysisSnapshot? latestAnalysis = beatmapChanged
-            ? pendingMatchesRealtime
-                ? pendingAnalysis
-                : null
+        // A song-select transition may briefly report an unrelated carousel
+        // entry before returning to the selected map. Keep the last completed
+        // analysis until a matching replacement is available: the composer
+        // will not combine it with a different realtime beatmap, while a
+        // return to the original id can reuse it without requiring another
+        // headless run.
+        AnalysisSnapshot? latestAnalysis = beatmapChanged && pendingMatchesRealtime
+            ? pendingAnalysis
             : current.LatestAnalysis;
 
         return current with

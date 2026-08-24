@@ -910,7 +910,10 @@
       // browser fallback fully populated for normal/preview presentation too.
       // applyTosuPayload deep-merges partial fields instead of discarding the
       // last known gameplay telemetry.
-      applyTosuPayload(await response.json(), "browser-http");
+      const payload = await response.json();
+      // dispose() may run while fetch/json parsing is in flight. Never let
+      // an old adapter generation publish into the reinjected renderer.
+      if (!disposed) applyTosuPayload(payload, "browser-http");
     } catch (exception) {
       const now = Date.now();
       if (now - lastStatePollWarningAt >= 5000) {
@@ -950,6 +953,7 @@
       ]));
     });
     socket.addEventListener("message", function (event) {
+      if (disposed) return;
       try { applyTosuPayload(JSON.parse(event.data), "websocket"); }
       catch (exception) { reportRuntimeError("Processing analyzer websocket payload", exception); }
     });

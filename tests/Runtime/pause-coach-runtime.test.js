@@ -198,7 +198,8 @@ for (const mods of ["dt nc", ["dt", "nc"], { array: [{ acronym: "dt" }, { acrony
   assert.match(adapter, /stateToken === "pause"/);
   assert.match(adapter, /httpPauseState/);
   assert.match(adapter, /function mergePlayPayload/);
-  assert.match(adapter, /applyTosuPayload\(await response\.json\(\), "browser-http"\)/);
+  assert.match(adapter, /const payload = await response\.json\(\);/);
+  assert.match(adapter, /if \(!disposed\) applyTosuPayload\(payload, "browser-http"\);/);
   assert.doesNotMatch(adapter, /stateOnly:\s*true/);
   assert.match(adapter, /overlay:pause-coach-debug/);
   assert.match(adapter, /__overlayAnalyzerAdapterTest/);

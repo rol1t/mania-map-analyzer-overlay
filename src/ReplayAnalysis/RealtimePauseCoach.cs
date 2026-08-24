@@ -613,7 +613,14 @@ public sealed class RealtimePlayAnalyzer
             commonPrefix++;
         }
 
-        int start = commonPrefix == _previousHitErrorArray.Length ? commonPrefix : 0;
+        // Tosu can truncate the cumulative array on a state transition. A
+        // shorter exact prefix contains no new hits; treating it as a reset
+        // duplicates every old offset and makes UR/bias jump.
+        int start = commonPrefix == current.Length
+            ? current.Length
+            : commonPrefix == _previousHitErrorArray.Length
+                ? commonPrefix
+                : 0;
         for (int index = start; index < current.Length; index++)
         {
             _offsets.Add(new TimedOffset(receivedAt, mapTimeMs, current[index]));
@@ -1058,8 +1065,10 @@ public static class PauseCoachSnapshotMapper
             },
             Recent = new PauseCoachRecentSnapshot
             {
+                // The public snapshot contract currently exposes a fixed
+                // twenty-second recent window.
                 WindowSeconds = 20,
-                Accuracy = snapshot.Accuracy,
+                Accuracy = snapshot.Performance.RecentAccuracy,
                 MeanTimingMs = snapshot.Timing.MeanMs,
                 TimingDeviationMs = snapshot.Timing.StandardDeviationMs,
                 Hits = snapshot.Performance.RecentHits,

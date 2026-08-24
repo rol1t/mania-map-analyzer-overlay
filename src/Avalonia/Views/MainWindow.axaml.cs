@@ -55,6 +55,7 @@ public partial class MainWindow : Window
     private readonly LatestWinsSnapshotPublisher<OverlayViewState> _fullscreenViewStatePublisher;
     private static readonly JsonSerializerOptions _overlaySnapshotJsonOptions = new(JsonSerializerDefaults.Web);
     private NativeWebView Browser { get; set; } = null!;
+    private long _browserNavigationGeneration;
     private MainViewModel? _model;
     private CancellationTokenSource? _previewPresentationCancellation;
     private CancellationTokenSource? _overlayGameplayPollCancellation;
@@ -311,6 +312,7 @@ public partial class MainWindow : Window
 
     private void ReplaceBrowser(IBrush background, bool offscreen)
     {
+        Interlocked.Increment(ref _browserNavigationGeneration);
         BeginNativePresentationSession();
         var previous = Browser;
         previous.NavigationCompleted -= Browser_NavigationCompleted;
@@ -620,7 +622,6 @@ public partial class MainWindow : Window
 
     private void HeadlessAnalysisController_ResultProduced(object? sender, HeadlessAnalysisResultEventArgs e)
     {
-        PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(sequence, e.Snapshot));
         Dispatcher.UIThread.Post(() =>
         {
             var status = FormatHeadlessResultStatus(e);
@@ -973,6 +974,9 @@ public partial class MainWindow : Window
                 return;
             }
 
+            var browser = Browser;
+            long navigationGeneration = Volatile.Read(ref _browserNavigationGeneration);
+
             var analysisDocumentReady = e.IsSuccess && ActiveAnalyzer.MatchesAnalysisUri(Browser.Source);
             if (analysisDocumentReady)
             {
@@ -982,6 +986,11 @@ public partial class MainWindow : Window
                     updateFullscreen: true,
                     reportErrors: false,
                     CancellationToken.None);
+                if (!ReferenceEquals(browser, Browser) ||
+                    navigationGeneration != Volatile.Read(ref _browserNavigationGeneration))
+                {
+                    return;
+                }
                 if (!presentationApplied)
                 {
                     // WebView2 can complete navigation while its composition
@@ -996,6 +1005,11 @@ public partial class MainWindow : Window
                 if (_overlayMode)
                 {
                     await FitOverlayWindowToRenderedWidgetAsync();
+                    if (!ReferenceEquals(browser, Browser) ||
+                        navigationGeneration != Volatile.Read(ref _browserNavigationGeneration))
+                    {
+                        return;
+                    }
                     ScheduleOverlayLayoutReconciliation();
                 }
             }
@@ -1504,11 +1518,17 @@ public partial class MainWindow : Window
 
     private void AnalyzerSnapshotChanged(AnalysisSnapshot snapshot)
     {
-        PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(sequence, snapshot));
-        if (_headlessAnalysisController is not { IsHeadlessActive: true })
+        // The presentation adapter is intentionally a fallback. Once the
+        // headless analyzer is active it can emit incomplete DOM snapshots
+        // for an old selection; those must not replace the headless result in
+        // the authoritative runtime reducer.
+        if (_headlessAnalysisController is { IsHeadlessActive: true })
         {
-            _lastAnalyzerSnapshot = snapshot;
+            return;
         }
+
+        PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(sequence, snapshot));
+        _lastAnalyzerSnapshot = snapshot;
         if (!_overlayMode || _overlayNativePlayStateKnown || snapshot.Gameplay.IsPlaying is not bool isPlaying)
         {
             return;

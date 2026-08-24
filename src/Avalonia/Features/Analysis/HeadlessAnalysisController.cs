@@ -281,11 +281,10 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         }
         catch (TosuBeatmapSourceException exception)
         {
-            // Keep the previous behaviour when Tosu is temporarily
-            // unavailable (for example while leaving osu!): a cached layout
-            // is still useful in the launcher, and the next live frame will
-            // reconcile it once the source is available again.
-            AppLogger.Debug("Headless snapshot replay", $"Could not verify the cached map before replay: {exception.Message}");
+            // A replay after an unknown source transition can put a previous
+            // map back on screen. Wait for a verified live identity instead.
+            AppLogger.Debug("Headless snapshot replay", $"Skipped unverified cached map: {exception.Message}");
+            return;
         }
 
         var replayExtensions = new Dictionary<string, object?>(snapshot.Extensions, StringComparer.OrdinalIgnoreCase)
@@ -358,7 +357,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         catch (TosuBeatmapSourceException exception)
         {
             AppLogger.Debug("Headless snapshot freshness", $"Could not verify analysis map before publishing: {exception.Message}");
-            return true;
+            return false;
         }
     }
 

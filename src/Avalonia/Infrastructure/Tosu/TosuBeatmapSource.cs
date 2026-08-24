@@ -440,30 +440,38 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
     {
         var candidates = new List<JsonElement>();
         var menuFirst = IsMenuState(root);
-        AddModsCandidate(root, candidates, "menu");
-        AddModsCandidate(root, candidates, "play");
-        AddModsCandidate(root, candidates, "resultsScreen");
+        if (menuFirst)
+        {
+            AddModsCandidate(root, candidates, "menu");
+        }
+        else
+        {
+            // A live play object is authoritative over a stale results
+            // screen. Do not reverse this ordering: Tosu keeps results data
+            // around while a new attempt starts.
+            AddModsCandidate(root, candidates, "play");
+        }
         if (TryGetProperty(root, out var rootMods, "mods"))
         {
             candidates.Add(rootMods);
         }
-
         if (!menuFirst)
         {
-            candidates.Reverse();
+            AddModsCandidate(root, candidates, "resultsScreen");
+            AddModsCandidate(root, candidates, "menu");
         }
 
-        var mods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in candidates)
         {
+            // Presence of an empty mods array is meaningful: it says NM for
+            // the current source and must not fall through to a previous
+            // play/results object.
+            var mods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             CollectModCodes(candidate, mods);
-            if (mods.Count > 0)
-            {
-                break;
-            }
+            return mods.OrderBy(mod => mod, StringComparer.OrdinalIgnoreCase).ToImmutableArray();
         }
 
-        return mods.OrderBy(mod => mod, StringComparer.OrdinalIgnoreCase).ToImmutableArray();
+        return ImmutableArray<string>.Empty;
     }
 
     private static void AddModsCandidate(
@@ -554,8 +562,6 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
                 new[] { "menu", "speed_rate" },
                 new[] { "menu", "rate" },
                 new[] { "rate" },
-                new[] { "play", "speedRate" },
-                new[] { "play", "rate" },
                 new[] { "game", "speedRate" },
                 new[] { "game", "rate" }
             }
@@ -599,7 +605,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         }
 
         var modObjects = menuFirst
-            ? new[] { new[] { "menu" }, new[] { "play" } }
+            ? new[] { new[] { "menu" } }
             : new[] { new[] { "play" }, new[] { "menu" } };
         foreach (var objectPath in modObjects)
         {
@@ -759,7 +765,11 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
         // "converted" reflects active key-conversion mods when Tosu exposes
         // them; otherwise the original CircleSize is the chart key count.
-        return ReadNumber(stat, "converted", "original");
+        // Tosu commonly serializes an inactive key conversion as
+        // converted=0. That is not a valid mania key count, so retain the
+        // original CircleSize in that case.
+        var converted = ReadNumber(stat, "converted");
+        return converted is > 0 ? converted : ReadNumber(stat, "original");
     }
 
     private static bool TryReadNumber(JsonElement value, out double number)

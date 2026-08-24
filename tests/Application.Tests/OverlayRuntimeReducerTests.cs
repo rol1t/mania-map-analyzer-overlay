@@ -197,7 +197,7 @@ public sealed class OverlayRuntimeReducerTests
     }
 
     [Fact]
-    public void MapTransitionClearsOldAnalysisAndRejectsStaleCompletion()
+    public void MapTransitionRetainsOldAnalysisWithoutProjectingItOntoTheNewMap()
     {
         OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
             OverlayRuntimeState.Empty,
@@ -212,12 +212,14 @@ public sealed class OverlayRuntimeReducerTests
             state,
             new RealtimeTelemetryReceived(3, Telemetry("776655", RealtimePlayState.Playing, 500, "session-B")));
         Assert.Equal(2, state.BeatmapGeneration);
-        Assert.Null(state.LatestAnalysis);
+        Assert.Equal("674175", state.LatestAnalysis!.Beatmap.Id);
+        Assert.Equal("776655", OverlayViewStateComposer.Compose(state).BeatmapId);
+        Assert.Empty(OverlayViewStateComposer.Compose(state).Skills);
 
         state = OverlayRuntimeReducer.Apply(
             state,
             new AnalysisSnapshotReceived(4, Analysis("674175")));
-        Assert.Null(state.LatestAnalysis);
+        Assert.Equal("674175", state.LatestAnalysis!.Beatmap.Id);
 
         state = OverlayRuntimeReducer.Apply(
             state,
