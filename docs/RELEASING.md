@@ -1,5 +1,9 @@
 # Releasing / Выпуск версии
 
+The canonical application version is stored in the repository root `VERSION`
+file. Packaging commands below read that value so project metadata, archives
+and updater user agents stay aligned.
+
 ## 2.1.0 release notes
 
 - The Avalonia GUI is the only user-facing entry point: it prepares compatible tosu and ManiaMapAnalyser components, verifies SHA-256 hashes, and keeps command files and PowerShell scripts for development/CI only.
@@ -9,7 +13,7 @@
 1. Run `powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1` on Windows. On Linux, run `bash ./scripts/build.sh --runtime linux-x64 --output artifacts/payload`.
 2. Launch `artifacts\payload\Mania Map Analyzer Overlay.exe` to verify the GUI bootstrap downloads compatible tosu and analyser components. On Linux, launch `artifacts/payload/Mania Map Analyzer Overlay`.
 3. Test osu!stable, osu!lazer, both UI languages, normal window mode, overlay mode and shutdown.
-4. Package Windows with `powershell -ExecutionPolicy Bypass -File .\scripts\package-installer.ps1 -Version 2.1.0 -RuntimeIdentifier win-x64`; package Linux with `bash ./scripts/package.sh --version 2.1.0 --runtime linux-x64`.
+4. Package Windows with `powershell -ExecutionPolicy Bypass -File .\scripts\package-installer.ps1 -RuntimeIdentifier win-x64`; package Linux with `bash ./scripts/package.sh --runtime linux-x64`.
 5. Create the platform application archives and publish them as GitHub Release assets.
 6. Publish SHA-256 checksums with every release.
 
@@ -18,6 +22,6 @@
 1. Запустите `powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1` в Windows. В Linux используйте `bash ./scripts/build.sh --runtime linux-x64 --output artifacts/payload`.
 2. Запустите `artifacts\payload\Mania Map Analyzer Overlay.exe`; установка компонентов выполняется внутри GUI. В Linux запустите `artifacts/payload/Mania Map Analyzer Overlay`.
 3. Проверьте osu!stable, osu!lazer, оба языка, обычное окно, оверлей и завершение tosu при выходе.
-4. Упакуйте Windows через `powershell -ExecutionPolicy Bypass -File .\scripts\package-installer.ps1 -Version 2.1.0 -RuntimeIdentifier win-x64`, Linux через `bash ./scripts/package.sh --version 2.1.0 --runtime linux-x64`.
+4. Упакуйте Windows через `powershell -ExecutionPolicy Bypass -File .\scripts\package-installer.ps1 -RuntimeIdentifier win-x64`, Linux через `bash ./scripts/package.sh --runtime linux-x64`.
 5. Создайте архивы приложения для платформ и прикрепите их к GitHub Release.
 6. Публикуйте SHA-256 суммы вместе с каждым выпуском.

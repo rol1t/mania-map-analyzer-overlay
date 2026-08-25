@@ -6,6 +6,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versionFile = Join-Path $repoRoot "VERSION"
+if (-not (Test-Path -LiteralPath $versionFile)) {
+    throw "Canonical VERSION file was not found: $versionFile"
+}
+$version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "Canonical VERSION file is empty: $versionFile"
+}
 $outputPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
 $projectPath = Join-Path $repoRoot "src\Avalonia\ManiaMapAnalyzerOverlay.Avalonia.csproj"
 $updaterProjectPath = Join-Path $repoRoot "src\Updater\ManiaMapAnalyzerOverlay.Updater.csproj"
@@ -129,5 +137,5 @@ Copy-Item (Join-Path $repoRoot "LICENSE") $outputPath -Force
 Copy-Item (Join-Path $repoRoot "LICENSES") $outputPath -Recurse -Force
 Copy-Item (Join-Path $repoRoot "docs") $outputPath -Recurse -Force
 
-Write-Host "Mania Map Analyzer Overlay 2.3.0 built at: $outputPath"
+Write-Host "Mania Map Analyzer Overlay $version built at: $outputPath"
 Write-Host "Launch the application executable; component setup runs inside the GUI."

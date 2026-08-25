@@ -21,7 +21,12 @@ public sealed class OverlayPresentationServiceTests
         Assert.Contains("window.__overlayHostConfig=", scripts.ObserverScript, StringComparison.Ordinal);
         Assert.DoesNotContain("window._overlayHostConfig=", scripts.ObserverScript, StringComparison.Ordinal);
         Assert.Contains("__createRealtimePauseCoachRuntime", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("window.__overlayPauseCoachOptions=", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("\"recentWindowSeconds\":20", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("\"minimumTimingSamples\":12", scripts.ObserverScript, StringComparison.Ordinal);
         Assert.Contains("\"overlayMode\":true", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("\"nativeRealtimeAuthority\":true", scripts.ObserverScript, StringComparison.Ordinal);
+        Assert.Contains("\"nativeRealtimeAuthority\":false", scripts.FullscreenObserverScript, StringComparison.Ordinal);
     }
 
     [Fact]

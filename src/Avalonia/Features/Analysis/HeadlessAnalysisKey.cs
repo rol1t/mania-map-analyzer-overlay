@@ -8,6 +8,7 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 /// is treated as a new analysis target.
 /// </summary>
 public sealed record HeadlessBeatmapKey(
+    string BeatmapId,
     string StableKey,
     double Rate,
     string Mods,

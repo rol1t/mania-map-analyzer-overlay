@@ -56,8 +56,10 @@ is correlation-scoped through `runtime.cancel(correlationId)`.
 
 `speedRate` is also mirrored as `rate` for protocol consumers that use the
 short name. Both values are positive finite numbers; `mods` is an uppercase
-array. The worker forwards these execution dimensions to the upstream pipeline
-without making them part of the widget or DOM contract.
+array. The worker maps the canonical top-level `speedRate` into the upstream
+pipeline's `options.speedRate` contract (and also forwards the typed execution
+dimensions at the top level) without making them part of the widget or DOM
+contract.
 
 For a latest-request-wins flow, the host can add `scopeId` and an integer
 `generation`. A newer generation cancels only older jobs in that same scope.

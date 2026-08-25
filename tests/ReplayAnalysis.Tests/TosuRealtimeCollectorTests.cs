@@ -69,6 +69,28 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
+    public void ListShapedModsAreNormalizedWithoutDroppingTheActiveModifier()
+    {
+        var collector = NewCollector();
+        TosuRealtimeTelemetry telemetry = collector.Process(Raw("""
+        {
+          "state": { "number": 2, "name": "Play" },
+          "game": { "paused": false },
+          "beatmap": { "id": 674175, "time": { "live": 1000 } },
+          "play": {
+            "mods": { "list": [{ "acronym": "DT" }] },
+            "score": 1000,
+            "accuracy": 100,
+            "hits": { "300": 2, "0": 0 },
+            "hitErrorArray": [0, 1]
+          }
+        }
+        """), "native-http", _start)!;
+
+        Assert.Equal(["DT"], telemetry.Snapshot.Mods.ToArray());
+    }
+
+    [Fact]
     public void NumericBeatmapIdIsPreservedByNativePayloadNormalizer()
     {
         var collector = NewCollector();
@@ -140,6 +162,80 @@ public sealed class TosuRealtimeCollectorTests
     }
 
     [Fact]
+    public void LobbyStateDoesNotCarryThePreviousMapSession()
+    {
+        var collector = NewCollector();
+        TosuRealtimeTelemetry playing = collector.Process(
+            Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
+            "native-http",
+            _start)!;
+
+        TosuRealtimeTelemetry lobby = collector.Process(Raw("""
+        {
+          "state": { "number": 11, "name": "lobby" },
+          "game": { "paused": false },
+          "beatmap": { "id": 999999 }
+        }
+        """), "native-http", _start.AddSeconds(1))!;
+
+        Assert.Equal(RealtimePlayState.Menu, lobby.Snapshot.State);
+        Assert.Equal(PauseCoachWidgetState.WaitingForGame, lobby.Snapshot.WidgetState);
+        Assert.Equal(string.Empty, lobby.Snapshot.SessionId);
+        Assert.NotEqual(playing.Snapshot.SessionId, lobby.Snapshot.SessionId);
+    }
+
+    [Fact]
+    public void OneCarouselMapFrameDoesNotReplaceTheActiveAttempt()
+    {
+        var collector = NewCollector();
+        TosuRealtimeTelemetry playing = collector.Process(
+            PayloadWithMap("Play", 2, false, "map-a", 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
+            "native-http",
+            _start)!;
+
+        // The first selected carousel entry is a transient menu observation.
+        TosuRealtimeTelemetry transient = collector.Process(
+            PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
+            "native-http",
+            _start.AddMilliseconds(350))!;
+        Assert.Equal("map-a", transient.Snapshot.BeatmapId);
+        Assert.Equal(playing.Snapshot.SessionId, transient.Snapshot.SessionId);
+
+        // Returning to the original map during the same transition must not
+        // create a retry/session boundary merely because map-b appeared once.
+        TosuRealtimeTelemetry backToOriginal = collector.Process(
+            PayloadWithMap("Play", 2, false, "map-a", 26_000, 55_000, 96.1, 55, 4, [0, 1, 2, 3, 4]),
+            "native-http",
+            _start.AddSeconds(1))!;
+
+        Assert.Equal("map-a", backToOriginal.Snapshot.BeatmapId);
+        Assert.Equal(playing.Snapshot.SessionId, backToOriginal.Snapshot.SessionId);
+    }
+
+    [Fact]
+    public void TwoConsecutiveCarouselFramesCommitTheNewMap()
+    {
+        var collector = NewCollector();
+        TosuRealtimeTelemetry playing = collector.Process(
+            PayloadWithMap("Play", 2, false, "map-a", 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
+            "native-http",
+            _start)!;
+
+        collector.Process(
+            PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
+            "native-http",
+            _start.AddMilliseconds(350));
+        TosuRealtimeTelemetry committed = collector.Process(
+            PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
+            "native-http",
+            _start.AddMilliseconds(700))!;
+
+        Assert.Equal("map-b", committed.Snapshot.BeatmapId);
+        Assert.NotEqual(playing.Snapshot.SessionId, committed.Snapshot.SessionId);
+        Assert.Equal(PauseCoachWidgetState.WaitingForGame, committed.Snapshot.WidgetState);
+    }
+
+    [Fact]
     public void ResultsRetainFinalDiagnosisAndCollectorIsVisibilityIndependent()
     {
         // No presentation/WebView object is involved in this path. The same
@@ -167,13 +263,26 @@ public sealed class TosuRealtimeCollectorTests
         int hits,
         int misses,
         int[] offsets)
+        => PayloadWithMap(state, stateNumber, paused, "674175", mapTime, score, accuracy, hits, misses, offsets);
+
+    private static JsonElement PayloadWithMap(
+        string state,
+        int stateNumber,
+        bool paused,
+        string mapId,
+        int mapTime,
+        int score,
+        double accuracy,
+        int hits,
+        int misses,
+        int[] offsets)
     {
         string offsetJson = string.Join(",", offsets);
         return Raw($$"""
         {
           "state": { "number": {{stateNumber}}, "name": "{{state}}" },
           "game": { "paused": {{paused.ToString().ToLowerInvariant()}}, "focused": true },
-          "beatmap": { "id": "674175", "hash": "stable-map-hash", "time": { "live": {{mapTime}} } },
+          "beatmap": { "id": "{{mapId}}", "hash": "stable-{{mapId}}-hash", "time": { "live": {{mapTime}} } },
           "play": {
             "score": {{score}},
             "accuracy": {{accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture)}},

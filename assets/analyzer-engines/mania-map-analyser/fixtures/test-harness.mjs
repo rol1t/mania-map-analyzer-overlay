@@ -198,7 +198,6 @@ assert.equal(
 );
 
 const typedOptions = {
-    speedRate: 1.25,
     withEtterna: true,
     label: "typed-options",
     tags: ["DT", "Mirror"],
@@ -215,6 +214,7 @@ workerMessageHandler({
         rawText: "direct Companella map",
         requestedAlgorithm: "Companella",
         options: typedOptions,
+        rate: 1.25,
         includeRawResult: true,
     }),
 });
@@ -225,6 +225,7 @@ assert.equal(directResult.analysis.metrics["difficulty.label"].value, "Reform 7 
 assert.equal(directResult.analysis.metrics["difficulty.numeric"].value, 7.25);
 assert.deepEqual(directResult.analysis.rawResult.receivedOptions, {
     ...typedOptions,
+    speedRate: 1.25,
     withEtterna: true,
     withInterlude: true,
 });

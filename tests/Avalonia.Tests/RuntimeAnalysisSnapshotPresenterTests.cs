@@ -35,4 +35,24 @@ public sealed class RuntimeAnalysisSnapshotPresenterTests
             cancellation.Token));
         Assert.False(called);
     }
+
+    [Fact]
+    public async Task WaitsForRuntimeAcknowledgement()
+    {
+        var entered = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var presenter = new RuntimeAnalysisSnapshotPresenter(async (_, _) =>
+        {
+            entered.TrySetResult(null);
+            await release.Task;
+        });
+
+        Task presentation = presenter.PresentAsync(new AnalysisSnapshot());
+        await entered.Task;
+
+        Assert.False(presentation.IsCompleted);
+
+        release.TrySetResult(null);
+        await presentation;
+    }
 }

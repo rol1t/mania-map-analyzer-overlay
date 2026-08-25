@@ -7,6 +7,10 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "${script_dir}/.." && pwd -P)"
 output_directory="artifacts/payload"
 runtime_identifier="linux-x64"
+version_file="$repo_root/VERSION"
+[[ -f "$version_file" ]] || { printf 'Error: canonical VERSION file was not found: %s\n' "$version_file" >&2; exit 1; }
+version="$(tr -d '\r\n' < "$version_file")"
+[[ -n "$version" ]] || { printf 'Error: canonical VERSION file is empty: %s\n' "$version_file" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
@@ -142,5 +146,5 @@ if find "$output_path" -type f \( -name '*.cmd' -o -name '*.ps1' \) -print -quit
     die "Runtime package must not contain .cmd or .ps1 files."
 fi
 
-printf 'Mania Map Analyzer Overlay 2.3.0 built at: %s\n' "$output_path"
+printf 'Mania Map Analyzer Overlay %s built at: %s\n' "$version" "$output_path"
 printf 'Launch the application executable; component setup runs inside the GUI.\n'

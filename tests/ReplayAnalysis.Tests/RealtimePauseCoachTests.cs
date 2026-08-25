@@ -16,10 +16,11 @@ public sealed class RealtimePauseCoachTests
         int hits = 0,
         int? score = null,
         PauseCoachSectionSnapshot? section = null,
-        DateTimeOffset? receivedAt = null)
+        DateTimeOffset? receivedAt = null,
+        string beatmapId = "map-1")
     {
         return new RealtimeTelemetrySample(
-            beatmapId: "map-1",
+            beatmapId: beatmapId,
             state: state,
             mapTimeMs: seconds * 1000,
             judgements: new LiveJudgementCounts(count300: hits, countMiss: misses, countGeki: 0, countKatu: 0),
@@ -57,6 +58,29 @@ public sealed class RealtimePauseCoachTests
         Assert.NotEqual(first.SessionId, retry.SessionId);
         Assert.Equal(1, retry.Timing.SampleCount);
         Assert.Equal(1, retry.Performance.Hits);
+    }
+
+    [Fact]
+    public void ScoreDipDuringContinuousPlayDoesNotStartANewAttempt()
+    {
+        var analyzer = new RealtimePlayAnalyzer();
+        RealtimeAnalysisSnapshot first = analyzer.Process(Sample(10, RealtimePlayState.Playing, [5], hits: 20, score: 2000));
+        RealtimeAnalysisSnapshot next = analyzer.Process(Sample(11, RealtimePlayState.Playing, [5, 6], hits: 21, score: 1900));
+
+        Assert.Equal(first.SessionId, next.SessionId);
+        Assert.Equal(2, next.Timing.SampleCount);
+    }
+
+    [Fact]
+    public void MenuMapTransitionClearsThePreviousAttemptBeforeANewPause()
+    {
+        var analyzer = new RealtimePlayAnalyzer(new PauseCoachOptions { MinimumTimingSamples = 1 });
+        RealtimeAnalysisSnapshot first = analyzer.Process(Sample(10, RealtimePlayState.Playing, [5], hits: 20, score: 2000));
+        analyzer.Process(Sample(10, RealtimePlayState.Menu, beatmapId: "map-2"));
+        RealtimeAnalysisSnapshot paused = analyzer.Process(Sample(1, RealtimePlayState.Paused, [1], hits: 1, score: 100, beatmapId: "map-2"));
+
+        Assert.NotEqual(first.SessionId, paused.SessionId);
+        Assert.Equal(1, paused.Timing.SampleCount);
     }
 
     [Fact]

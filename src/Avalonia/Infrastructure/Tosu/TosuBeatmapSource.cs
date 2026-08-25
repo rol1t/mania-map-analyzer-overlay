@@ -85,10 +85,16 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
                     }
 
                     throw new TosuBeatmapSourceException(
-                        $"The beatmap changed during all {_maxConsistencyAttempts} fetch attempts.");
+                        $"The beatmap changed during all {_maxConsistencyAttempts} fetch attempts.",
+                        new InvalidOperationException("Tosu returned inconsistent beatmap identities."),
+                        TosuBeatmapSourceFailureKind.BeatmapChanged);
                 }
 
-                return CreateSnapshot(identityBefore, before.Root, rawBeatmap);
+                // The file belongs to the same beatmap identity, but selected
+                // mods/rate may change while it is being downloaded. Use the
+                // newest consistent payload so a mod click is not lost by a
+                // stale `before` frame.
+                return CreateSnapshot(identityAfter, after.Root, rawBeatmap);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -144,14 +150,20 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             var root = JsonSerializer.Deserialize<JsonElement>(content);
             if (root.ValueKind != JsonValueKind.Object)
             {
-                throw new TosuBeatmapSourceException("tosu returned a JSON payload that is not an object.");
+                throw new TosuBeatmapSourceException(
+                    "tosu returned a JSON payload that is not an object.",
+                    new InvalidDataException("Tosu JSON root is not an object."),
+                    TosuBeatmapSourceFailureKind.MalformedPayload);
             }
 
             return new TosuV2Payload(root);
         }
         catch (JsonException exception)
         {
-            throw new TosuBeatmapSourceException("tosu returned malformed JSON from /json/v2.", exception);
+            throw new TosuBeatmapSourceException(
+                "tosu returned malformed JSON from /json/v2.",
+                exception,
+                TosuBeatmapSourceFailureKind.MalformedPayload);
         }
     }
 
@@ -204,7 +216,10 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             var message = string.Equals(route, BeatmapFileRoute, StringComparison.OrdinalIgnoreCase)
                 ? "tosu returned an empty beatmap file."
                 : $"tosu returned an empty response from '{route}'.";
-            throw new TosuBeatmapSourceException(message);
+            throw new TosuBeatmapSourceException(
+                message,
+                new InvalidDataException("Tosu returned an empty response."),
+                TosuBeatmapSourceFailureKind.EmptyResponse);
         }
 
         return content;
@@ -287,7 +302,10 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.IO.IOException)
         {
-            throw new TosuBeatmapSourceException($"The tosu endpoint '{route}' could not be reached.", exception);
+            throw new TosuBeatmapSourceException(
+                $"The tosu endpoint '{route}' could not be reached.",
+                exception,
+                TosuBeatmapSourceFailureKind.TransportUnavailable);
         }
 
         if (!response.IsSuccessStatusCode)
@@ -317,15 +335,35 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             Title = ReadString(source, "title"),
             Version = ReadString(source, "version"),
             Mapper = FirstNonEmpty(ReadString(source, "mapper"), ReadString(source, "creator")),
-            Bpm = ReadNumber(source, "bpm"),
-            OverallDifficulty = ReadNumber(source, "overall_difficulty", "overallDifficulty", "od"),
+            // Current Tosu v2 packets expose calculated values under
+            // beatmap.stats. Keep the older flat fields as compatibility
+            // fallbacks, but prefer the full-map star value over `live`
+            // (which can describe only the current map position).
+            Bpm = ReadPositivePathNumber(source, "stats", "bpm", "common")
+                ?? ReadPositivePathNumber(source, "stats", "bpm", "max")
+                ?? ReadPositivePathNumber(source, "stats", "bpm", "min")
+                ?? ReadPositivePathNumber(source, "stats", "bpm", "realtime")
+                ?? ReadNumber(source, "bpm"),
+            StarRating = ReadPositivePathNumber(source, "stats", "stars", "total")
+                ?? ReadPositivePathNumber(source, "stats", "stars", "live")
+                ?? ReadPositiveNumber(
+                    source,
+                    "star_rating",
+                    "starRating",
+                    "difficulty_rating",
+                    "difficultyRating",
+                    "sr"),
+            OverallDifficulty = ReadStatNumber(source, "od")
+                ?? ReadNumber(source, "overall_difficulty", "overallDifficulty", "od"),
             // Tosu v2 exposes the mania key count as
             // beatmap.stats.cs.converted/original. Older payloads used a flat
             // circle_size/cs value, so retain both shapes.
-            CircleSize = ReadNumber(source, "circle_size", "circleSize", "cs")
-                ?? ReadStatNumber(source, "cs"),
-            ApproachRate = ReadNumber(source, "approach_rate", "approachRate", "ar"),
-            HealthDrain = ReadNumber(source, "hp_drain", "hpDrain", "health_drain", "healthDrain", "hp"),
+            CircleSize = ReadStatNumber(source, "cs")
+                ?? ReadNumber(source, "circle_size", "circleSize", "cs"),
+            ApproachRate = ReadStatNumber(source, "ar")
+                ?? ReadNumber(source, "approach_rate", "approachRate", "ar"),
+            HealthDrain = ReadStatNumber(source, "hp")
+                ?? ReadNumber(source, "hp_drain", "hpDrain", "health_drain", "healthDrain", "hp"),
             Mode = FirstNonEmpty(ReadString(source, "mode"), ReadScalarString(source, "mode_int")),
             BackgroundPath = FirstNonEmpty(
                 ReadString(source, "background"),
@@ -370,7 +408,8 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         {
             throw new TosuBeatmapSourceException(
                 "tosu returned a payload without a current beatmap identity.",
-                exception);
+                exception,
+                TosuBeatmapSourceFailureKind.NoBeatmap);
         }
     }
 
@@ -429,7 +468,10 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             return beatmap;
         }
 
-        throw new TosuBeatmapSourceException("tosu returned a payload without beatmap metadata.");
+        throw new TosuBeatmapSourceException(
+            "tosu returned a payload without beatmap metadata.",
+            new InvalidDataException("Tosu beatmap metadata is missing."),
+            TosuBeatmapSourceFailureKind.NoBeatmap);
     }
 
     private static bool HasIdentity(JsonElement value) =>
@@ -440,10 +482,26 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
     {
         var candidates = new List<JsonElement>();
         var menuFirst = IsMenuState(root);
+        var selectPlay = IsSelectPlayState(root);
         var resultsFirst = IsResultsState(root);
         if (menuFirst)
         {
-            AddModsCandidate(root, candidates, "menu");
+            // Tosu v2 does not always include a `menu` object in selectPlay
+            // packets. When it is absent, play.mods is the current selected
+            // configuration rather than stale results data. An explicitly
+            // present menu.mods (including an empty array) remains authoritative.
+            // In lazer's selectPlay transition `menu.mods` can still be the
+            // previous menu frame while `play.mods` already contains the
+            // newly selected mod. Prefer the play payload for that state;
+            // other menu states retain the menu-first precedence.
+            if (selectPlay && !AddModsCandidate(root, candidates, "play"))
+            {
+                AddModsCandidate(root, candidates, "menu");
+            }
+            else if (!selectPlay && !AddModsCandidate(root, candidates, "menu"))
+            {
+                AddModsCandidate(root, candidates, "play");
+            }
         }
         else if (resultsFirst)
         {
@@ -483,7 +541,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         return ImmutableArray<string>.Empty;
     }
 
-    private static void AddModsCandidate(
+    private static bool AddModsCandidate(
         JsonElement root,
         ICollection<JsonElement> candidates,
         string objectName)
@@ -491,7 +549,10 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         if (TryGetObject(root, out var source, objectName) && TryGetProperty(source, out var mods, "mods"))
         {
             candidates.Add(mods);
+            return true;
         }
+
+        return false;
     }
 
     private static bool IsMenuState(JsonElement root)
@@ -503,7 +564,19 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
         var name = ReadString(state, "name");
         var token = new string(name.Where(char.IsLetter).ToArray()).ToLowerInvariant();
-        return token is "menu" or "select" or "songselect" or "selectplay" or "selectedit" or "edit" or "options" or "exit";
+        return token is "menu" or "select" or "songselect" or "selectplay" or "selectedit" or "edit" or "options" or "exit" or "lobby";
+    }
+
+    private static bool IsSelectPlayState(JsonElement root)
+    {
+        if (!TryGetPath(root, out var state, "state") || state.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var name = ReadString(state, "name");
+        var token = new string(name.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        return token is "selectplay" or "songselect";
     }
 
     private static bool IsResultsState(JsonElement root)
@@ -540,14 +613,19 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             return;
         }
 
+        if (TryGetProperty(value, out var array, "array", "list", "mods"))
+        {
+            // A structured mods container can expose both an aggregate name
+            // (for example "NC CL") and the actual entries. The aggregate is
+            // not a mod code; parsing it produced fake keys such as NCCL and
+            // caused needless headless re-analysis.
+            CollectModCodes(array, result);
+            return;
+        }
+
         foreach (var propertyName in new[] { "acronym", "str", "name" })
         {
             AddModCodes(ReadString(value, propertyName), result);
-        }
-
-        if (TryGetProperty(value, out var array, "array", "mods"))
-        {
-            CollectModCodes(array, result);
         }
     }
 
@@ -576,8 +654,26 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
     private static double ExtractRate(JsonElement root, ImmutableArray<string> mods)
     {
         var menuFirst = IsMenuState(root);
+        var selectPlay = IsSelectPlayState(root);
         var resultsFirst = IsResultsState(root);
-        var paths = menuFirst
+        bool playModsPresent = TryGetPath(root, out var playObject, "play")
+            && TryGetProperty(playObject, out _, "mods");
+        bool menuModsPresent = TryGetPath(root, out var menuObject, "menu")
+            && TryGetProperty(menuObject, out _, "mods");
+        var paths = selectPlay
+            ? new[]
+            {
+                new[] { "play", "speedRate" },
+                new[] { "play", "speed_rate" },
+                new[] { "play", "rate" },
+                new[] { "menu", "speedRate" },
+                new[] { "menu", "speed_rate" },
+                new[] { "menu", "rate" },
+                new[] { "rate" },
+                new[] { "game", "speedRate" },
+                new[] { "game", "rate" }
+            }
+            : menuFirst
             ? new[]
             {
                 new[] { "menu", "speedRate" },
@@ -609,6 +705,17 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
         foreach (var path in paths)
         {
+            // Once selectPlay exposes an explicit play.mods container, all
+            // other top-level speed fields may belong to the previous
+            // selection. Only direct play.* values can precede the structured
+            // play.mods setting; this also protects an explicit NM selection
+            // from stale root/game/menu rates.
+            if (selectPlay && playModsPresent && path.Length > 0 &&
+                !string.Equals(path[0], "play", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (TryGetPath(root, out var value, path) && TryReadNumber(value, out var rate) && rate > 0)
             {
                 return rate;
@@ -616,9 +723,20 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         }
 
         // In song select/edit, play.* can still describe the last played
-        // attempt. Prefer the currently selected menu mod before consulting
-        // that stale play object.
-        if (menuFirst &&
+        // attempt. SelectPlay is the exception: lazer can update play.mods
+        // before menu.mods, so read that current selection first.
+        if (selectPlay &&
+            TryGetPath(root, out var selectPlayObject, "play") &&
+            TryGetProperty(selectPlayObject, out var selectPlayMods, "mods"))
+        {
+            var selectPlaySettingRate = FindSpeedChange(selectPlayMods);
+            if (selectPlaySettingRate > 0)
+            {
+                return selectPlaySettingRate;
+            }
+        }
+
+        if (menuFirst && menuModsPresent && (!selectPlay || !playModsPresent) &&
             TryGetPath(root, out var menu, "menu") &&
             TryGetProperty(menu, out var menuMods, "mods"))
         {
@@ -629,19 +747,53 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             }
         }
 
+        if (menuFirst && !menuModsPresent)
+        {
+            foreach (var path in new[]
+            {
+                new[] { "play", "speedRate" },
+                new[] { "play", "speed_rate" },
+                new[] { "play", "rate" }
+            })
+            {
+                if (TryGetPath(root, out var value, path) && TryReadNumber(value, out var rate) && rate > 0)
+                {
+                    return rate;
+                }
+            }
+
+            if (TryGetPath(root, out var play, "play") &&
+                TryGetProperty(play, out var playMods, "mods"))
+            {
+                var playSettingRate = FindSpeedChange(playMods);
+                if (playSettingRate > 0)
+                {
+                    return playSettingRate;
+                }
+            }
+        }
+
         var inferredRate = InferRateFromMods(mods);
         if (menuFirst && inferredRate > 0)
         {
             return inferredRate;
         }
 
-        var modObjects = menuFirst
+        var modObjects = selectPlay
+            ? new[] { new[] { "play" }, new[] { "menu" } }
+            : menuFirst
             ? new[] { new[] { "menu" } }
             : resultsFirst
                 ? new[] { new[] { "resultsScreen" }, new[] { "play" }, new[] { "menu" } }
             : new[] { new[] { "play" }, new[] { "menu" } };
         foreach (var objectPath in modObjects)
         {
+            if (selectPlay && playModsPresent && objectPath.Length > 0 &&
+                string.Equals(objectPath[0], "menu", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (TryGetPath(root, out var source, objectPath) &&
                 TryGetProperty(source, out var sourceMods, "mods"))
             {
@@ -653,7 +805,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             }
         }
 
-        if (TryGetProperty(root, out var rootMods, "mods"))
+        if ((!selectPlay || !playModsPresent) && TryGetProperty(root, out var rootMods, "mods"))
         {
             var settingRate = FindSpeedChange(rootMods);
             if (settingRate > 0)
@@ -697,6 +849,12 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
         }
         else if (value.ValueKind == JsonValueKind.Object)
         {
+            if (TryGetProperty(value, out var directRate, "rate", "speedRate", "speed_rate") &&
+                TryReadNumber(directRate, out var explicitRate) && explicitRate > 0)
+            {
+                return explicitRate;
+            }
+
             if (TryGetProperty(value, out var settings, "settings") &&
                 TryGetProperty(settings, out var speed, "speed_change", "speedChange") &&
                 TryReadNumber(speed, out var rate) && rate > 0)
@@ -704,7 +862,7 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
                 return rate;
             }
 
-            if (TryGetProperty(value, out var nested, "array", "mods"))
+            if (TryGetProperty(value, out var nested, "array", "list", "mods"))
             {
                 return FindSpeedChange(nested);
             }
@@ -784,6 +942,25 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
             : null;
     }
 
+    private static double? ReadPositiveNumber(JsonElement value, params string[] names)
+    {
+        var number = ReadNumber(value, names);
+        return number is > 0 && double.IsFinite(number.Value) ? number : null;
+    }
+
+    private static double? ReadPositivePathNumber(JsonElement value, params string[] path)
+    {
+        if (!TryGetPath(value, out var property, path)
+            || !TryReadNumber(property, out var number)
+            || number <= 0
+            || !double.IsFinite(number))
+        {
+            return null;
+        }
+
+        return number;
+    }
+
     private static double? ReadStatNumber(JsonElement beatmap, string statName)
     {
         if (!TryGetPath(beatmap, out var stat, "stats", statName))
@@ -836,20 +1013,33 @@ public sealed class TosuBeatmapSource : ITosuBeatmapSource
 
     private static bool IsOsuNotRunningException(Exception exception)
     {
-        var message = exception.Message ?? string.Empty;
-        return message.Contains("500", StringComparison.Ordinal) &&
-               message.Contains("osu", StringComparison.OrdinalIgnoreCase);
+        return FindTosuFailure(exception) == TosuBeatmapSourceFailureKind.OsuNotRunning;
     }
 
     private static bool IsNoBeatmapException(Exception exception)
     {
-        var message = exception.Message ?? string.Empty;
-        return message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase) ||
-               (exception is TosuBeatmapSourceException tosuException &&
-                tosuException.StatusCode == System.Net.HttpStatusCode.NotFound &&
-                string.Equals(tosuException.Route, BeatmapFileRoute, StringComparison.OrdinalIgnoreCase));
+        if (FindTosuFailure(exception) == TosuBeatmapSourceFailureKind.NoBeatmap)
+        {
+            return true;
+        }
+
+        return exception is TosuBeatmapSourceException tosuException &&
+               tosuException.StatusCode == System.Net.HttpStatusCode.NotFound &&
+               string.Equals(tosuException.Route, BeatmapFileRoute, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TosuBeatmapSourceFailureKind FindTosuFailure(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is TosuBeatmapSourceException typed &&
+                typed.FailureKind != TosuBeatmapSourceFailureKind.Unknown)
+            {
+                return typed.FailureKind;
+            }
+        }
+
+        return TosuBeatmapSourceFailureKind.Unknown;
     }
 
     private void ReportNoBeatmap(TosuBeatmapSourceException exception)

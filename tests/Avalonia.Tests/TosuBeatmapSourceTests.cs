@@ -59,6 +59,199 @@ public sealed class TosuBeatmapSourceTests
     }
 
     [Fact]
+    public async Task UsesPlayModsWhenSelectPlayPayloadHasNoMenuObject()
+    {
+        // This is the production osu!lazer shape: selectPlay has no menu
+        // object, while the selected mod/rate is exposed under play.mods.
+        const string payload = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "play": {
+            "mods": {
+              "rate": 1.5,
+              "array": [{ "acronym": "DT", "settings": { "speed_change": 1.5 } }]
+            }
+          }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["DT"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task PrefersFreshSelectPlayModsOverStaleMenuMods()
+    {
+        const string payload = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "menu": { "mods": { "array": [{ "acronym": "NM" }] } },
+          "play": {
+            "mods": {
+              "list": [{ "acronym": "DT", "settings": { "speed_change": 1.5 } }]
+            }
+          }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["DT"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task ExplicitEmptySelectPlayModsDoNotFallBackToStaleMenuRate()
+    {
+        const string payload = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "mode": "mania"
+          },
+          "menu": {
+            "speedRate": 1.5,
+            "mods": { "array": [{ "acronym": "DT", "settings": { "speed_change": 1.5 } }] }
+          },
+          "play": { "mods": { "list": [] } }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Empty(snapshot.Mods);
+        Assert.Equal(1.0, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task UsesNewestPayloadModsWhenSelectionChangesDuringFileFetch()
+    {
+        const string before = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": { "id": 101, "md5": "hash-a", "set": 7, "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper", "mode": "mania" },
+          "play": { "mods": { "list": [{ "acronym": "NM" }] } }
+        }
+        """;
+        const string after = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": { "id": 101, "md5": "hash-a", "set": 7, "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper", "mode": "mania" },
+          "play": { "mods": { "list": [{ "acronym": "DT", "settings": { "speed_change": 1.5 } }] } }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(before),
+            TextResponse("osu file content"),
+            JsonResponse(after));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["DT"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task UsesPlayModsWhenTosuExposesSelectedModsAsList()
+    {
+        const string payload = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "play": {
+            "mods": {
+              "list": [{ "acronym": "DT", "settings": { "speed_change": 1.5 } }]
+            }
+          }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["DT"], snapshot.Mods.ToArray());
+        Assert.Equal(1.5, snapshot.Rate);
+    }
+
+    [Fact]
+    public async Task DoesNotTurnAggregateModsNameIntoAnAdditionalModCode()
+    {
+        const string payload = """
+        {
+          "state": { "number": 5, "name": "selectPlay" },
+          "beatmap": {
+            "id": 101, "md5": "hash-a", "set": 7,
+            "artist": "Artist", "title": "Title", "version": "Hyper", "creator": "Mapper",
+            "bpm": 174, "overall_difficulty": 8.5, "circle_size": 4,
+            "approach_rate": 9, "hp_drain": 7, "mode": "mania"
+          },
+          "play": {
+            "mods": {
+              "name": "NC CL",
+              "array": [{ "acronym": "NC" }, { "acronym": "CL" }]
+            }
+          }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(["CL", "NC"], snapshot.Mods.ToArray());
+    }
+
+    [Fact]
     public async Task UsesResultsModsInsteadOfAnEmptyStalePlayObject()
     {
         const string payload = """
@@ -105,6 +298,50 @@ public sealed class TosuBeatmapSourceTests
         var snapshot = await source.GetCurrentAsync();
 
         Assert.Equal(7, snapshot.Metadata.CircleSize);
+    }
+
+    [Fact]
+    public async Task ReadsStarRatingAndMetadataFromCurrentTosuV2StatsShape()
+    {
+        const string payload = """
+        {
+          "state": { "name": "selectPlay", "number": 5 },
+          "beatmap": {
+            "id": 101,
+            "md5": "hash-a",
+            "set": 7,
+            "artist": "Artist",
+            "title": "Title",
+            "version": "Hyper",
+            "mapper": "Mapper",
+            "mode": "mania",
+            "stats": {
+              "stars": { "live": 4.75, "total": 5.25 },
+              "bpm": { "realtime": 181, "common": 180, "min": 120, "max": 240 },
+              "od": { "original": 8, "converted": 9 },
+              "cs": { "original": 4, "converted": 7 },
+              "ar": { "original": 9, "converted": 9.5 },
+              "hp": { "original": 6, "converted": 6.5 }
+            }
+          },
+          "play": { "mods": { "array": [] } }
+        }
+        """;
+        var handler = new RecordingHandler(
+            JsonResponse(payload),
+            TextResponse("osu file content"),
+            JsonResponse(payload));
+        using var client = new HttpClient(handler);
+        var source = new TosuBeatmapSource(client, new Uri("http://localhost:24050"));
+
+        var snapshot = await source.GetCurrentAsync();
+
+        Assert.Equal(5.25, snapshot.Metadata.StarRating);
+        Assert.Equal(180, snapshot.Metadata.Bpm);
+        Assert.Equal(9, snapshot.Metadata.OverallDifficulty);
+        Assert.Equal(7, snapshot.Metadata.CircleSize);
+        Assert.Equal(9.5, snapshot.Metadata.ApproachRate);
+        Assert.Equal(6.5, snapshot.Metadata.HealthDrain);
     }
 
     [Fact]
@@ -229,8 +466,26 @@ public sealed class TosuBeatmapSourceTests
         var exception = await Assert.ThrowsAsync<TosuBeatmapSourceException>(() => source.GetCurrentAsync());
 
         Assert.Contains("HTTP 404", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(TosuBeatmapSourceFailureKind.NoBeatmap, exception.FailureKind);
         Assert.Contains(diagnostics.Entries, entry => entry.Code == "tosu.no_beatmap");
         Assert.DoesNotContain(diagnostics.Entries, entry => entry.Code == "tosu.beatmap_source_failed");
+    }
+
+    [Fact]
+    public void WrappedTypedFailureKeepsRouteStatusAndCategory()
+    {
+        var inner = new TosuBeatmapSourceException(
+            "endpoint unavailable",
+            "json/v2",
+            HttpStatusCode.InternalServerError);
+
+        var wrapped = new TosuBeatmapSourceException(
+            "read failed",
+            inner);
+
+        Assert.Equal(TosuBeatmapSourceFailureKind.OsuNotRunning, wrapped.FailureKind);
+        Assert.Equal(inner.Route, wrapped.Route);
+        Assert.Equal(inner.StatusCode, wrapped.StatusCode);
     }
 
     [Fact]

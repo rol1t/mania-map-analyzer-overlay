@@ -3,9 +3,9 @@
 namespace ManiaMapAnalyzerOverlay.Application;
 
 /// <summary>
-/// Read-only projection of the legacy MainWindow path used while the new
-/// coordinator runs in shadow mode. It is deliberately a data contract so
-/// parity checks do not call UI or platform APIs from the Application layer.
+/// Read-only projection of the transitional MainWindow UI mirror. It is
+/// deliberately a data contract so parity checks do not call UI or platform
+/// APIs from the Application layer.
 /// </summary>
 public sealed record OverlayRuntimeLegacyProjection(
     bool OverlayMode,
@@ -23,7 +23,11 @@ public sealed record OverlayRuntimeParityResult(IReadOnlyList<string> Difference
     public bool IsMatch => Differences.Count == 0;
 }
 
-/// <summary>Compares coordinator state with the still-authoritative legacy path.</summary>
+/// <summary>
+/// Compares coordinator state with the transitional UI mirror. The coordinator
+/// remains authoritative; this comparer is diagnostic and cannot mutate either
+/// side.
+/// </summary>
 public static class OverlayRuntimeParityComparer
 {
     public static OverlayRuntimeParityResult Compare(
@@ -60,7 +64,7 @@ public static class OverlayRuntimeParityComparer
         return new OverlayRuntimeParityResult(differences);
     }
 
-    private static void AddDifference<T>(ICollection<string> differences, string field, T expected, T actual)
+    private static void AddDifference<T>(List<string> differences, string field, T expected, T actual)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
         {

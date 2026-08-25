@@ -1,11 +1,22 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '2.3.0',
+    [string]$Version = '',
     [string]$RuntimeIdentifier = 'win-x64'
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versionFile = Join-Path $repoRoot 'VERSION'
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    if (-not (Test-Path -LiteralPath $versionFile)) {
+        throw "Canonical VERSION file was not found: $versionFile"
+    }
+
+    $Version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw "Canonical VERSION file is empty: $versionFile"
+}
 $artifactsPath = Join-Path $repoRoot 'artifacts'
 $payloadPath = Join-Path $artifactsPath 'payload'
 $stagingPath = Join-Path $artifactsPath ('installer-stage-' + $Version + '-' + [guid]::NewGuid().ToString('N'))

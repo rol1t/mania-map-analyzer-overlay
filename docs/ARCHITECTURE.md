@@ -1,24 +1,25 @@
 # Architecture and migration roadmap
 
-Status: approved for incremental migration; PRs A-D are implemented locally,
-PR E native visibility/snapshot cutover is in progress, PR F view-state
-composition has started locally, and the versioned transport bridge for PR G
-now carries both native realtime and headless analysis through one publisher;
-renderer compatibility handling remains, while the browser Pause Coach
-producer now yields after native authority is established and native
-view-state frames bypass producer reconciliation in the renderer. PR H has
-started locally with a versioned static-file transport for Tosu fullscreen;
-the fullscreen document polls the latest application view state and uses the
-same renderer event as the desktop WebView. View-state composition now occurs
-inside the serialized runtime coordinator, so MainWindow only forwards the
-already-composed contract to presenters. PR I has started locally with a
-dedicated offscreen WebView for the headless analyzer runtime.
+Status: architecture direction approved; merged runtime remains transitional.
 
-The coordinator owns the native gameplay/visibility decision and accepted
-realtime snapshot handoff during this cutover, while the legacy browser
-presentation remains in place until the full runtime path is proven.
+Re-audited against `origin/main` at `1894845` on 2026-08-24. The serialized
+Application runtime, native realtime path, composed view-state, fullscreen
+transport and isolated headless WebView are present. `MainWindow`, browser
+Tosu/Pause Coach compatibility, renderer arbitration and mirrored legacy state
+still retain production responsibilities, so the migration is not complete.
 
-Approved: 2026-08-23.
+The detailed, current execution backlog is
+[ARCHITECTURE_COMPLETION_PLAN.md](ARCHITECTURE_COMPLETION_PLAN.md). Its work
+packages supersede the implementation-status wording in the historical PR A-J
+sequence below. That sequence remains useful as design history, but must not be
+used to infer which responsibilities are already authoritative.
+
+Approved direction: 2026-08-23. Current-state audit: 2026-08-24.
+
+Quality baseline for this working tree: the Release solution build completes
+with 94 existing analyzer/compiler warnings and zero errors on the configured
+Windows .NET 8 toolchain. The architecture slices in this branch do not add a
+new warning class; warning cleanup remains a separate bounded task.
 
 This document records the architecture review prompted by PR #8,
 `feature/realtime-pause-coach`. It is a migration contract, not approval for a
@@ -57,10 +58,12 @@ PR #8 exposed three overlapping runtime paths:
 flowchart TD
     T[Tosu]
 
-    T -->|HTTP /json/v2| MW[MainWindow]
-    MW --> NC[TosuRealtimeCollector]
+    T -->|HTTP /json/v2| TRH[TosuRealtimeRuntimeHost]
+    TRH --> NC[TosuRealtimeCollector]
     NC --> CA[RealtimePlayAnalyzer C#]
-    CA --> LP[LatestWinsSnapshotPublisher]
+    CA --> ORC[OverlayRuntimeCoordinator]
+    ORC --> OVS[OverlayViewState]
+    OVS --> LP[LatestWinsSnapshotPublisher]
     LP --> WV[WebView InvokeScript]
 
     T -->|WebSocket and HTTP fallback| BA[adapter.js]
@@ -68,9 +71,8 @@ flowchart TD
     JP --> R[renderer.js]
 
     HC[HeadlessAnalysisController] --> TB[TosuBeatmapSource]
-    TB --> HE[Headless analyzer hosted through WebView]
-    HE --> HP[WebViewAnalysisSnapshotPresenter]
-    HP --> R
+    TB --> HE[Headless analyzer hosted through offscreen WebView]
+    HE --> ORC
 
     WV --> R
     R -->|mergeSnapshot authority rules| DOM[DOM]
@@ -79,10 +81,11 @@ flowchart TD
     MW --> WO[WindowsOverlayController]
 ```
 
-The C# and JavaScript Pause Coach implementations independently own sessions,
-retry detection, rolling windows, metrics, and insights. Native desktop mode
-prefers the C# producer, while preview/fullscreen can use the browser producer.
-The renderer then reconciles producers, headless analysis, and replay data.
+The native desktop overlay now uses C# as the Pause Coach authority and
+declares that authority before the browser adapter starts. JavaScript still
+contains a compatibility implementation for preview/fullscreen documents that
+have not received native view-state; the renderer keeps reconciliation only for
+that transitional path and preserves partial headless/replay blocks.
 
 This is the primary architectural blocker. Renderer reconciliation can reduce
 visible symptoms, but it cannot make two independent state machines share one
@@ -92,52 +95,60 @@ canonical attempt.
 
 ### Blocker
 
-1. C# and JavaScript both implement Pause Coach lifecycle and metrics.
-2. `renderer.js` owns business reconciliation and producer authority.
-3. `MainWindow` owns application state, presentation lifecycle, polling,
-   native window behaviour, analysis, and user-interface concerns together.
-4. No application-level test exercises the complete production workflow from
-   normalized telemetry to desired visibility and delivered view state.
+1. Preview/fullscreen still carry a temporary JavaScript Pause Coach fallback.
+2. `renderer.js` still owns business reconciliation for that compatibility path.
+3. `MainWindow` still owns application state mirroring, presentation lifecycle,
+   native window behaviour, analysis, and user-interface concerns together;
+   Tosu realtime polling is now isolated in `TosuRealtimeRuntimeHost`.
+4. A production-shaped test now exercises the core workflow from raw Tosu
+   payloads through normalization, the coordinator and latest-wins delivery;
+   stable/lazer fixture breadth and real surface acceptance remain open.
 
 ### High
 
-1. Tosu state and payloads are normalized in C#, JavaScript, and a separate
-   `TosuService` state path.
+1. Tosu state and payloads are still normalized in C# and the compatibility
+   browser adapter; the duplicate `TosuService` state-only polling path has
+   been removed, but producer cutover is not complete on every surface.
 2. Beatmap identity is duplicated across Tosu, realtime, headless, snapshots,
    and renderer globals.
-3. Headless, replay, and realtime results compete through a shared partial
-   snapshot instead of independent application state slots.
-4. The headless analyzer production host is coupled to presentation WebView
-   navigation and recreation.
-5. Fullscreen presentation still requires browser-side analysis and therefore
-   needs a state transport before JavaScript business logic can be removed.
+3. Application has separate headless and realtime slots, but exact replay and
+   compatibility snapshot composition have not completed the same cutover.
+4. The headless analyzer has a dedicated offscreen WebView, but its host
+   lifecycle and late completion still require explicit Application causal
+   identity.
+5. Fullscreen has a native static-file state transport, but browser-side
+   analysis remains a fallback until delivery and manual acceptance are proven.
 
 ### Medium
 
-1. `ReplayAnalysis` contains both deterministic domain behaviour and Tosu JSON
-   infrastructure.
+1. `ReplayAnalysis` contains deterministic replay, realtime Pause Coach domain
+   behavior, and Tosu JSON normalization that belong to separate boundaries.
 2. `Core` contains domain contracts, orchestration contracts, and presentation
    snapshot contracts.
-3. `MainViewModel` creates infrastructure services instead of receiving them
-   from a composition root.
+3. `MainWindow` creates and coordinates infrastructure services instead of
+   receiving focused controllers from a composition root.
 4. Concurrency is coordinated through unrelated locks, semaphores, interlocked
    flags, dispatcher callbacks, and generation counters.
 5. Logs are primarily free text rather than structured runtime transitions.
 
 ## State ownership
 
-| Fact | Current owners | Target owner |
-| --- | --- | --- |
-| Gameplay state | C# normalizer, MainWindow flags, browser adapter | `OverlayRuntimeCoordinator` |
-| Beatmap identity | Tosu source, collector, browser adapter, snapshots, renderer | `BeatmapState` |
-| Attempt/session ID | C# analyzer and JavaScript runtime | C# Pause Coach domain engine |
-| Realtime metrics | C# and JavaScript | C# Pause Coach domain engine |
-| Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` |
-| Replay result | replay session and renderer | versioned `ReplayAnalysisState` |
-| Desired visibility | MainWindow flags and native state | pure application derivation |
-| Browser readiness | MainWindow and publisher | `PresentationSurfaceState` |
-| Latest rendered state | native publisher and JavaScript globals | application presenter/coalescer |
-| DOM | renderer globals and elements | no business ownership |
+| Fact | Current owners | Target owner | Migration gate |
+| --- | --- | --- | --- |
+| Gameplay state | C# normalizer, coordinator, MainWindow compatibility flags, browser adapter | `OverlayRuntimeCoordinator` | Remove compatibility flags after parity sequences pass |
+| Tosu connection | `TosuService` plus typed coordinator event | typed `TosuConnectionState` + transport generation | Move reconnect/backoff policy behind the host |
+| Native realtime collection | `TosuRealtimeRuntimeHost` and polling controller; `TosuRealtimePayloadResult` at HTTP boundary | Application-owned realtime port | Start from application lifecycle and keep transport/reconnect outcomes typed |
+| Tosu normalization | `TosuRealtimeCollector` for native path; browser adapter fallback | one shared normalization boundary | Prove HTTP/WebSocket fixture parity before deleting fallback |
+| Beatmap identity | Tosu source, collector, browser adapter, snapshots, renderer | application beatmap state | Reject carousel/intermediate and identity-free stale updates |
+| Attempt/session ID | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Native view-state delivery on every surface |
+| Realtime metrics | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Cross-runtime fixtures and manual surface acceptance |
+| Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` | Causal request identity and complete Application composition |
+| Replay result | replay session and renderer | versioned `ReplayAnalysisState` | Keep exact replay independent from realtime slots |
+| Desired visibility | coordinator derivation plus MainWindow compatibility mirror | pure application derivation | Remove legacy visibility mirror after parity |
+| Browser readiness | MainWindow, delivery controller and publisher | `PresentationSurfaceState` | Give preview/fullscreen explicit generations |
+| Latest rendered state | native publisher and JavaScript globals | application presenter/coalescer | Remove browser snapshot arbitration after native cutover |
+| DOM | renderer globals and elements | no business ownership | Renderer contract tests and preset recreation coverage |
+| Version | root `VERSION`, imported project metadata | root `VERSION` | Remove historical packaging literals |
 
 ## Target architecture
 
@@ -173,7 +184,7 @@ flowchart TD
 ```text
 Avalonia / Infrastructure
         -> Application
-        -> Core + ReplayAnalysis
+        -> Core + RealtimeAnalysis + ReplayAnalysis
 ```
 
 The WebView, Tosu JSON, filesystem, Dispatcher, and Windows APIs must not cross
@@ -212,7 +223,7 @@ OverlayRuntimeState
     OverlayModeState
     WindowEnvironmentState
     PresentationSurfaceState
-    SettingsSnapshot
+    OverlayPresentationSettings
 ```
 
 Visibility is derived from gameplay, preset policy, overlay mode, and the osu!
@@ -239,7 +250,8 @@ Initial event set:
 - `OsuProcessChanged`;
 - `OsuWindowMinimizedChanged`;
 - `PresetChanged`;
-- `ScaleChanged`;
+- `ScaleChanged` for semantic persisted scale only, not raw pointer/resize
+  pixels;
 - `ApplicationStopping`.
 
 Rules:
@@ -247,8 +259,8 @@ Rules:
 - only the event-loop consumer mutates runtime state;
 - UI, Tosu, WebView, and Windows callbacks enqueue events only;
 - slow I/O effects never block the event loop;
-- async completions include the beatmap or presentation generation that
-  created them;
+- analysis completions include the beatmap generation observed at delivery;
+  explicit headless request/replay completion identity remains transitional;
 - stale completions are rejected deterministically;
 - gameplay telemetry is not blindly dropped or coalesced;
 - presentation output uses latest-wins coalescing;
@@ -256,6 +268,20 @@ Rules:
 
 `RuntimeVersion` increases for accepted transitions. `ViewStateVersion`
 increases only when the presentation contract changes.
+
+## Versioning
+
+The product version has one source of truth in the root `VERSION` file.
+`Directory.Build.props` imports it into .NET assembly/package metadata; the
+updater, build/package scripts and CI read the same file for user-agent and
+artifact naming. Historical release notes may mention older releases, but no
+build or runtime decision derives its version from those documents.
+
+Updater install state is stored through an injected `UpdateStateStore`. Saves
+are written to a temporary file and replaced only after serialization and flush
+complete, so a cancelled or interrupted write does not publish a partial JSON
+document. The store is deliberately separate from release lookup and install
+policy.
 
 ## Presentation contract
 
@@ -276,9 +302,12 @@ Renderer responsibilities are limited to rendering these blocks, honoring the
 version, and reporting presentation measurements or input gestures. It does
 not parse Tosu, create sessions, calculate insights, or merge producers.
 
-WebView recreation changes only the presentation generation. Runtime state and
-the active Pause Coach attempt survive, and the latest view state is replayed
-when the new document becomes ready.
+WebView recreation changes only the presentation generation. The delivery
+controller owns desktop/fullscreen logical generation counters, while the
+desktop generation is reported back to the Application runtime. Runtime state
+and the active Pause Coach attempt survive, and the latest view state is
+replayed when the new document becomes ready. Preview/cross-surface identity
+still needs to be unified before the migration is complete.
 
 ## Headless and replay relationship
 
@@ -310,11 +339,14 @@ general-purpose dependency injection container is planned.
 
 ## Solution structure
 
-One new assembly is justified:
+The merged solution already contains Application. One additional domain
+boundary is justified to prevent exact replay from becoming the home of
+realtime analysis:
 
 ```text
 src/Core
 src/Application
+src/RealtimeAnalysis
 src/ReplayAnalysis
 src/Avalonia
 src/Updater
@@ -323,14 +355,22 @@ src/Updater
 - `Core`: shared domain and analyzer contracts.
 - `Application`: runtime state, events, coordinator, ports, versioning, and
   view-state composition.
-- `ReplayAnalysis`: deterministic replay and current Pause Coach domain logic.
+- `RealtimeAnalysis`: normalized realtime contracts, attempt lifecycle and
+  Pause Coach business logic; no Tosu JSON or presentation APIs.
+- `ReplayAnalysis`: deterministic exact replay parsing, judging and analytics;
+  no realtime attempt lifecycle or Tosu JSON.
 - `Avalonia`: composition root, ViewModels/Views, Tosu/WebView/filesystem
   implementations, and Windows adapters.
-- `Updater`: unchanged.
+- `Updater`: self-update executable; launcher-side updater orchestration remains
+  in Avalonia services but is decomposed along release/download/install/state
+  boundaries.
 
 A separate Infrastructure assembly is not required initially. Infrastructure
 folders inside Avalonia are sufficient until another host needs to reuse them.
-The migration must not begin with project/folder renames.
+If the dependency audit proves that a `Core/Realtime` namespace is materially
+simpler than a new project, that deviation must be recorded in an ADR before
+implementation. The migration must not begin with unrelated project/folder
+renames.
 
 ## Existing components to preserve
 
@@ -355,7 +395,9 @@ The migration must not begin with project/folder renames.
 - browser-generated Pause Coach session IDs;
 - MainWindow gameplay flags and polling/publisher plumbing;
 - browser play/pause messages that mutate application gameplay state;
-- duplicate `TosuService.GetGameplayStateAsync` normalization;
+- duplicate `TosuService.GetGameplayStateAsync` normalization (removed in the
+  current architecture slice; `TosuService` now exposes one full-payload
+  realtime transport to `TosuRealtimeRuntimeHost`);
 - direct headless publication into WebView outside application composition.
 
 Removal happens only after the replacement path has characterization and

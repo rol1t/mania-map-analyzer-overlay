@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "${script_dir}/.." && pwd -P)"
-version="2.3.0"
+version=""
 runtime_identifier="linux-x64"
 payload_directory="artifacts/payload"
 
@@ -14,7 +14,7 @@ usage() {
 Usage: scripts/package.sh [options]
 
 Options:
-  -v, --version <version>  Release version (default: 2.3.0)
+  -v, --version <version>  Release version (default: VERSION file)
   -r, --runtime <rid>      Linux runtime identifier (default: linux-x64)
   -p, --payload <path>     Payload directory (default: artifacts/payload)
   -h, --help               Show this help
@@ -25,6 +25,11 @@ die() {
     printf 'Error: %s\n' "$1" >&2
     exit 1
 }
+
+version_file="$repo_root/VERSION"
+[[ -f "$version_file" ]] || die "Canonical VERSION file was not found: $version_file"
+version="$(tr -d '\r\n' < "$version_file")"
+[[ -n "$version" ]] || die "Canonical VERSION file is empty: $version_file"
 
 while (($# > 0)); do
     case "$1" in

@@ -143,6 +143,40 @@ public sealed class LatestWinsSnapshotPublisherTests
     }
 
     [Fact]
+    public async Task TimedOutPublishDoesNotBlockTheNewestSnapshotForever()
+    {
+        var published = new List<string>();
+        var failures = new List<Exception>();
+        var blockedStarted = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var neverCompletes = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var publisher = new LatestWinsSnapshotPublisher<string>(async snapshot =>
+        {
+            if (snapshot == "blocked")
+            {
+                blockedStarted.TrySetResult(null);
+                await neverCompletes.Task;
+                return;
+            }
+
+            published.Add(snapshot);
+        }, failures.Add, TimeSpan.FromMilliseconds(50));
+
+        publisher.BeginPresentationSession();
+        publisher.SetBrowserReady(true);
+        publisher.SetPresentationVisible(true);
+        publisher.Submit("blocked");
+        await blockedStarted.Task;
+
+        publisher.Submit("newest");
+
+        await EventuallyAsync(() => published.Count == 1);
+        Assert.Equal(["newest"], published);
+        Assert.Contains(failures, static exception => exception is TimeoutException);
+    }
+
+    [Fact]
     public async Task WebViewRecreationDoesNotLetOldInFlightCallBlockNewSession()
     {
         var published = new List<string>();

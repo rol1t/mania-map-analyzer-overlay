@@ -96,6 +96,70 @@ public sealed class OverlayRuntimeCoordinatorTests
     }
 
     [Fact]
+    public async Task FactoryDispatchAssignsSequenceAndWaitsForReduction()
+    {
+        await using var coordinator = new OverlayRuntimeCoordinator();
+
+        OverlayRuntimeState first = await coordinator.DispatchAsync(sequence =>
+            new OverlayModeChanged(sequence, true));
+        OverlayRuntimeState second = await coordinator.DispatchAsync(sequence =>
+            new VisibilityPolicyChanged(sequence, "paused-only"));
+
+        Assert.Equal(1, first.LastEventSequence);
+        Assert.Equal(2, second.LastEventSequence);
+        Assert.Equal(2, second.Version);
+        Assert.True(second.OverlayMode);
+        Assert.Equal("paused-only", second.VisibilityPolicy);
+    }
+
+    [Fact]
+    public async Task QueuedRealtimeBeforeMatchingAnalysisKeepsNewMapAnalysisAcceptable()
+    {
+        await using var coordinator = new OverlayRuntimeCoordinator();
+        await coordinator.DispatchAsync(sequence => new RealtimeTelemetryReceived(
+            sequence,
+            CreateTelemetry(RealtimePlayState.Menu, 1_000, string.Empty, "674175")));
+
+        var entered = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        coordinator.TransitionApplied += (_, transition) =>
+        {
+            if (transition.Event is OverlayModeChanged)
+            {
+                entered.TrySetResult(null);
+                release.Task.GetAwaiter().GetResult();
+            }
+        };
+
+        Task<OverlayRuntimeState> blocker = coordinator.DispatchAsync(sequence =>
+            new OverlayModeChanged(sequence, true));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.True(coordinator.TryPost(sequence => new RealtimeTelemetryReceived(
+            sequence,
+            CreateTelemetry(RealtimePlayState.Menu, 500, string.Empty, "1540669"))));
+        var analysis = new AnalysisSnapshot
+        {
+            SourceId = "headless",
+            Beatmap = new BeatmapSnapshot { Id = "1540669" }
+        };
+        long generation = OverlayRuntimeAnalysisCausality.ResolveBeatmapGeneration(
+            coordinator.Current,
+            analysis);
+        Task<OverlayRuntimeState> accepted = coordinator.DispatchAsync(sequence =>
+            new AnalysisSnapshotReceived(sequence, analysis, generation));
+
+        Assert.Equal(0, generation);
+        release.TrySetResult(null);
+        await blocker;
+        OverlayRuntimeState final = await accepted;
+
+        Assert.Equal("1540669", final.BeatmapId);
+        Assert.Same(analysis, final.LatestAnalysis);
+        Assert.Null(final.PendingAnalysis);
+    }
+
+    [Fact]
     public async Task TransitionDiagnosticsExposeAcceptedAndStaleEvents()
     {
         await using var coordinator = new OverlayRuntimeCoordinator();
@@ -108,8 +172,38 @@ public sealed class OverlayRuntimeCoordinatorTests
         Assert.Equal(2, transitions.Count);
         Assert.True(transitions[0].Accepted);
         Assert.False(transitions[1].Accepted);
+        OverlayRuntimeRejection rejection = Assert.IsType<OverlayRuntimeRejection>(transitions[1].Rejection);
+        Assert.Equal(OverlayRuntimeRejectionKind.StaleSequence, rejection.Kind);
+        Assert.Equal(9, rejection.EventSequence);
+        Assert.Equal(10, rejection.CurrentSequence);
         Assert.Equal(10, transitions[1].Previous.LastEventSequence);
         Assert.Same(transitions[1].Previous, transitions[1].Next);
+    }
+
+    [Fact]
+    public void RejectionDiagnosticsCarryTransportAndSurfaceIdentities()
+    {
+        OverlayRuntimeState transport = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new TosuConnectionChanged(1, TosuConnectionState.Running, 4));
+        OverlayRuntimeRejection transportRejection = OverlayRuntimeReducer.DescribeRejection(
+            transport,
+            new TosuConnectionChanged(2, TosuConnectionState.Stopped, 3));
+
+        Assert.Equal(OverlayRuntimeRejectionKind.StaleTosuTransportGeneration, transportRejection.Kind);
+        Assert.Equal(3, transportRejection.EventGeneration);
+        Assert.Equal(4, transportRejection.CurrentGeneration);
+
+        OverlayRuntimeState surface = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new PresentationAvailabilityChanged(1, true, true, SurfaceGeneration: 7));
+        OverlayRuntimeRejection surfaceRejection = OverlayRuntimeReducer.DescribeRejection(
+            surface,
+            new PresentationAvailabilityChanged(2, false, false, SurfaceGeneration: 6));
+
+        Assert.Equal(OverlayRuntimeRejectionKind.StalePresentationSurfaceGeneration, surfaceRejection.Kind);
+        Assert.Equal(6, surfaceRejection.EventGeneration);
+        Assert.Equal(7, surfaceRejection.CurrentGeneration);
     }
 
     [Fact]
@@ -142,13 +236,84 @@ public sealed class OverlayRuntimeCoordinatorTests
             CreateTelemetry(RealtimePlayState.Paused, 30_000, "session-A")));
         await coordinator.DispatchAsync(new PresentationAvailabilityChanged(2, true, true));
 
-        Assert.Equal(["transition", "view-state", "transition"], order);
+        Assert.Equal(["transition", "view-state", "transition", "view-state"], order);
+        Assert.Equal(2, viewStates.Count);
+
+        OverlayViewState realtimeViewState = viewStates[0];
+        Assert.Equal(1, realtimeViewState.Version);
+        Assert.Equal("native", realtimeViewState.Producer);
+        Assert.Equal("674175", realtimeViewState.BeatmapId);
+        Assert.Equal("session-A", realtimeViewState.PauseCoach?.SessionId);
+        Assert.Equal(nameof(PauseCoachWidgetState.Paused), realtimeViewState.PauseCoach?.State);
+
+        OverlayViewState presentationViewState = viewStates[1];
+        Assert.Equal(2, presentationViewState.Version);
+        Assert.True(presentationViewState.Presentation.Ready);
+        Assert.True(presentationViewState.Presentation.Visible);
+        Assert.Equal(0, presentationViewState.Presentation.SurfaceGeneration);
+        Assert.Equal(realtimeViewState.BeatmapId, presentationViewState.BeatmapId);
+        Assert.Equal(realtimeViewState.PauseCoach, presentationViewState.PauseCoach);
+    }
+
+    [Fact]
+    public void IgnoresPresentationFeedbackFromAnOlderSurfaceGeneration()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new PresentationAvailabilityChanged(1, true, true, SurfaceGeneration: 2));
+
+        OverlayRuntimeState stale = OverlayRuntimeReducer.Apply(
+            state,
+            new PresentationAvailabilityChanged(2, false, false, SurfaceGeneration: 1));
+
+        Assert.Same(state, stale);
+        Assert.True(stale.PresentationReady);
+        Assert.True(stale.PresentationVisible);
+        Assert.Equal(2, stale.PresentationSurfaceGeneration);
+        Assert.Equal(1, stale.Version);
+        Assert.Equal(1, stale.LastEventSequence);
+    }
+
+    [Fact]
+    public async Task PublishesViewStateWhenPresentationSurfaceGenerationChanges()
+    {
+        await using var coordinator = new OverlayRuntimeCoordinator();
+        var viewStates = new List<OverlayViewState>();
+        coordinator.ViewStateChanged += (_, args) => viewStates.Add(args.ViewState);
+
+        await coordinator.DispatchAsync(new PresentationAvailabilityChanged(
+            1,
+            Ready: false,
+            Visible: false,
+            SurfaceGeneration: 1));
+        viewStates.Clear();
+
+        await coordinator.DispatchAsync(new PresentationAvailabilityChanged(
+            2,
+            Ready: false,
+            Visible: false,
+            SurfaceGeneration: 2));
+
         var viewState = Assert.Single(viewStates);
-        Assert.Equal(1, viewState.Version);
-        Assert.Equal("native", viewState.Producer);
-        Assert.Equal("674175", viewState.BeatmapId);
-        Assert.Equal("session-A", viewState.PauseCoach?.SessionId);
-        Assert.Equal(nameof(PauseCoachWidgetState.Paused), viewState.PauseCoach?.State);
+        Assert.Equal(2, viewState.Presentation.SurfaceGeneration);
+        Assert.False(viewState.Presentation.Ready);
+        Assert.False(viewState.Presentation.Visible);
+    }
+
+    [Fact]
+    public void RuntimeResetAdvancesOrderingEvenWhenStateIsAlreadyEmpty()
+    {
+        OverlayRuntimeState reset = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new RuntimeReset(1));
+
+        Assert.Equal(1, reset.Version);
+        Assert.Equal(1, reset.LastEventSequence);
+        Assert.Equal(OverlayRuntimeState.Empty with
+        {
+            Version = 1,
+            LastEventSequence = 1
+        }, reset);
     }
 
     [Fact]
@@ -207,14 +372,35 @@ public sealed class OverlayRuntimeCoordinatorTests
         Assert.True(OverlayVisibilityDerivation.ShouldShowNativeOverlay(visibleWhenPaused));
     }
 
+    [Fact]
+    public async Task PublishesViewStateWhenVisibilityPolicyChangesWithoutTelemetry()
+    {
+        await using var coordinator = new OverlayRuntimeCoordinator();
+        var viewStates = new List<OverlayViewState>();
+        coordinator.ViewStateChanged += (_, args) => viewStates.Add(args.ViewState);
+
+        await coordinator.DispatchAsync(new RealtimeTelemetryReceived(
+            1,
+            CreateTelemetry(RealtimePlayState.Playing, 29_000, "session-A")));
+        viewStates.Clear();
+
+        await coordinator.DispatchAsync(new VisibilityPolicyChanged(2, "paused-only"));
+
+        var viewState = Assert.Single(viewStates);
+        Assert.Equal("paused-only", viewState.Presentation.VisibilityPolicy);
+        Assert.Equal("session-A", viewState.PauseCoach?.SessionId);
+        Assert.Equal(29_000, viewState.Realtime?.MapTimeMs);
+    }
+
     private static TosuRealtimeTelemetry CreateTelemetry(
         RealtimePlayState state,
         int mapTimeMs,
-        string sessionId)
+        string sessionId,
+        string beatmapId = "674175")
     {
         var snapshot = new RealtimeAnalysisSnapshot(
             sessionId,
-            "674175",
+            beatmapId,
             state,
             mapTimeMs,
             DateTimeOffset.UnixEpoch.AddMilliseconds(mapTimeMs),
@@ -235,7 +421,7 @@ public sealed class OverlayRuntimeCoordinatorTests
             "Play",
             2,
             state == RealtimePlayState.Paused,
-            new RealtimeTelemetrySample("674175", state, mapTimeMs),
+            new RealtimeTelemetrySample(beatmapId, state, mapTimeMs),
             snapshot);
     }
 }

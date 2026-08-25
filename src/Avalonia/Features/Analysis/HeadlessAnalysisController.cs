@@ -28,6 +28,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     private readonly TimeSpan _pollInterval;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _stateGate = new(1, 1);
+    private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
 
     private AnalyzerEngineSupervisor? _supervisor;
     private IAnalyzerScriptHost? _scriptHost;
@@ -41,6 +42,13 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     private DateTime _lastOsuNotRunningLogUtc = DateTime.MinValue;
     private DateTime _lastNoBeatmapLogUtc = DateTime.MinValue;
     private AnalysisSnapshot? _lastSnapshot;
+    // The map id alone is not an analysis identity. A rate/modifier change
+    // on the same beatmap must not allow a cached NM result to replace a DT
+    // result (or vice versa) after WebView recreation.
+    private HeadlessAnalysisKey? _lastPublishedAnalysisKey;
+    private HeadlessAnalysisKey? _candidateAnalysisKey;
+    private int _candidateAnalysisObservations;
+    private string _confirmedRealtimeBeatmapId = string.Empty;
     private AnalyzerEngineSupervisorState _currentState = AnalyzerEngineSupervisorState.NotStartedState;
     private int _pollInFlight;
     private bool _disposed;
@@ -124,6 +132,43 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     }
 
     public ITosuBeatmapSource BeatmapSource => _beatmapSource;
+
+    /// <summary>
+    /// Wakes the headless poll loop when the authoritative realtime boundary
+    /// observes another beatmap/mod selection. The signal is coalesced and is
+    /// retained when a poll is already in progress, so the newest state is
+    /// checked immediately after that poll completes.
+    /// </summary>
+    public void RequestImmediatePoll(string beatmapId)
+    {
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _confirmedRealtimeBeatmapId = beatmapId?.Trim() ?? string.Empty;
+        }
+
+        if (!_pollingLifecycle.IsRunning)
+        {
+            return;
+        }
+
+        try
+        {
+            _pollWakeSignal.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // One pending wake already represents the latest runtime state.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposal can race the final UI-thread telemetry callback.
+        }
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -248,9 +293,11 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     public async Task RepublishLastSnapshotAsync(CancellationToken cancellationToken = default)
     {
         AnalysisSnapshot? snapshot;
+        HeadlessAnalysisKey? publishedKey;
         lock (_sync)
         {
             snapshot = _lastSnapshot;
+            publishedKey = _lastPublishedAnalysisKey;
         }
 
         if (snapshot is null)
@@ -267,11 +314,13 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         try
         {
             var currentBeatmap = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
-            if (!IsSameBeatmap(snapshot, currentBeatmap))
+            if (publishedKey is not null
+                ? !IsSameAnalysisTarget(publishedKey, HeadlessAnalysisKeyBuilder.BuildAnalysisKey(currentBeatmap, _configuration))
+                : !IsSameBeatmap(snapshot, currentBeatmap))
             {
                 AppLogger.Info(
                     "Headless snapshot replay",
-                    $"Skipped cached snapshot for map {snapshot.Beatmap.Id} because Tosu now reports {currentBeatmap.Identity.Id}.");
+                    $"Skipped cached snapshot for map {snapshot.Beatmap.Id} because Tosu now reports {currentBeatmap.Identity.Id} with rate={currentBeatmap.Rate} mods=[{string.Join(',', currentBeatmap.Mods)}].");
                 return;
             }
         }
@@ -325,30 +374,23 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             && string.Equals(cachedVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<bool> IsCurrentBeatmapAsync(
-        TosuBeatmapSnapshot expected,
+    private async Task<bool> IsCurrentAnalysisAsync(
+        HeadlessAnalysisKey expectedKey,
         CancellationToken cancellationToken)
     {
         try
         {
             var current = await _beatmapSource.GetCurrentAsync(cancellationToken).ConfigureAwait(false);
-            var expectedId = expected.Identity.Id?.Trim() ?? string.Empty;
-            var currentId = current.Identity.Id?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(expectedId) && !string.IsNullOrWhiteSpace(currentId))
+            var currentKey = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(current, _configuration);
+            if (!IsSameAnalysisTarget(expectedKey, currentKey))
             {
-                return string.Equals(expectedId, currentId, StringComparison.OrdinalIgnoreCase);
+                AppLogger.Info(
+                    "Headless snapshot freshness",
+                    $"Rejected stale result: expected={expectedKey.BeatmapKey.StableKey} rate={expectedKey.BeatmapKey.Rate} mods=[{expectedKey.BeatmapKey.Mods}], current={currentKey.BeatmapKey.StableKey} rate={currentKey.BeatmapKey.Rate} mods=[{currentKey.BeatmapKey.Mods}].");
+                return false;
             }
 
-            var expectedHash = expected.Identity.Hash?.Trim() ?? string.Empty;
-            var currentHash = current.Identity.Hash?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(expectedHash) && !string.IsNullOrWhiteSpace(currentHash))
-            {
-                return string.Equals(expectedHash, currentHash, StringComparison.OrdinalIgnoreCase);
-            }
-
-            return string.Equals(expected.Identity.SetId?.Trim(), current.Identity.SetId?.Trim(), StringComparison.OrdinalIgnoreCase)
-                && string.Equals(expected.Metadata.Version?.Trim(), current.Metadata.Version?.Trim(), StringComparison.OrdinalIgnoreCase)
-                && string.Equals(expected.Metadata.Title?.Trim(), current.Metadata.Title?.Trim(), StringComparison.OrdinalIgnoreCase);
+            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -365,9 +407,17 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             {
                 _lastAnalysisKey = null;
                 _lastSceneKey = null;
+                _lastPublishedAnalysisKey = null;
+                _candidateAnalysisKey = null;
+                _candidateAnalysisObservations = 0;
             }
             return false;
         }
+    }
+
+    private static bool IsSameAnalysisTarget(HeadlessAnalysisKey expected, HeadlessAnalysisKey current)
+    {
+        return expected.Equals(current);
     }
 
     public Task NotifyTosuRestartAsync(CancellationToken cancellationToken = default)
@@ -381,7 +431,21 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         return supervisor?.NotifyTosuRestartAsync(cancellationToken) ?? Task.CompletedTask;
     }
 
-    public async Task PushSnapshotAsync(AnalysisSnapshot snapshot, CancellationToken cancellationToken = default)
+    public Task PushSnapshotAsync(
+        AnalysisSnapshot snapshot,
+        CancellationToken cancellationToken = default) =>
+        PushSnapshotCoreAsync(snapshot, null, cancellationToken);
+
+    public Task PushSnapshotAsync(
+        AnalysisSnapshot snapshot,
+        HeadlessAnalysisKey analysisKey,
+        CancellationToken cancellationToken = default) =>
+        PushSnapshotCoreAsync(snapshot, analysisKey, cancellationToken);
+
+    private async Task PushSnapshotCoreAsync(
+        AnalysisSnapshot snapshot,
+        HeadlessAnalysisKey? analysisKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -391,6 +455,18 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             lock (_sync)
             {
                 _lastSnapshot = snapshot;
+                _lastPublishedAnalysisKey = analysisKey;
+                if (analysisKey is not null)
+                {
+                    // Deduplication is a completion checkpoint, not an
+                    // in-flight marker. A fast A -> B -> C transition can make
+                    // freshness reject B (or cancel its scene) after analysis
+                    // starts. Recording the key before this successful
+                    // presentation would then suppress every retry if B/C is
+                    // the final selection.
+                    _lastAnalysisKey = analysisKey;
+                    _lastSceneKey = analysisKey.SceneKey;
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -409,6 +485,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         lock (_sync)
         {
             _lastSnapshot = snapshot;
+            _lastPublishedAnalysisKey = null;
         }
     }
 
@@ -427,6 +504,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         await StopAsync(CancellationToken.None).ConfigureAwait(false);
         await _pollingLifecycle.DisposeAsync().ConfigureAwait(false);
         _beatmapHttpClient.Dispose();
+        _pollWakeSignal.Dispose();
         _stateGate.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -516,6 +594,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         {
             _lastAnalysisKey = null;
             _lastSceneKey = null;
+            _candidateAnalysisKey = null;
+            _candidateAnalysisObservations = 0;
         }
 
         AnalyzerEngineSupervisor? supervisorCopy;
@@ -591,6 +671,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         {
             _lastAnalysisKey = null;
             _lastSceneKey = null;
+            _candidateAnalysisKey = null;
+            _candidateAnalysisObservations = 0;
         }
     }
 
@@ -615,7 +697,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             try
             {
                 await PollOnceAsync(cancellationToken).ConfigureAwait(false);
-                await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+                await _pollWakeSignal.WaitAsync(_pollInterval, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -698,6 +780,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                     lock (_sync)
                     {
                         _lastAnalysisKey = null;
+                        _candidateAnalysisKey = null;
+                        _candidateAnalysisObservations = 0;
                     }
 
                     BeatmapSourceStateChanged?.Invoke(this, new HeadlessBeatmapSourceStateEventArgs(
@@ -717,6 +801,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                     lock (_sync)
                     {
                         _lastAnalysisKey = null;
+                        _candidateAnalysisKey = null;
+                        _candidateAnalysisObservations = 0;
                     }
 
                     BeatmapSourceStateChanged?.Invoke(this, new HeadlessBeatmapSourceStateEventArgs(
@@ -737,6 +823,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 {
                     _lastAnalysisKey = null;
                     _lastSceneKey = null;
+                    _candidateAnalysisKey = null;
+                    _candidateAnalysisObservations = 0;
                 }
 
                 var modeMessage = $"Current beatmap {snapshot.Identity.StableKey} is not osu!mania.";
@@ -758,6 +846,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
             if (HeadlessAnalysisKeyBuilder.IsSameBeatmapAndConfig(snapshot, _configuration, lastAnalysisKey, lastSceneKey))
             {
+                lock (_sync)
+                {
+                    _candidateAnalysisKey = null;
+                    _candidateAnalysisObservations = 0;
+                }
+                await RefreshPublishedMetadataAsync(snapshot, lastAnalysisKey!, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -769,12 +863,14 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             }
 
             var analysisKey = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshot, _configuration);
-            var sceneKey = analysisKey.SceneKey;
-            lock (_sync)
+            if (!ConfirmAnalysisCandidate(analysisKey))
             {
-                _lastAnalysisKey = analysisKey;
-                _lastSceneKey = sceneKey;
+                AppLogger.Debug(
+                    "Headless beatmap poll",
+                    $"Holding transient map/config candidate {analysisKey.BeatmapKey.StableKey} rate={analysisKey.BeatmapKey.Rate} mods=[{analysisKey.BeatmapKey.Mods}] until the next consistent poll.");
+                return;
             }
+            var sceneKey = analysisKey.SceneKey;
 
             AppLogger.Debug(
                 "Headless beatmap poll",
@@ -788,7 +884,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                     try
                     {
                         var sceneSnapshot = await _sceneRunner.RunAsync(sceneSpec, cancellationToken).ConfigureAwait(false);
-                        await PushSceneSnapshotAsync(snapshot, sceneSnapshot, cancellationToken).ConfigureAwait(false);
+                        await PushSceneSnapshotAsync(snapshot, sceneSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
                         return;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -832,7 +928,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             }
 
             LogAnalysisResult(snapshot, result);
-            await PushAnalysisResultSnapshotAsync(snapshot, result, cancellationToken).ConfigureAwait(false);
+            await PushAnalysisResultSnapshotAsync(snapshot, result, analysisKey, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -851,9 +947,10 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     private async Task PushSceneSnapshotAsync(
         TosuBeatmapSnapshot snapshot,
         WidgetAnalysisSceneSnapshot sceneSnapshot,
+        HeadlessAnalysisKey analysisKey,
         CancellationToken cancellationToken)
     {
-        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        if (!await IsCurrentAnalysisAsync(analysisKey, cancellationToken).ConfigureAwait(false))
         {
             AppLogger.Info("Headless snapshot push", $"Skipped stale scene result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
             return;
@@ -867,12 +964,16 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         // complete forever and no later request could recreate the runtime.
         // Let the next poll retry transient worker/bootstrap failures while
         // keeping ordinary beatmap parse failures cached as before.
-        if (sceneSnapshot.OrderedSnapshots.Any(HasTransientEngineFailure))
+        bool hasTransientEngineFailure = sceneSnapshot.OrderedSnapshots.Any(HasTransientEngineFailure);
+        if (hasTransientEngineFailure)
         {
             lock (_sync)
             {
                 _lastAnalysisKey = null;
                 _lastSceneKey = null;
+                _lastPublishedAnalysisKey = null;
+                _candidateAnalysisKey = null;
+                _candidateAnalysisObservations = 0;
             }
 
             AppLogger.Warning(
@@ -888,7 +989,17 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
         var actualAlgorithm = firstWidget.Metrics.Values.FirstOrDefault()?.Provenance.ActualAlgorithm;
         var headlessSnapshot = HeadlessSnapshotConverter.FromComposed(snapshot, null, firstWidget);
-        await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
+        if (hasTransientEngineFailure)
+        {
+            // Publish the diagnostic snapshot, but do not mark this analysis
+            // identity as complete. The next poll must be able to recreate a
+            // failed worker/runtime without requiring a map or modifier change.
+            await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await PushSnapshotAsync(headlessSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
+        }
 
         ResultProduced?.Invoke(this, new HeadlessAnalysisResultEventArgs(
             snapshot,
@@ -901,26 +1012,113 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
     private static bool HasTransientEngineFailure(ComposedWidgetSnapshot widget)
     {
-        return widget.Diagnostics.Any(diagnostic =>
-            diagnostic.Code.Equals("WORKER_CRASHED", StringComparison.OrdinalIgnoreCase)
-            || diagnostic.Code.Equals("engine.bootstrap_failed", StringComparison.OrdinalIgnoreCase)
-            || diagnostic.Code.Equals("engine.request_dispatch_failed", StringComparison.OrdinalIgnoreCase)
-            || diagnostic.Code.Equals("engine.analysis_bridge_failed", StringComparison.OrdinalIgnoreCase));
+        return widget.Diagnostics.Any(AnalyzerDiagnosticClassifier.IsTransientEngineFailure);
+    }
+
+    private bool ConfirmAnalysisCandidate(HeadlessAnalysisKey candidate)
+    {
+        lock (_sync)
+        {
+            // There is no prior presentation to protect during startup. The
+            // first verified map can be analyzed immediately.
+            if (_lastPublishedAnalysisKey is null || _lastPublishedAnalysisKey.Equals(candidate))
+            {
+                _candidateAnalysisKey = null;
+                _candidateAnalysisObservations = 0;
+                return true;
+            }
+
+            // Realtime collection already applies its own carousel stability
+            // guard. Once that authoritative boundary accepts this beatmap,
+            // repeating the same debounce in headless polling only adds up to
+            // one full poll interval before analysis can start.
+            if (!string.IsNullOrWhiteSpace(_confirmedRealtimeBeatmapId)
+                && string.Equals(
+                    _confirmedRealtimeBeatmapId,
+                    candidate.BeatmapKey.BeatmapId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _candidateAnalysisKey = null;
+                _candidateAnalysisObservations = 0;
+                return true;
+            }
+
+            // The selected rate/modifier is part of the analysis identity, but
+            // it is not a carousel transition. Tosu can expose the new
+            // selectPlay payload for only one poll before another partial
+            // packet arrives. Once the beatmap file revision is known to be
+            // unchanged, start the requested recalculation immediately rather
+            // than hiding it behind the two-observation map debounce.
+            if (HeadlessAnalysisKeyBuilder.IsSameBeatmapRevision(_lastPublishedAnalysisKey, candidate))
+            {
+                _candidateAnalysisKey = null;
+                _candidateAnalysisObservations = 0;
+                return true;
+            }
+
+            if (_candidateAnalysisKey is null || !_candidateAnalysisKey.Equals(candidate))
+            {
+                _candidateAnalysisKey = candidate;
+                _candidateAnalysisObservations = 1;
+                return false;
+            }
+
+            _candidateAnalysisObservations++;
+            if (_candidateAnalysisObservations < 2)
+            {
+                return false;
+            }
+
+            _candidateAnalysisKey = null;
+            _candidateAnalysisObservations = 0;
+            return true;
+        }
+    }
+
+    private async Task RefreshPublishedMetadataAsync(
+        TosuBeatmapSnapshot beatmap,
+        HeadlessAnalysisKey analysisKey,
+        CancellationToken cancellationToken)
+    {
+        AnalysisSnapshot? current;
+        HeadlessAnalysisKey? publishedKey;
+        lock (_sync)
+        {
+            current = _lastSnapshot;
+            publishedKey = _lastPublishedAnalysisKey;
+        }
+
+        if (current is null || publishedKey is null || !publishedKey.Equals(analysisKey))
+        {
+            return;
+        }
+
+        AnalysisSnapshot enriched = HeadlessSnapshotConverter.WithLatestBeatmapMetadata(current, beatmap);
+        if (Equals(enriched, current))
+        {
+            return;
+        }
+
+        AppLogger.Debug(
+            "Headless snapshot metadata",
+            $"Refreshed delayed Tosu metadata for {beatmap.Identity.StableKey}: star={enriched.Difficulty.StarRating?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; bpm={enriched.Beatmap.BpmLabel}; keys={enriched.Difficulty.Keys?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}.");
+        await PushSnapshotAsync(enriched, analysisKey, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PushAnalysisResultSnapshotAsync(
         TosuBeatmapSnapshot snapshot,
         AnalysisResult result,
+        HeadlessAnalysisKey analysisKey,
         CancellationToken cancellationToken)
     {
-        if (!await IsCurrentBeatmapAsync(snapshot, cancellationToken).ConfigureAwait(false))
+        if (!await IsCurrentAnalysisAsync(analysisKey, cancellationToken).ConfigureAwait(false))
         {
             AppLogger.Info("Headless snapshot push", $"Skipped stale analysis result for beatmap {snapshot.Identity.Id}; Tosu now reports another map.");
             return;
         }
 
         var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
-        await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
+        await PushSnapshotAsync(headlessSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
 
         ResultProduced?.Invoke(this, new HeadlessAnalysisResultEventArgs(
             snapshot,
@@ -1053,33 +1251,19 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
     private static bool IsOsuNotRunningBeatmapException(TosuBeatmapSourceException exception)
     {
-        var message = exception.Message ?? string.Empty;
-        if (message.Contains("500", StringComparison.Ordinal) &&
-            message.Contains("osu", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var inner = exception.InnerException?.Message ?? string.Empty;
-        return inner.Contains("500", StringComparison.Ordinal) &&
-            inner.Contains("osu", StringComparison.OrdinalIgnoreCase);
+        return exception.FailureKind == TosuBeatmapSourceFailureKind.OsuNotRunning
+            || exception.InnerException is TosuBeatmapSourceException
+            {
+                FailureKind: TosuBeatmapSourceFailureKind.OsuNotRunning
+            };
     }
 
     private static bool IsNoBeatmapBeatmapException(TosuBeatmapSourceException exception)
     {
-        var message = exception.Message ?? string.Empty;
-        if (message.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase) ||
-            (exception.StatusCode == System.Net.HttpStatusCode.NotFound &&
-             string.Equals(exception.Route, "files/beatmap/file", StringComparison.OrdinalIgnoreCase)))
-        {
-            return true;
-        }
-
-        var inner = exception.InnerException?.Message ?? string.Empty;
-        return inner.Contains("without a current beatmap identity", StringComparison.OrdinalIgnoreCase) ||
-            inner.Contains("without beatmap metadata", StringComparison.OrdinalIgnoreCase) ||
-            inner.Contains("A beatmap id or hash is required", StringComparison.OrdinalIgnoreCase);
+        return exception.FailureKind == TosuBeatmapSourceFailureKind.NoBeatmap
+            || exception.InnerException is TosuBeatmapSourceException
+            {
+                FailureKind: TosuBeatmapSourceFailureKind.NoBeatmap
+            };
     }
 }

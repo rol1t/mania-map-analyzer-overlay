@@ -131,6 +131,13 @@ public sealed class AnalyzerEngineScriptBridgeTests : IAsyncLifetime
             diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
                           diagnostic.Severity == AnalysisDiagnosticSeverity.Warning);
         Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
+                          diagnostic.Properties.TryGetValue(
+                              AnalyzerDiagnosticClassifier.FailureKindProperty,
+                              out var failureKind) &&
+                          failureKind == AnalyzerDiagnosticClassifier.BeatmapParseFailureKind);
+        Assert.Contains(
             _diagnosticSink.Entries,
             diagnostic => diagnostic.Code == "ANALYSIS_FAILED" &&
                           diagnostic.Severity == AnalyzerEngineDiagnosticSeverity.Warning);

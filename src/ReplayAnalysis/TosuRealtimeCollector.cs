@@ -49,6 +49,9 @@ public sealed class TosuRealtimeCollector
 {
     private readonly RealtimePlayAnalyzer _analyzer;
     private RealtimeTelemetrySample? _lastSample;
+    private TosuRealtimeTelemetry? _lastTelemetry;
+    private string _candidateBeatmapId = string.Empty;
+    private int _candidateBeatmapObservations;
 
     public TosuRealtimeCollector(PauseCoachOptions? options = null)
     {
@@ -67,21 +70,84 @@ public sealed class TosuRealtimeCollector
             return null;
         }
 
+        if (ShouldHoldTransientCarouselMap(normalized))
+        {
+            string candidateBeatmapId = normalized.Sample.BeatmapId.Trim();
+            if (!string.Equals(_candidateBeatmapId, candidateBeatmapId, StringComparison.Ordinal))
+            {
+                _candidateBeatmapId = candidateBeatmapId;
+                _candidateBeatmapObservations = 1;
+            }
+            else
+            {
+                _candidateBeatmapObservations++;
+            }
+
+            if (_candidateBeatmapObservations < 2 && _lastTelemetry is not null)
+            {
+                // Tosu can expose a carousel entry for one polling interval
+                // while the selected map is still the previous one. Preserve
+                // the last analyzed sample/session until the candidate is
+                // observed twice; raw fields remain available for diagnostics.
+                return _lastTelemetry with
+                {
+                    Source = source,
+                    RawStateName = normalized.RawStateName,
+                    RawStateNumber = normalized.RawStateNumber,
+                    RawPaused = normalized.RawPaused
+                };
+            }
+
+            _candidateBeatmapId = string.Empty;
+            _candidateBeatmapObservations = 0;
+        }
+        else
+        {
+            _candidateBeatmapId = string.Empty;
+            _candidateBeatmapObservations = 0;
+        }
+
         _lastSample = normalized.Sample;
         var snapshot = _analyzer.Process(normalized.Sample);
-        return new TosuRealtimeTelemetry(
+        var telemetry = new TosuRealtimeTelemetry(
             source,
             normalized.RawStateName,
             normalized.RawStateNumber,
             normalized.RawPaused,
             normalized.Sample,
             snapshot);
+        _lastTelemetry = telemetry;
+        return telemetry;
     }
 
     public void Reset()
     {
         _lastSample = null;
+        _lastTelemetry = null;
+        _candidateBeatmapId = string.Empty;
+        _candidateBeatmapObservations = 0;
         _analyzer.Reset();
+    }
+
+    private bool ShouldHoldTransientCarouselMap(TosuRealtimeNormalizedPayload normalized)
+    {
+        string stateToken = new string(normalized.RawStateName.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        if (stateToken is not "selectplay" and not "songselect")
+        {
+            return false;
+        }
+
+        RealtimeTelemetrySample sample = normalized.Sample;
+        if (_lastSample is null || sample.State != RealtimePlayState.Menu)
+        {
+            return false;
+        }
+
+        string previousBeatmapId = _lastSample.BeatmapId.Trim();
+        string currentBeatmapId = sample.BeatmapId.Trim();
+        return !string.IsNullOrWhiteSpace(previousBeatmapId)
+            && !string.IsNullOrWhiteSpace(currentBeatmapId)
+            && !string.Equals(previousBeatmapId, currentBeatmapId, StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -240,7 +306,7 @@ public static class TosuRealtimePayloadNormalizer
             return RealtimePlayState.Results;
         }
 
-        if (token is "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options" or "exit")
+        if (token is "menu" or "songselect" or "selectplay" or "selectedit" or "selectdrawings" or "edit" or "options" or "exit" or "lobby")
         {
             return RealtimePlayState.Menu;
         }
@@ -298,6 +364,12 @@ public static class TosuRealtimePayloadNormalizer
         }
 
         JsonElement arrayValue = Property(value, "array");
+        if (arrayValue.ValueKind == JsonValueKind.Undefined)
+        {
+            // Tosu versions have exposed selected lazer mods as either
+            // `array` or `list`; both are the same ordered collection.
+            arrayValue = Property(value, "list");
+        }
         if (arrayValue.ValueKind == JsonValueKind.Array)
         {
             value = arrayValue;

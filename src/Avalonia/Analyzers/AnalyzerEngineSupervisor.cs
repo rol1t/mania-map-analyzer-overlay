@@ -322,8 +322,7 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
             var result = await bridge.AnalyzeAsync(request, cancellationToken).ConfigureAwait(false);
 
             var isBeatmapParseFailureForProbe = result.Diagnostics.Any(diagnostic =>
-                diagnostic.Code.Contains("ANALYSIS_FAILED", StringComparison.OrdinalIgnoreCase) &&
-                diagnostic.Message.Contains("Beatmap parse failed", StringComparison.OrdinalIgnoreCase));
+                AnalyzerDiagnosticClassifier.Classify(diagnostic) == AnalyzerDiagnosticKind.BeatmapParse);
 
             foreach (var diagnostic in result.Diagnostics)
             {
@@ -390,12 +389,7 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
             }
 
             var hasRuntimeFailure = result.Diagnostics.Any(diagnostic =>
-                diagnostic.Code.Contains("bootstrap", StringComparison.OrdinalIgnoreCase) ||
-                diagnostic.Code.Contains("incompatible", StringComparison.OrdinalIgnoreCase) ||
-                diagnostic.Code.Contains("protocol", StringComparison.OrdinalIgnoreCase) ||
-                (diagnostic.Code.Contains("runtime", StringComparison.OrdinalIgnoreCase) &&
-                 !diagnostic.Code.Contains("runtime_reset", StringComparison.OrdinalIgnoreCase) &&
-                 !diagnostic.Code.Contains("runtime_disposed", StringComparison.OrdinalIgnoreCase)));
+                AnalyzerDiagnosticClassifier.Classify(diagnostic) == AnalyzerDiagnosticKind.RuntimeIncompatible);
 
             if (hasRuntimeFailure)
             {
@@ -911,19 +905,20 @@ public sealed class AnalyzerEngineSupervisor : IAsyncDisposable
         }
 
         var code = result.FailureCode ?? string.Empty;
-        if (code.Contains("runtime_reset", StringComparison.OrdinalIgnoreCase) ||
-            code.Contains("runtime_disposed", StringComparison.OrdinalIgnoreCase) ||
-            code.Contains("analysis.cancelled", StringComparison.OrdinalIgnoreCase) ||
-            code.Contains("cancelled", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(code, "engine.runtime_reset", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "engine.runtime_disposed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "analysis.cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "ANALYSIS_CANCELLED", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "ANALYSIS_SUPERSEDED", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "ANALYSIS_STALE_GENERATION", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "STALE_ANALYSIS", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
         // Result was cancelled via bridge reset – treat as transient even if code is generic.
         if (result.Diagnostics.Any(diagnostic =>
-                string.Equals(diagnostic.Code, "engine.runtime_reset", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(diagnostic.Code, "engine.runtime_disposed", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(diagnostic.Code, "analysis.cancelled", StringComparison.OrdinalIgnoreCase)))
+                AnalyzerDiagnosticClassifier.Classify(diagnostic) == AnalyzerDiagnosticKind.TransientRuntime))
         {
             return true;
         }

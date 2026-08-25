@@ -70,6 +70,34 @@ public sealed class HeadlessAnalysisKeyTests
     }
 
     [Fact]
+    public void RateAndModsChangeKeepsTheSameBeatmapRevision()
+    {
+        var configuration = CreateConfiguration();
+        var original = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(
+            CreateSnapshot(rate: 1.0, mods: ["NM"]),
+            configuration);
+        var modified = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(
+            CreateSnapshot(rate: 1.5, mods: ["DT"]),
+            configuration);
+
+        Assert.True(HeadlessAnalysisKeyBuilder.IsSameBeatmapRevision(original, modified));
+    }
+
+    [Fact]
+    public void DifferentBeatmapRevisionDoesNotBypassTransientGuard()
+    {
+        var configuration = CreateConfiguration();
+        var original = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(
+            CreateSnapshot(rawBeatmap: "osu!mania-a"),
+            configuration);
+        var different = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(
+            CreateSnapshot(rawBeatmap: "osu!mania-bb"),
+            configuration);
+
+        Assert.False(HeadlessAnalysisKeyBuilder.IsSameBeatmapRevision(original, different));
+    }
+
+    [Fact]
     public void DifferentConfigurationAreNotEqual()
     {
         var snapshot = CreateSnapshot();

@@ -10,14 +10,21 @@ public sealed record RealtimeTelemetryReceived(
     long Sequence,
     TosuRealtimeTelemetry Telemetry) : OverlayRuntimeEvent(Sequence);
 
+public sealed record TosuConnectionChanged(
+    long Sequence,
+    TosuConnectionState State,
+    long TransportGeneration) : OverlayRuntimeEvent(Sequence);
+
 public sealed record AnalysisSnapshotReceived(
     long Sequence,
-    AnalysisSnapshot Snapshot) : OverlayRuntimeEvent(Sequence);
+    AnalysisSnapshot Snapshot,
+    long BeatmapGeneration = 0) : OverlayRuntimeEvent(Sequence);
 
 public sealed record PresentationAvailabilityChanged(
     long Sequence,
     bool Ready,
-    bool Visible) : OverlayRuntimeEvent(Sequence);
+    bool Visible,
+    long SurfaceGeneration = 0) : OverlayRuntimeEvent(Sequence);
 
 public sealed record OverlayModeChanged(
     long Sequence,

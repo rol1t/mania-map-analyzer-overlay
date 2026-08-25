@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
+using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -57,13 +58,15 @@ public sealed class OverlayPresentationService
             css, customCss, interactionCss, template, analyzer.HostSelector, analyzer.PresetAnchorSelector,
             layout, overlayMode, scale, presetWidth);
         var observer = BuildRuntimeScript(
-            hostScript, pauseCoachScript, rendererScript, adapterScript, resizeHandleCss, analyzer.HostSelector, overlayMode);
+            hostScript, pauseCoachScript, rendererScript, adapterScript, resizeHandleCss, analyzer.HostSelector, overlayMode,
+            PauseCoachOptions.Default);
 
         var fullscreenSetup = BuildSetupScript(
             css, customCss, interactionCss, template, analyzer.HostSelector, analyzer.PresetAnchorSelector,
             layout, true, scale, presetWidth);
         var fullscreenObserver = BuildRuntimeScript(
-            hostScript, pauseCoachScript, rendererScript, adapterScript, resizeHandleCss, analyzer.HostSelector, false);
+            hostScript, pauseCoachScript, rendererScript, adapterScript, resizeHandleCss, analyzer.HostSelector, false,
+            PauseCoachOptions.Default);
 
         return new PresentationScripts(setup, observer, fullscreenSetup, fullscreenObserver);
     }
@@ -136,18 +139,41 @@ public sealed class OverlayPresentationService
         string adapterScript,
         string resizeHandleCss,
         string hostSelector,
-        bool overlayMode)
+        bool overlayMode,
+        PauseCoachOptions pauseCoachOptions)
     {
+        ArgumentNullException.ThrowIfNull(pauseCoachOptions);
         var configuration = JsonSerializer.Serialize(new
         {
             overlayMode,
+            // Desktop overlay presentation receives the canonical native
+            // realtime view-state from the Application runtime. The browser
+            // adapter still collects map metadata and gameplay traces, but it
+            // must not start a second Pause Coach session on this surface.
+            nativeRealtimeAuthority = overlayMode,
             hostSelector,
             resizeHandleCss
+        });
+        var pauseCoachConfiguration = JsonSerializer.Serialize(new
+        {
+            recentWindowSeconds = pauseCoachOptions.RecentWindowSeconds,
+            baselineWindowSeconds = pauseCoachOptions.BaselineWindowSeconds,
+            minimumTimingSamples = pauseCoachOptions.MinimumTimingSamples,
+            timingBiasThresholdMs = pauseCoachOptions.TimingBiasThresholdMs,
+            timingInstabilityUrThreshold = pauseCoachOptions.TimingInstabilityUrThreshold,
+            timingInstabilityMultiplier = pauseCoachOptions.TimingInstabilityMultiplier,
+            accuracyDropThreshold = pauseCoachOptions.AccuracyDropThreshold,
+            missSpikeMultiplier = pauseCoachOptions.MissSpikeMultiplier,
+            minimumMissesForSpike = pauseCoachOptions.MinimumMissesForSpike,
+            sectionAccuracyDropThreshold = pauseCoachOptions.SectionAccuracyDropThreshold,
+            maxTimelineEvents = pauseCoachOptions.MaxTimelineEvents,
+            maxTimingSamples = pauseCoachOptions.MaxTimingSamples,
+            maxInsights = pauseCoachOptions.MaxInsights
         });
         var fullscreenViewStateTransport = overlayMode
             ? string.Empty
             : "(function(){var key='__overlayFullscreenViewStatePoll';var previous=window[key];if(previous&&typeof previous.stop==='function')previous.stop();var lastEpoch=String(window.__overlayPresentationEpoch||'');var lastVersion=Number(window.__overlayLatestViewStateVersion||0);var lastErrorAt=0;var stopped=false;async function pull(){if(stopped)return;try{var response=await fetch('/ManiaMapAnalyzerOverlay/view-state.json?t='+Date.now(),{cache:'no-store'});if(!response.ok)return;var state=await response.json();var epoch=String(state&&state.presentationEpoch||'');var version=Number(state&&state.version||0);if(epoch&&epoch!==lastEpoch){lastEpoch=epoch;lastVersion=-1;}if(version>lastVersion){lastVersion=version;window.dispatchEvent(new CustomEvent('overlay:view-state',{detail:state}));}}catch(exception){var now=Date.now();if(now-lastErrorAt>5000){lastErrorAt=now;console.debug('Fullscreen view-state refresh failed',exception);}}}var timer=window.setInterval(pull,250);window[key]={stop:function(){stopped=true;window.clearInterval(timer);}};pull();})();";
-        return "window.__overlayHostConfig=" + configuration + ";" + Environment.NewLine +
+        return "window.__overlayHostConfig=" + configuration + ";window.__overlayPauseCoachOptions=" + pauseCoachConfiguration + ";" + Environment.NewLine +
                hostScript + Environment.NewLine +
                pauseCoachScript + Environment.NewLine +
                rendererScript + Environment.NewLine +
