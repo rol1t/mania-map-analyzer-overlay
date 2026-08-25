@@ -12,15 +12,32 @@ const source = fs.readFileSync(path.join(root, "assets/overlay/runtime/renderer.
 const listeners = new Map();
 let renderCount = 0;
 const styleProperties = {};
+const documentClasses = new Set();
+const statusStyleProperties = {};
+const statusElement = {
+  textContent: "[Error] Rework failed: Beatmap mode is not mania",
+  className: "status error marquee",
+  style: {
+    removeProperty(name) { delete statusStyleProperties[name]; },
+  },
+};
 const document = {
   documentElement: {
-    classList: { contains: () => false },
+    classList: {
+      contains: value => documentClasses.has(value),
+      toggle(value, force) {
+        if (force === true) documentClasses.add(value);
+        else if (force === false) documentClasses.delete(value);
+        else if (documentClasses.has(value)) documentClasses.delete(value);
+        else documentClasses.add(value);
+      },
+    },
     style: {
       setProperty(name, value) { styleProperties[name] = value; },
       removeProperty(name) { delete styleProperties[name]; },
     },
   },
-  getElementById: () => null,
+  getElementById: id => id === "status" ? statusElement : null,
   querySelector: () => null,
 };
 const window = {
@@ -50,6 +67,12 @@ const context = {
   location: { host: "127.0.0.1:24050" },
   getComputedStyle: () => ({ getPropertyValue: () => "" }),
 };
+context.CustomEvent = class CustomEventStub {
+  constructor(type, init) {
+    this.type = type;
+    this.detail = init && init.detail;
+  }
+};
 vm.createContext(context);
 vm.runInContext(source, context, { filename: "renderer.js" });
 
@@ -67,17 +90,61 @@ publishViewState({
   producer: "native",
   beatmap: { id: "674175" },
   gameplay: { state: "Paused", isPlaying: true, isPaused: true },
+  replay: {
+    hasData: true,
+    fidelity: "exact",
+    mapProgressMs: 30000,
+    score: 123456,
+    columns: [{ column: 1, biasMs: 8.5 }],
+  },
   realtimeReplay: { mapProgressMs: 30000, score: 123456, isProvisional: true },
   // RealtimePlayState.Paused is serialized as enum value 3 by the current
   // System.Text.Json transport; gameplay.state remains the view-facing text.
   realtime: { state: 3, mapTimeMs: 30000, score: 123456 },
   pauseCoach: { state: "Paused", sessionId: "native-A", mapProgressMs: 30000, hasData: true },
-  presentation: { overlayMode: true, visible: true, ready: true },
+  presentation: {
+    overlayMode: true,
+    visible: true,
+    ready: true,
+    osuWindowMinimized: true,
+  },
 });
 
 assert.equal(window.__overlayLatestViewState.version, 1);
+assert.equal(window.__overlayLatestAnalysisSnapshot.replay.columns[0].biasMs, 8.5);
+assert.equal(documentClasses.has("launcher-osu-minimized"), true);
+
+// Preview/browser presentation can resolve the map's difficulty and skill
+// columns before the first native realtime frame. A later native frame is
+// intentionally partial until headless analysis finishes and must not erase
+// those already-known fields for the same map.
+publish({
+  schemaVersion: 1,
+  sourceId: "mania-map-analyser",
+  beatmap: { id: "674175" },
+  difficulty: { starRating: 4.89, starLabel: "4.89 SR", lnPercent: 12.4, keys: 4 },
+  skills: [{ id: "stream", label: "Stream", normalizedValue: 82, value: 12.3 }],
+  pauseCoach: { state: "Playing", sessionId: "browser-B", hasData: true },
+  realtimeProducer: "browser",
+});
+assert.equal(window.__overlayLatestAnalysisSnapshot.difficulty.starRating, 4.89);
+assert.equal(window.__overlayLatestAnalysisSnapshot.skills[0].id, "stream");
 
 publishViewState({
+  schemaVersion: 99,
+  version: 99,
+  producer: "native",
+  beatmap: { id: "future-map" },
+  realtime: { state: 3, mapTimeMs: 99999 },
+  pauseCoach: { state: "Paused", sessionId: "future", hasData: true },
+});
+assert.equal(window.__overlayLatestViewState.version, 1);
+assert.equal(window.__overlayLatestAnalysisSnapshot.beatmap.id, "674175");
+assert.equal(window.__overlayViewStateProtocolError,
+  "Unsupported overlay view-state schema version: 99");
+
+publishViewState({
+  schemaVersion: 1,
   version: 0,
   beatmapGeneration: 0,
   producer: "native",
@@ -209,6 +276,10 @@ publishViewState({
 });
 assert.equal(window.__overlayLatestAnalysisSnapshot.beatmap.backgroundUrl,
   "http://127.0.0.1:24050/files/beatmap/background?ts=674175");
+assert.equal(window.__overlayLatestAnalysisSnapshot.replay.columns[0].biasMs, 8.5);
+assert.equal(window.__overlayLatestAnalysisSnapshot.difficulty.starRating, 4.89);
+assert.equal(window.__overlayLatestAnalysisSnapshot.skills[0].id, "stream");
+assert.equal(documentClasses.has("launcher-osu-minimized"), false);
 
 // A browser frame for another map can be stale while the native polling
 // request is between two map-selection states. It must not release native
@@ -244,6 +315,41 @@ publishViewState({
 const newMapSnapshot = window.__overlayLatestAnalysisSnapshot;
 assert.equal(newMapSnapshot.beatmap.id, "998877");
 assert.equal(newMapSnapshot.pauseCoach.sessionId, "native-B");
+assert.equal(statusElement.textContent, "Beatmap 998877");
+assert.equal(statusElement.className, "status ok");
+
+// The source analyser can finish later and mutate only #status. Replaying an
+// otherwise identical application snapshot must still reclaim that field;
+// render-signature deduplication must not preserve the legacy error.
+statusElement.textContent = "[Error] Rework failed: Beatmap mode is not mania";
+statusElement.className = "status error marquee";
+window.__overlayRenderAnalysisSnapshot(window.__overlayLatestAnalysisSnapshot);
+assert.equal(statusElement.textContent, "Beatmap 998877");
+assert.equal(statusElement.className, "status ok");
+
+// The upstream MMA DOM can publish a failed/non-mania result without a
+// positive beatmap identity while native Tosu has already selected another
+// map. That browser frame must not attach its legacy error title or empty
+// analysis fields to the current native id.
+publish({
+  schemaVersion: 1,
+  sourceId: "mania-map-analyser",
+  beatmap: {
+    title: "[Error] Rework failed: Beatmap mode is not mania",
+    version: "Unknown Difficulty",
+  },
+  gameplay: { state: "Menu", isPlaying: false, isPaused: false },
+  difficulty: { starRating: 0 },
+  ranks: [],
+  skills: [],
+  replay: { mapProgressMs: 0, score: 0, isProvisional: true },
+  pauseCoach: { state: "WaitingForGame", sessionId: "", hasData: false },
+  realtimeProducer: "browser",
+});
+assert.equal(window.__overlayLatestAnalysisSnapshot.beatmap.id, "998877");
+assert.equal(window.__overlayLatestAnalysisSnapshot.beatmap.title || "", "");
+assert.equal(window.__overlayLatestAnalysisSnapshot.pauseCoach.sessionId, "native-B");
+assert.equal(statusElement.textContent, "Beatmap 998877");
 
 publish({
   schemaVersion: 1,
@@ -256,6 +362,8 @@ publish({
 });
 assert.equal(window.__overlayLatestAnalysisSnapshot.beatmap.id, "998877");
 assert.equal(window.__overlayLatestAnalysisSnapshot.pauseCoach.sessionId, "native-B");
+assert.equal(statusElement.textContent,
+  "Unknown Artist - New map [Unknown Difficulty] // Unknown Mapper");
 
 // A cached headless result for the previous map may complete after the live
 // adapter has already switched to the next map (especially while entering
@@ -308,16 +416,8 @@ publishViewState({
   pauseCoach: { state: "Playing", sessionId: "native-C", mapProgressMs: 2000, hasData: true },
 });
 
-// A fresh document settles its initial headless/browser/native burst before
-// rendering; subsequent frames are coalesced into one latest-wins render.
-assert.equal(renderCount, 0);
-setTimeout(() => {
-  try {
-    assert.equal(renderCount, 1);
-    assert.match(styleProperties["--overlay-comp-cover"], /776655/);
-    console.log("renderer-native-precedence.test.js: all assertions passed");
-  } catch (exception) {
-    console.error(exception);
-    process.exitCode = 1;
-  }
-}, 1100);
+// Accepted snapshots are rendered synchronously; there is no startup settle
+// or presentation throttle hiding the newest map/mod state.
+assert.ok(renderCount > 0);
+assert.match(styleProperties["--overlay-comp-cover"], /776655/);
+console.log("renderer-native-precedence.test.js: all assertions passed");

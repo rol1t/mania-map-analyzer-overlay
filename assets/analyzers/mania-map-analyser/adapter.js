@@ -11,8 +11,6 @@
   let socket = null;
   let observer = null;
   let animationFrame = 0;
-  let publishTimer = 0;
-  let lastPublishAt = 0;
   let reconnectTimer = 0;
   let statePollTimer = 0;
   let statePollInFlight = false;
@@ -40,7 +38,9 @@
     ? (window.__overlayPauseCoachRuntime || (window.__overlayPauseCoachRuntime = window.__createRealtimePauseCoachRuntime()))
     : null;
   let lastPlayingHits = null;
-  let nativePauseCoachDisabled = false;
+  let nativePauseCoachDisabled = !!(
+    window.__overlayHostConfig &&
+    window.__overlayHostConfig.nativeRealtimeAuthority === true);
 
   function onNativeViewState(event) {
     const viewState = event && event.detail;
@@ -474,8 +474,9 @@
     if (play && play.mods !== undefined && play.mods !== null) {
       if (Array.isArray(play.mods)) {
         mods = play.mods.map(function (value) { return String(value).trim(); }).filter(Boolean).map(function (value) { return value.toUpperCase(); });
-      } else if (typeof play.mods === "object" && Array.isArray(play.mods.array)) {
-        mods = play.mods.array.map(function (entry) {
+      } else if (typeof play.mods === "object" && (Array.isArray(play.mods.array) || Array.isArray(play.mods.list))) {
+        const modEntries = Array.isArray(play.mods.array) ? play.mods.array : play.mods.list;
+        mods = modEntries.map(function (entry) {
           if (entry && typeof entry === "object" && typeof entry.acronym === "string") return entry.acronym.trim().toUpperCase();
           return String(entry).trim().toUpperCase();
         }).filter(Boolean);
@@ -685,8 +686,12 @@
 
   function publish() {
     animationFrame = 0;
-    publishTimer = 0;
-    lastPublishAt = Date.now();
+    // Native view-state is the complete application snapshot in the overlay
+    // host. The browser adapter may still collect telemetry (and provide its
+    // preview fallback), but it must not publish a second business snapshot
+    // into the same renderer. Otherwise difficulty/replay/Pause Coach fields
+    // alternate with native values whenever the two polling cadences differ.
+    if (nativePauseCoachAuthoritative()) return;
     const snapshot = buildSnapshot();
     const json = JSON.stringify(snapshot, function (_key, value) {
       return typeof value === "number" && !Number.isFinite(value) ? null : value;
@@ -698,17 +703,10 @@
   }
 
   function queuePublish() {
-    if (animationFrame || publishTimer) return;
-    // Telemetry processing stays event-driven, but the DOM renderer only needs
-    // a few updates per second while the player is actively playing. Pause and
-    // results snapshots bypass the throttle for immediate feedback.
-    const isActivePlay = gameplay.isPlaying === true && gameplay.isPaused !== true;
-    const minimumInterval = isActivePlay ? 250 : 0;
-    const elapsed = Date.now() - lastPublishAt;
-    if (minimumInterval > elapsed) {
-      publishTimer = window.setTimeout(queuePublish, minimumInterval - elapsed);
-      return;
-    }
+    if (animationFrame) return;
+    // requestAnimationFrame only batches synchronous mutations in the same
+    // event-loop turn. There is deliberately no wall-clock throttle here:
+    // accepted Tosu data is forwarded as soon as the browser can publish it.
     animationFrame = requestAnimationFrame(publish);
   }
 
@@ -986,8 +984,6 @@
   connect();
   startStatePolling();
   queuePublish();
-  window.setTimeout(queuePublish, 120);
-  window.setTimeout(queuePublish, 600);
 
   window.__overlayAnalyzerAdapter = {
     id: SOURCE_ID,
@@ -996,7 +992,6 @@
       disposed = true;
       if (observer) observer.disconnect();
       if (animationFrame) cancelAnimationFrame(animationFrame);
-      if (publishTimer) clearTimeout(publishTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (statePollTimer) window.clearInterval(statePollTimer);
       if (typeof window.removeEventListener === "function") {
@@ -1013,7 +1008,6 @@
       observer = null;
       socket = null;
       animationFrame = 0;
-      publishTimer = 0;
       reconnectTimer = 0;
       statePollTimer = 0;
       statePollInFlight = false;

@@ -16,7 +16,13 @@ The adapter does not assume that `/websocket/v2/precise` or key-state/object cor
 
 ## Realtime source of truth
 
-`assets/overlay/runtime/pause-coach.js` is the production realtime implementation and is the source of truth for Tosu normalization, gameplay-time windows and insight thresholds. The C# `RealtimePlayAnalyzer` in `src/ReplayAnalysis/RealtimePauseCoach.cs` remains a domain/reference implementation for host-side contracts and tests; it must not be treated as validation of the WebView runtime. Direct JavaScript fixture tests exercise the shipped runtime.
+The native application path is authoritative:
+
+`Tosu v2 payload → TosuRealtimeCollector → RealtimePlayAnalyzer → RealtimeAnalysisSnapshot → OverlayViewState`.
+
+`RealtimePlayAnalyzer` in `src/ReplayAnalysis/RealtimePauseCoach.cs` owns attempt lifecycle, bounded windows, insight thresholds and the native Pause Coach snapshot. The renderer receives that snapshot as a presenter payload and must not reinterpret it.
+
+`assets/overlay/runtime/pause-coach.js` remains temporarily as a compatibility/preview fallback for documents that have not received an application view-state yet. The desktop overlay declares native authority before the adapter starts, so that surface never creates a second browser coach session. The fallback is not allowed to replace an authoritative native snapshot. Its options are injected from the same C# `PauseCoachOptions` contract (`window.__overlayPauseCoachOptions`) so thresholds and window sizes cannot drift during this transition. The fallback is covered by direct JavaScript fixture tests and is scheduled for removal after all presentation surfaces consume `OverlayViewState` directly.
 
 The direct runtime checks are in `tests/Runtime/pause-coach-runtime.test.js` and use the realistic Tosu payload at `tests/fixtures/tosu-v2-pause-coach.json`.
 
@@ -32,7 +38,7 @@ Each snapshot includes an overall `dataQuality` and per-block quality labels:
 
 ## Session lifecycle
 
-`pause-coach.js` and `RealtimePlayAnalyzer` both model an attempt as a bounded session. A session starts on gameplay, survives pause/resume, ends at results/menu/failure, and is replaced when the beatmap identity or cumulative counters positively reset. Partial Tosu packets that omit beatmap id/hash do not reset the attempt. Recent and baseline windows are keyed by map/gameplay time, so wall-clock time spent paused cannot age telemetry out. Replay playback and spectating are explicitly marked unavailable.
+`RealtimePlayAnalyzer` models an attempt as a bounded session. A session starts on gameplay, survives pause/resume, ends at results/menu/failure, and is replaced when the beatmap identity or cumulative counters positively reset. Partial Tosu packets that omit beatmap id/hash do not reset the attempt. Recent and baseline windows are keyed by map/gameplay time, so wall-clock time spent paused cannot age telemetry out. Replay playback and spectating are explicitly marked unavailable. The compatibility browser runtime follows the same contract while it remains enabled.
 
 ## Insight rules
 

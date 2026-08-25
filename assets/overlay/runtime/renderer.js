@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  const OVERLAY_VIEW_STATE_SCHEMA_VERSION = 1;
+
   if (window.__overlaySnapshotRendererBound) {
     if (window.__overlayLatestAnalysisSnapshot && typeof window.__overlayRenderAnalysisSnapshot === "function") {
       // A preset change can replace the host DOM while keeping this runtime
@@ -54,6 +56,15 @@
     const values = [beatmap.artist, beatmap.title, beatmap.version]
       .map(function (value) { return String(value || "").trim().toLowerCase(); });
     return values.some(Boolean) ? values.join("|") : "";
+  }
+
+  function positiveBeatmapKey(snapshot) {
+    const beatmap = snapshot && snapshot.beatmap || {};
+    const id = String(beatmap.id || "").trim().toLowerCase();
+    if (id) return `id:${id}`;
+    const setId = String(beatmap.setId || "").trim().toLowerCase();
+    const version = String(beatmap.version || "").trim().toLowerCase();
+    return setId ? `set:${setId}|${version}` : "";
   }
 
   function rankHasValue(entry) {
@@ -120,6 +131,40 @@
     return merged;
   }
 
+  function beatmapStatus(beatmap) {
+    const source = beatmap || {};
+    const hasMetadata = [source.artist, source.title, source.version, source.mapper].some(hasText);
+    if (hasMetadata) {
+      const artist = hasText(source.artist) ? String(source.artist).trim() : "Unknown Artist";
+      const title = hasText(source.title) ? String(source.title).trim() : "Unknown Title";
+      const version = hasText(source.version) ? String(source.version).trim() : "Unknown Difficulty";
+      const mapper = hasText(source.mapper) ? String(source.mapper).trim() : "Unknown Mapper";
+      return `${artist} - ${title} [${version}] // ${mapper}`;
+    }
+
+    const id = String(source.id || "").trim();
+    return id ? `Beatmap ${id}` : "Waiting for beatmap data...";
+  }
+
+  function renderBeatmapStatus(beatmap) {
+    const element = byId("status");
+    if (!element) return;
+
+    const next = beatmapStatus(beatmap);
+    if (element.textContent !== next) element.textContent = next;
+
+    // The upstream analyser owns this node in the source document and marks
+    // it as `error` when a transient/non-mania carousel file is parsed. Once
+    // an application view-state is being rendered, presentation is native-
+    // authoritative: remove that legacy state together with its marquee
+    // styles so an old error cannot remain attached to a newer map id.
+    element.className = "status ok";
+    if (element.style && typeof element.style.removeProperty === "function") {
+      element.style.removeProperty("--status-marquee-distance");
+      element.style.removeProperty("--status-marquee-duration");
+    }
+  }
+
   function isNativePauseCoachSnapshot(snapshot) {
     return !!(snapshot && (snapshot.nativePauseCoach === true
       || snapshot.extensions && snapshot.extensions.nativePauseCoach === true));
@@ -146,6 +191,62 @@
 
   function isReplayedHeadlessSnapshot(snapshot) {
     return !!(snapshot && snapshot.extensions && snapshot.extensions.headlessReplay === true);
+  }
+
+  function selectReplay(exactReplay, realtimeReplay) {
+    const exact = exactReplay || null;
+    const realtime = realtimeReplay || null;
+    if (!exact) return realtime || {};
+    if (!realtime) return exact;
+    const exactIsAuthoritative = isExactReplay(exact);
+    // OverlayViewState carries exact .osr analysis and provisional native
+    // telemetry in separate slots. Prefer the exact block as a whole when it
+    // exists; choosing realtimeReplay first silently erased stable columns and
+    // sections every time the native frame arrived.
+    return exactIsAuthoritative ? exact : realtime;
+  }
+
+  function isExactReplay(replay) {
+    return !!(replay
+      && replay.hasData === true
+      && replay.isProvisional !== true
+      && String(replay.fidelity || "").toLowerCase() !== "provisional");
+  }
+
+  function mergeNativePresentationFields(nativeSnapshot, previousSnapshot) {
+    if (!nativeSnapshot || !previousSnapshot) return nativeSnapshot;
+
+    const nativeKey = beatmapKey(nativeSnapshot);
+    const previousKey = beatmapKey(previousSnapshot);
+    // Presentation metadata is safe to carry only across the same positive
+    // beatmap identity. A native frame for another map must start a clean
+    // presentation even when the old browser document is still alive.
+    if (!nativeKey || !previousKey || nativeKey !== previousKey) return nativeSnapshot;
+
+    const merged = Object.assign({}, nativeSnapshot);
+    merged.beatmap = mergeBeatmap(previousSnapshot.beatmap, nativeSnapshot.beatmap);
+    merged.difficulty = mergeDifficulty(previousSnapshot.difficulty, nativeSnapshot.difficulty);
+
+    // Native realtime frames deliberately do not contain headless skills or
+    // ranks until analysis is complete. Do not erase already-rendered values
+    // for the same map while those frames continue arriving every poll.
+    if ((!Array.isArray(nativeSnapshot.skills) || nativeSnapshot.skills.length === 0)
+        && Array.isArray(previousSnapshot.skills) && previousSnapshot.skills.length > 0) {
+      merged.skills = previousSnapshot.skills;
+    }
+    if ((!Array.isArray(nativeSnapshot.ranks) || nativeSnapshot.ranks.length === 0)
+        && Array.isArray(previousSnapshot.ranks) && previousSnapshot.ranks.length > 0) {
+      merged.ranks = previousSnapshot.ranks;
+    }
+
+    // Exact replay analysis is a separate authoritative slot. A provisional
+    // native frame must not remove exact per-column/LN data already shown for
+    // this map (this also covers WebView recreation before the cache replay).
+    if (!isExactReplay(nativeSnapshot.replay) && isExactReplay(previousSnapshot.replay)) {
+      merged.replay = previousSnapshot.replay;
+    }
+
+    return merged;
   }
 
   // The application now has a versioned view-state contract. Keep the
@@ -188,7 +289,7 @@
       difficulty: viewState && viewState.difficulty || {},
       ranks: Array.isArray(viewState && viewState.ranks) ? viewState.ranks : [],
       skills: Array.isArray(viewState && viewState.skills) ? viewState.skills : [],
-      replay: viewState && (viewState.realtimeReplay || viewState.replay) || {},
+      replay: selectReplay(viewState && viewState.replay, viewState && viewState.realtimeReplay),
       pauseCoach: viewState && viewState.pauseCoach || {},
       extensions: {
         nativePauseCoach: isNative,
@@ -208,6 +309,8 @@
     if (nativeSnapshot && nativeSnapshot.pauseCoach && snapshot && snapshot !== nativeSnapshot) {
       const nativeKey = beatmapKey(nativeSnapshot);
       let currentKey = beatmapKey(snapshot);
+      const nativePositiveKey = positiveBeatmapKey(nativeSnapshot);
+      const currentPositiveKey = positiveBeatmapKey(snapshot);
       const nativeId = String(nativeSnapshot.beatmap && nativeSnapshot.beatmap.id || "").trim().toLowerCase();
       const currentId = String(snapshot.beatmap && snapshot.beatmap.id || "").trim().toLowerCase();
       const nativeSession = String(nativeSnapshot.pauseCoach.sessionId || "").trim();
@@ -221,8 +324,9 @@
       const sessionsAreComparable = currentProducer === "native"
         && nativeProducer === "native"
         && isNativePauseCoachSnapshot(snapshot);
-      const positiveDifferentBeatmap = (nativeId && currentId && nativeId !== currentId)
-        || (!nativeId && !currentId && nativeKey && currentKey && nativeKey !== currentKey);
+      const positiveDifferentBeatmap = nativePositiveKey
+        && currentPositiveKey
+        && nativePositiveKey !== currentPositiveKey;
       // The native stream is the ordering source for the current Tosu map.
       // Browser snapshots are produced by an independently scheduled
       // websocket/DOM pipeline and can legitimately arrive after a map
@@ -241,7 +345,7 @@
       // them makes the visible card jump backwards and forwards. A positive
       // Native map/session transitions release native authority; browser
       // frames never do so while native realtime is active.
-      const currentMissingBeatmapIdentity = !currentKey;
+      const currentMissingBeatmapIdentity = !currentPositiveKey;
       if (positiveDifferentAttempt) {
         // A positive map/session transition releases the previous native
         // authority. The next native marker (if any) will establish it again.
@@ -250,6 +354,15 @@
         // Do not let a stale browser frame replace the native map identity or
         // its realtime blocks. The next native frame establishes the new map;
         // a browser frame for that same identity can then merge metadata.
+        snapshot = nativeSnapshot;
+        currentKey = beatmapKey(snapshot);
+      } else if (currentMissingBeatmapIdentity && currentProducer === "browser") {
+        // An identity-less browser frame is not evidence that its DOM fields
+        // belong to the current native map. In production this is exactly how
+        // an upstream `Beatmap mode is not mania` error became the visible
+        // title of an unrelated Tosu map. Keep the complete native snapshot;
+        // browser enrichment is accepted only after it carries the same
+        // positive beatmap identity.
         snapshot = nativeSnapshot;
         currentKey = beatmapKey(snapshot);
       } else if (currentMissingBeatmapIdentity) {
@@ -730,6 +843,8 @@
       var rcText = rc.value || "—";
       var lnText = ln.value || "—";
       text("rework-diff", lnHas ? rcText + " || " + lnText : rcText, "—");
+    } else {
+      text("rework-diff", "—", "—");
     }
     var card = document.querySelector(".main-card");
     if (card) {
@@ -783,28 +898,18 @@
     });
   }
 
-  // Keep the card stable without making realtime state feel frozen. The
-  // adapter/native collector continue to process every frame; only DOM
-  // presentation is coalesced to the newest value every 300 ms.
-  const PRESENTATION_UPDATE_INTERVAL_MS = 300;
-  // A fresh WebView receives cached headless analysis, browser telemetry and
-  // the replayable native snapshot in quick succession. Hold only the first
-  // DOM frame for the same short interval so those sources settle into one
-  // merged snapshot before the widget becomes visible; subsequent updates
-  // use the normal latest-wins throttle above.
-  const INITIAL_RENDER_SETTLE_MS = 300;
-  const rendererStartedAt = Date.now();
   var lastRenderSignature = "";
-  var lastRenderAt = 0;
-  var pendingRenderSnapshot = null;
-  var pendingRenderTimer = 0;
 
   function renderNow(snapshot, force) {
     const effectiveSnapshot = snapshot;
+    // The legacy analyser can mutate #status after the application snapshot
+    // was accepted. Reassert this single application-owned field even when
+    // the data signature is unchanged; otherwise an asynchronous source
+    // error can remain visible until map time or another metric changes.
+    renderBeatmapStatus(effectiveSnapshot && effectiveSnapshot.beatmap || {});
     const signature = renderSignature(effectiveSnapshot);
     if (!force && signature === lastRenderSignature) return;
     lastRenderSignature = signature;
-    lastRenderAt = Date.now();
     tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
@@ -816,55 +921,17 @@
     }
   }
 
-  function flushPendingRender() {
-    pendingRenderTimer = 0;
-    const snapshot = pendingRenderSnapshot;
-    pendingRenderSnapshot = null;
-    if (snapshot) renderNow(snapshot, false);
-  }
-
   function scheduleSnapshot(effectiveSnapshot, force) {
     window.__overlayLatestAnalysisSnapshot = effectiveSnapshot;
     if (force) {
-      pendingRenderSnapshot = null;
-      if (pendingRenderTimer) {
-        window.clearTimeout(pendingRenderTimer);
-        pendingRenderTimer = 0;
-      }
       renderNow(effectiveSnapshot, true);
       return;
     }
 
-    const elapsed = Date.now() - lastRenderAt;
-    const startupElapsed = Date.now() - rendererStartedAt;
-    if (lastRenderAt === 0 && startupElapsed < INITIAL_RENDER_SETTLE_MS) {
-      pendingRenderSnapshot = effectiveSnapshot;
-      if (!pendingRenderTimer) {
-        pendingRenderTimer = window.setTimeout(
-          flushPendingRender,
-          Math.max(0, INITIAL_RENDER_SETTLE_MS - startupElapsed));
-      }
-      return;
-    }
-    if (lastRenderAt === 0 || elapsed >= PRESENTATION_UPDATE_INTERVAL_MS) {
-      pendingRenderSnapshot = null;
-      if (pendingRenderTimer) {
-        window.clearTimeout(pendingRenderTimer);
-        pendingRenderTimer = 0;
-      }
-      renderNow(effectiveSnapshot, false);
-      return;
-    }
-
-    // Keep collecting/merging every frame, but delay the visible DOM update
-    // until the 300 ms presentation gap expires. This is latest-wins, so
-    // intermediate score/UR/accuracy values cannot make the card flicker.
-    pendingRenderSnapshot = effectiveSnapshot;
-    if (!pendingRenderTimer) {
-      pendingRenderTimer = window.setTimeout(
-        flushPendingRender,
-        Math.max(0, PRESENTATION_UPDATE_INTERVAL_MS - elapsed));
-    }
+    // The application reducer and producer arbitration have already accepted
+    // this snapshot. Render it immediately; a wall-clock delay here made
+    // modifier changes and realtime values appear late or out of order.
+    renderNow(effectiveSnapshot, false);
   }
 
   function render(snapshot, force) {
@@ -875,6 +942,22 @@
 
   function renderViewState(viewState, force) {
     if (!viewState) return;
+    const schemaVersion = Number(viewState.schemaVersion);
+    // Older documents did not carry a schema field. Keep accepting those
+    // compatibility payloads, but never let a future contract be interpreted
+    // as the current shape or replace the last valid render.
+    if (Number.isFinite(schemaVersion) && schemaVersion !== OVERLAY_VIEW_STATE_SCHEMA_VERSION) {
+      const message = `Unsupported overlay view-state schema version: ${schemaVersion}`;
+      window.__overlayViewStateProtocolError = message;
+      try {
+        window.dispatchEvent(new CustomEvent("overlay:runtime-error", {
+          detail: { operation: "Overlay view-state protocol", message: message },
+        }));
+      } catch (exception) {
+        console.error(message, exception);
+      }
+      return;
+    }
     const epoch = String(viewState.presentationEpoch || "");
     const previousEpoch = String(window.__overlayPresentationEpoch || "");
     if (epoch && epoch !== previousEpoch) {
@@ -893,13 +976,22 @@
     }
     if (Number.isFinite(version)) window.__overlayLatestViewStateVersion = version;
     window.__overlayLatestViewState = viewState;
+    const presentation = viewState.presentation || {};
+    if (document.documentElement && document.documentElement.classList) {
+      document.documentElement.classList.toggle(
+        "launcher-osu-minimized",
+        presentation.osuWindowMinimized === true);
+    }
     const snapshot = viewStateToSnapshot(viewState);
     if (String(viewState.producer || "").toLowerCase() === "native" && viewState.realtime) {
+      const previousSnapshot = window.__overlayLatestAnalysisSnapshot;
+      const reconciledSnapshot = mergeNativePresentationFields(snapshot, previousSnapshot);
       // The application composer has already reconciled beatmap, difficulty,
-      // replay, and Pause Coach slots. Do not merge this authoritative frame
-      // with a browser producer or an older DOM snapshot.
-      window.__overlayNativePauseCoachSnapshot = snapshot;
-      scheduleSnapshot(snapshot, force);
+      // replay, and Pause Coach slots. Reconcile only incomplete presentation
+      // fields from the same-map previous frame; native gameplay/Pause Coach
+      // values remain authoritative and are never taken from the browser.
+      window.__overlayNativePauseCoachSnapshot = reconciledSnapshot;
+      scheduleSnapshot(reconciledSnapshot, force);
       return;
     }
     render(snapshot, force);

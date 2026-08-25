@@ -30,7 +30,7 @@ function nodeStub() {
   };
 }
 
-function createScenario(source) {
+function createScenario(source, options = {}) {
   const listeners = new Map();
   const snapshots = [];
   const hostMessages = [];
@@ -45,6 +45,7 @@ function createScenario(source) {
     querySelector: selector => selector === ".main-card" ? card : null,
   };
   const window = {
+    __overlayHostConfig: options,
     __overlayAdapterTestMode: true,
     COUNTER_PATH: "/",
     __overlayHostSend: message => hostMessages.push(message),
@@ -195,15 +196,14 @@ async function run(source) {
 }
 
 async function runNativeAuthoritySuppression() {
-  const scenario = createScenario("websocket");
+  const scenario = createScenario("websocket", { nativeRealtimeAuthority: true });
   scenario.notifyNativeViewState({
     producer: "native",
     realtime: { state: 3, mapTimeMs: 25_000 },
   });
   await new Promise(resolve => setImmediate(resolve));
   scenario.apply(payload("Play", true, 25_000, 25000, 97.5, 34, [0, 1, -1, 2]));
-  const latest = scenario.snapshots.at(-1);
-  assert.equal(latest.pauseCoach, null, "browser must not publish a second coach after native authority exists");
+  assert.equal(scenario.snapshots.length, 0, "browser must not publish a second business snapshot after native authority exists");
   scenario.dispose();
 }
 

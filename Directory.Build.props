@@ -1,6 +1,11 @@
 <Project>
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <ApplicationVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</ApplicationVersion>
+    <Version>$(ApplicationVersion)</Version>
+    <AssemblyVersion>$(ApplicationVersion).0</AssemblyVersion>
+    <FileVersion>$(ApplicationVersion).0</FileVersion>
+    <InformationalVersion>$(ApplicationVersion)</InformationalVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

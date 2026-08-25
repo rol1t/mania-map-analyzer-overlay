@@ -24,6 +24,7 @@ public sealed class OverlayViewStateComposerTests
 
         OverlayViewState view = OverlayViewStateComposer.Compose(runtime);
 
+        Assert.Equal(OverlayViewState.CurrentSchemaVersion, view.SchemaVersion);
         Assert.Equal(7, view.Version);
         Assert.Equal(3, view.BeatmapGeneration);
         Assert.Equal("674175", view.BeatmapId);
@@ -84,5 +85,58 @@ public sealed class OverlayViewStateComposerTests
         Assert.Equal(nameof(PauseCoachWidgetState.Paused), native.PauseCoach!.State);
         Assert.Equal(9L, native.Extensions["runtimeVersion"]);
         Assert.Equal(true, native.Extensions["nativePauseCoach"]);
+    }
+
+    [Fact]
+    public void ExactReplayColumnsRemainAuthoritativeWhenRealtimeIsPresent()
+    {
+        var realtime = new RealtimeAnalysisSnapshot(
+            "session-A",
+            "674175",
+            RealtimePlayState.Paused,
+            30_000,
+            DateTimeOffset.UnixEpoch.AddSeconds(30),
+            new RealtimeTimingStats(4, 1, 2, 3, 4, 5, 6, 7, AnalysisDataQuality.Reconstructed),
+            new RealtimePerformanceStats(.95, null, 7, 0, 7, 0, AnalysisDataQuality.Reconstructed),
+            null,
+            [],
+            [],
+            [],
+            AnalysisDataQuality.Reconstructed,
+            PauseCoachWidgetState.Paused,
+            true,
+            [])
+        {
+            Score = 123_456,
+            Accuracy = .95
+        };
+        var exactReplay = new ReplayOverlaySnapshot
+        {
+            MapProgressMs = 29_000,
+            Score = 120_000,
+            Fidelity = "exact",
+            Columns = [new ReplayColumnSnapshot { Column = 1, BiasMs = 8.5 }]
+        };
+        var runtime = new OverlayRuntimeState
+        {
+            BeatmapId = "674175",
+            GameplayStateKnown = true,
+            GameplayState = RealtimePlayState.Paused,
+            IsPlaying = true,
+            IsPaused = true,
+            LatestRealtime = realtime,
+            LatestAnalysis = new AnalysisSnapshot
+            {
+                Beatmap = new BeatmapSnapshot { Id = "674175" },
+                Replay = exactReplay
+            }
+        };
+
+        AnalysisSnapshot native = OverlayViewStateComposer.ToNativeAnalysisSnapshot(
+            OverlayViewStateComposer.Compose(runtime));
+
+        Assert.Same(exactReplay, native.Replay);
+        Assert.Single(native.Replay!.Columns);
+        Assert.Equal(8.5, native.Replay.Columns[0].BiasMs);
     }
 }

@@ -429,13 +429,21 @@ public sealed class RealtimePlayAnalyzer
             && _previousSample is not null
             && _previousSample.State is not RealtimePlayState.Playing and not RealtimePlayState.Paused;
 
-        if (sample.State == RealtimePlayState.Playing && (_session is null || retry || beatmapChanged || startsAfterFinishedState))
+        // A map/menu transition is a lifecycle boundary even when the next
+        // packet is paused or only partially populated. Do not carry the old
+        // session and timing window into the newly selected map.
+        if (beatmapChanged || retry || startsAfterFinishedState || sample.State == RealtimePlayState.Menu)
         {
-            if (retry || beatmapChanged)
+            if (_session is not null)
             {
                 EndCurrentSession(sample.ReceivedAt);
             }
 
+            ClearSessionState();
+        }
+
+        if (sample.State == RealtimePlayState.Playing && _session is null)
+        {
             StartSession(sample);
         }
 
@@ -525,6 +533,15 @@ public sealed class RealtimePlayAnalyzer
             _options.MaxTimelineEvents);
     }
 
+    private void ClearSessionState()
+    {
+        _session = null;
+        _previousSample = null;
+        _offsets.Clear();
+        _judgements.Clear();
+        _previousHitErrorArray = ImmutableArray<double>.Empty;
+    }
+
     private bool IsRetry(RealtimeTelemetrySample sample)
     {
         if (_previousSample is null)
@@ -532,10 +549,24 @@ public sealed class RealtimePlayAnalyzer
             return false;
         }
 
-        return sample.MapTimeMs + 1500 < _previousSample.MapTimeMs
-            || sample.Score.HasValue && _previousSample.Score.HasValue && sample.Score.Value < _previousSample.Score.Value
-            || sample.Judgements.CountMiss < _previousSample.Judgements.CountMiss
-            || sample.Judgements.HitTotal < _previousSample.Judgements.HitTotal;
+        bool mapTimeRewound = sample.MapTimeMs + 1500 < _previousSample.MapTimeMs;
+        if (!mapTimeRewound)
+        {
+            // Score and cumulative judgement counters can be reconstructed
+            // from different Tosu packets and may briefly move backwards
+            // during normal play. They are retry evidence only together with
+            // a map-time rewind.
+            return false;
+        }
+
+        bool scoreReset = sample.Score.HasValue
+            && _previousSample.Score.HasValue
+            && sample.Score.Value + 100 < _previousSample.Score.Value;
+        bool missCounterReset = sample.Judgements.CountMiss + 1 < _previousSample.Judgements.CountMiss;
+        bool hitCounterReset = sample.Judgements.HitTotal + 2 < _previousSample.Judgements.HitTotal;
+        // Some retry packets omit score/hits entirely; a rewind to the very
+        // beginning is still positive lifecycle evidence in that case.
+        return scoreReset || missCounterReset || hitCounterReset || sample.MapTimeMs <= 1000;
     }
 
     private void AddStateEvents(RealtimeTelemetrySample? previous, RealtimeTelemetrySample current)

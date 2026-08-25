@@ -256,13 +256,18 @@ async function handleAnalyze(message) {
         const pipeline = await loadPipeline();
         throwIfStale(correlationId, job);
 
-        const pipelineOptions = preparePipelineOptions(request.requestedAlgorithm, request.options);
+        const speedRate = Number(request.speedRate ?? request.rate);
+        const pipelineOptions = preparePipelineOptions(
+            request.requestedAlgorithm,
+            request.options,
+            speedRate,
+        );
         let pipelineResult = await pipeline({
             rawText: request.rawText,
             estimatorAlgorithm: request.requestedAlgorithm,
             options: pipelineOptions,
-            rate: request.rate,
-            speedRate: request.speedRate ?? request.rate,
+            rate: speedRate,
+            speedRate,
             mods: request.mods,
         });
         throwIfStale(correlationId, job);
@@ -507,8 +512,15 @@ function selectEtternaValues(result) {
     return null;
 }
 
-function preparePipelineOptions(requestedAlgorithm, options) {
+function preparePipelineOptions(requestedAlgorithm, options, speedRate) {
     const preserved = isRecord(options) ? { ...options } : {};
+    // ManiaMapAnalyser's public pipeline accepts execution settings through
+    // its options object. The overlay protocol deliberately keeps speedRate
+    // as a top-level, typed request dimension so it participates in request
+    // identity and cannot be overridden by preset options. Bridge the two
+    // contracts here; merely passing rate beside options is ignored by the
+    // upstream estimators and would silently analyse every map at 1.0x.
+    preserved.speedRate = speedRate;
     if (requestedAlgorithm === "Companella" || requestedAlgorithm === "Mixed") {
         // These stages provide the ten features required by the Companella
         // classifier. MMA's UI enables them implicitly for the same profiles.

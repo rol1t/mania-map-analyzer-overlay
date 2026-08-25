@@ -140,7 +140,8 @@ public static class HeadlessSnapshotConverter
         TosuBeatmapSnapshot beatmap,
         ComposedWidgetSnapshot composed)
     {
-        double? star = TryGetDouble(composed, "difficulty.star");
+        double? star = TryGetDouble(composed, "difficulty.star")
+            ?? beatmap.Metadata.StarRating;
         // Some analyzer pipelines expose the same ratio under
         // pattern.lnPercent rather than difficulty.lnPercent. Keep the
         // presentation contract canonical so LN DAN is not hidden merely
@@ -170,6 +171,55 @@ public static class HeadlessSnapshotConverter
             Keys = keys
         };
     }
+
+    /// <summary>
+    /// Enriches an already calculated snapshot when Tosu finishes populating
+    /// metadata for the same map. Analyzer-derived values remain authoritative;
+    /// Tosu only fills fields that the first calculation did not provide.
+    /// </summary>
+    public static AnalysisSnapshot WithLatestBeatmapMetadata(
+        AnalysisSnapshot current,
+        TosuBeatmapSnapshot beatmap)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(beatmap);
+
+        if (!string.IsNullOrWhiteSpace(current.Beatmap.Id)
+            && !string.IsNullOrWhiteSpace(beatmap.Identity.Id)
+            && !string.Equals(current.Beatmap.Id, beatmap.Identity.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Cannot enrich a snapshot with metadata from another beatmap.", nameof(beatmap));
+        }
+
+        var metadata = beatmap.Metadata;
+        var latestBeatmap = current.Beatmap with
+        {
+            Id = PreferLatest(beatmap.Identity.Id, current.Beatmap.Id),
+            SetId = PreferLatest(beatmap.Identity.SetId, current.Beatmap.SetId),
+            Artist = PreferLatest(metadata.Artist, current.Beatmap.Artist),
+            Title = PreferLatest(metadata.Title, current.Beatmap.Title),
+            Version = PreferLatest(metadata.Version, current.Beatmap.Version),
+            Mapper = PreferLatest(metadata.Mapper, current.Beatmap.Mapper),
+            BpmLabel = metadata.Bpm?.ToString("0.##") ?? current.Beatmap.BpmLabel,
+            OverallDifficulty = metadata.OverallDifficulty ?? current.Beatmap.OverallDifficulty,
+            HealthDrain = metadata.HealthDrain ?? current.Beatmap.HealthDrain,
+            BackgroundUrl = PreferLatest(metadata.BackgroundPath, current.Beatmap.BackgroundUrl)
+        };
+        var latestDifficulty = current.Difficulty with
+        {
+            StarRating = current.Difficulty.StarRating ?? metadata.StarRating,
+            Keys = current.Difficulty.Keys ?? ToKeyCount(metadata.CircleSize)
+        };
+
+        return current with
+        {
+            Beatmap = latestBeatmap,
+            Difficulty = latestDifficulty
+        };
+    }
+
+    private static string PreferLatest(string latest, string current) =>
+        string.IsNullOrWhiteSpace(latest) ? current : latest;
 
     private static int? ToKeyCount(double? circleSize)
     {

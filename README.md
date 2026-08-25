@@ -2,7 +2,7 @@
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows)
 ![Avalonia](https://img.shields.io/badge/UI-Avalonia-8b5cf6)
-![Version](https://img.shields.io/badge/version-2.3.0-ff4f9b)
+![Version](https://img.shields.io/github/v/release/rol1t/mania-map-analyzer-overlay?label=version&color=ff4f9b)
 ![License](https://img.shields.io/badge/license-MIT-4cbe89)
 
 **Mania Map Analyzer Overlay** is a lightweight Avalonia desktop launcher for osu!mania. It starts and supervises [tosu](https://github.com/tosuapp/tosu), displays live beatmap analysis, and provides a customizable overlay without requiring the user to start a console script.
@@ -13,7 +13,7 @@
 - Works with osu!stable and osu!lazer; lazer compatibility offsets are checked during setup.
 - Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Companella Replay / Pause Coach cards.
 - Lightweight transparent overlay for windowed or borderless osu!, with automatic hiding while a map is being played.
-- Default, Horizontal, Companella, Companella Replay, three Pause Coach variants, and Custom CSS layouts with live preview in the launcher.
+- Default, Horizontal, Companella, Companella Replay, the standalone Pause Coach Card, and Custom CSS layouts with live preview in the launcher.
 - Resizable overlay with DPI-aware rendering; resize by dragging an edge/corner or with `Ctrl` + mouse wheel.
 - Optional tosu In-Game Overlay integration for osu!stable exclusive fullscreen on Windows.
 - Startup update checks for the launcher and bundled analysis components; settings and custom CSS are preserved.
@@ -361,14 +361,16 @@ Build a Windows release package with PowerShell:
 
 ```powershell
 .\scripts\build.ps1
-.\scripts\package-installer.ps1 -Version 2.3.0 -RuntimeIdentifier win-x64
+$version = (Get-Content .\VERSION -Raw).Trim()
+.\scripts\package-installer.ps1 -Version $version -RuntimeIdentifier win-x64
 ```
 
 Build and package Linux with Bash:
 
 ```bash
 ./scripts/build.sh --runtime linux-x64 --output artifacts/payload
-./scripts/package.sh --version 2.3.0 --runtime linux-x64
+version="$(tr -d '\r\n' < VERSION)"
+./scripts/package.sh --version "$version" --runtime linux-x64
 ```
 
 Runtime setup and updates are implemented in C#. The PowerShell and Bash files under `scripts/` are developer and CI packaging tools, not user launchers.

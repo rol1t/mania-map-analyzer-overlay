@@ -11,18 +11,28 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 /// </summary>
 public sealed class RuntimeAnalysisSnapshotPresenter : IAnalysisSnapshotPresenter
 {
-    private readonly Action<AnalysisSnapshot> _accept;
+    private readonly Func<AnalysisSnapshot, CancellationToken, Task> _acceptAsync;
 
     public RuntimeAnalysisSnapshotPresenter(Action<AnalysisSnapshot> accept)
     {
-        _accept = accept ?? throw new ArgumentNullException(nameof(accept));
+        ArgumentNullException.ThrowIfNull(accept);
+        _acceptAsync = (snapshot, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            accept(snapshot);
+            return Task.CompletedTask;
+        };
+    }
+
+    public RuntimeAnalysisSnapshotPresenter(Func<AnalysisSnapshot, CancellationToken, Task> acceptAsync)
+    {
+        _acceptAsync = acceptAsync ?? throw new ArgumentNullException(nameof(acceptAsync));
     }
 
     public Task PresentAsync(AnalysisSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         cancellationToken.ThrowIfCancellationRequested();
-        _accept(snapshot);
-        return Task.CompletedTask;
+        return _acceptAsync(snapshot, cancellationToken);
     }
 }

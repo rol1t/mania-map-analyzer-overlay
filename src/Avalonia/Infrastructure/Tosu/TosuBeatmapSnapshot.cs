@@ -86,6 +86,10 @@ public sealed record TosuBeatmapMetadata
     {
         get; init;
     }
+    public double? StarRating
+    {
+        get; init;
+    }
     public double? OverallDifficulty
     {
         get; init;

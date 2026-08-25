@@ -12,10 +12,8 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
-            package: Mania-Map-Analyzer-Overlay-2.3.0-win-x64.zip
           - os: ubuntu-latest
             rid: linux-x64
-            package: Mania-Map-Analyzer-Overlay-2.3.0-linux-x64.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +21,13 @@ jobs:
         with:
           dotnet-version: '8.0.419'
           dotnet-quality: ga
+      - name: Read canonical application version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'VERSION is empty.' }
+          "value=$version" >> $env:GITHUB_OUTPUT
       - name: Restore solution
         run: dotnet restore ManiaMapAnalyzerOverlay.sln
       - name: Verify C# formatting
@@ -37,6 +42,8 @@ jobs:
         run: node tests/Runtime/adapter-pause-coach-integration.test.js
       - name: Run native renderer precedence tests
         run: node tests/Runtime/renderer-native-precedence.test.js
+      - name: Run headless analyzer protocol fixtures
+        run: node assets/analyzer-engines/mania-map-analyser/fixtures/test-harness.mjs
       - name: Build application payload (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -48,13 +55,13 @@ jobs:
       - name: Package application (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\scripts\package-installer.ps1 -Version 2.3.0 -RuntimeIdentifier ${{ matrix.rid }}
+        run: .\scripts\package-installer.ps1 -Version ${{ steps.version.outputs.value }} -RuntimeIdentifier ${{ matrix.rid }}
       - name: Package application (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: ./scripts/package.sh --version 2.3.0 --runtime "${{ matrix.rid }}"
+        run: ./scripts/package.sh --version "${{ steps.version.outputs.value }}" --runtime "${{ matrix.rid }}"
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: Mania-Map-Analyzer-Overlay-2.3.0-${{ matrix.rid }}
-          path: artifacts/${{ matrix.package }}
+          name: Mania-Map-Analyzer-Overlay-${{ steps.version.outputs.value }}-${{ matrix.rid }}
+          path: artifacts/Mania-Map-Analyzer-Overlay-${{ steps.version.outputs.value }}-${{ matrix.rid }}.*

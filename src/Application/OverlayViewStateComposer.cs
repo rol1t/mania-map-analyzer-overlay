@@ -67,7 +67,8 @@ public static class OverlayViewStateComposer
                 VisibilityPolicy = runtime.VisibilityPolicy,
                 OsuWindowMinimized = runtime.OsuWindowMinimized,
                 Ready = runtime.PresentationReady,
-                Visible = runtime.PresentationVisible
+                Visible = runtime.PresentationVisible,
+                SurfaceGeneration = runtime.PresentationSurfaceGeneration
             }
         };
     }
@@ -112,7 +113,10 @@ public static class OverlayViewStateComposer
             Difficulty = view.Difficulty,
             Ranks = view.Ranks,
             Skills = view.Skills,
-            Replay = view.RealtimeReplay ?? view.Replay,
+            // Exact .osr analysis owns the replay block once it has data.
+            // Native realtime remains available as a separate slot and must
+            // not erase its per-column/section values during every frame.
+            Replay = HasExactReplay(view.Replay) ? view.Replay : view.RealtimeReplay ?? view.Replay,
             PauseCoach = view.PauseCoach ?? PauseCoachSnapshotMapper.ToSnapshot(realtime),
             Extensions = new Dictionary<string, object?>
             {
@@ -151,4 +155,12 @@ public static class OverlayViewStateComposer
         Fidelity = "provisional",
         Reason = "Native Tosu v2 realtime telemetry."
     };
+
+    private static bool HasExactReplay(ReplayOverlaySnapshot? replay)
+    {
+        return replay is not null
+            && replay.HasData
+            && !replay.IsProvisional
+            && !string.Equals(replay.Fidelity, "provisional", StringComparison.OrdinalIgnoreCase);
+    }
 }

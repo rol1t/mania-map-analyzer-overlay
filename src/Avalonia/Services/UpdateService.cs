@@ -7,7 +7,6 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,17 +25,37 @@ public sealed class UpdateService : IDisposable
     private const string LauncherRepository = "rol1t/mania-map-analyzer-overlay";
     private const string TosuRepository = "tosuapp/tosu";
     private const string AddonRepository = "LeoBlackMT/osumania_map_analyser";
-    private const string UserAgent = "ManiaMapAnalyzerOverlay/2.3.0";
+    private static string ProductVersion =>
+        typeof(UpdateService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(UpdateService).Assembly.GetName().Version?.ToString(3)
+        ?? "0.0.0";
+
+    private static string UserAgent => $"ManiaMapAnalyzerOverlay/{ProductVersion}";
 
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly GitHubReleaseClient _releaseClient;
+    private readonly ComponentDownloader _componentDownloader;
+    private readonly ComponentInstaller _componentInstaller;
+    private readonly UpdateStateStore _stateStore;
     private bool _disposed;
 
     public UpdateService()
     {
         _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
-        _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", "2.3.0"));
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay", ProductVersion));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        _releaseClient = new GitHubReleaseClient(_httpClient, _jsonOptions);
+        _componentDownloader = new ComponentDownloader(_httpClient, UserAgent);
+        _componentInstaller = new ComponentInstaller(
+            AppPaths.TosuDirectory,
+            GetTosuExecutableName(),
+            _componentDownloader);
+        _stateStore = new UpdateStateStore(
+            AppPaths.InstallStatePath,
+            Path.Combine(AppPaths.BaseDirectory, "install-state.json"),
+            AppPaths.DataDirectory,
+            _jsonOptions);
     }
 
     // Kept for compatibility with callers of the previous script-backed service.
@@ -48,7 +67,7 @@ public sealed class UpdateService : IDisposable
     {
         ThrowIfDisposed();
         var result = new UpdateResult();
-        var state = await LoadStateAsync(cancellationToken);
+        var state = await _stateStore.LoadAsync(cancellationToken);
 
         try
         {
@@ -62,7 +81,7 @@ public sealed class UpdateService : IDisposable
             // components from starting.
             try
             {
-                var launcherRelease = await GetLatestReleaseAsync(LauncherRepository, cancellationToken);
+                var launcherRelease = await _releaseClient.GetLatestAsync(LauncherRepository, cancellationToken);
                 var latestLauncherVersion = ParseVersion(launcherRelease.TagName);
                 result.LatestLauncherVersion = latestLauncherVersion.ToString();
                 result.LauncherUpdateAvailable = latestLauncherVersion > launcherVersion;
@@ -80,7 +99,7 @@ public sealed class UpdateService : IDisposable
                 result.Warning = "update.warning_platform";
                 var unsupportedState = state.Clone();
                 unsupportedState.LastCheckUtc = DateTime.UtcNow;
-                await SaveStateAsync(unsupportedState, cancellationToken);
+                await _stateStore.SaveAsync(unsupportedState, cancellationToken);
                 return result;
             }
 
@@ -88,8 +107,8 @@ public sealed class UpdateService : IDisposable
             GitHubRelease addonRelease;
             try
             {
-                tosuRelease = await GetLatestReleaseAsync(TosuRepository, cancellationToken);
-                addonRelease = await GetLatestReleaseAsync(AddonRepository, cancellationToken);
+                tosuRelease = await _releaseClient.GetLatestAsync(TosuRepository, cancellationToken);
+                addonRelease = await _releaseClient.GetLatestAsync(AddonRepository, cancellationToken);
             }
             catch (Exception exception) when (IsRecoverableNetworkError(exception))
             {
@@ -149,8 +168,11 @@ public sealed class UpdateService : IDisposable
                     if (result.TosuUpdateAvailable)
                     {
                         progress?.Report(new UpdateProgress($"status.update_tosu_download|{tosuRelease.TagName}", 0));
-                        await InstallTosuAsync(tosuAsset, temporaryRoot, cancellationToken,
-                            new Progress<int>(p => progress?.Report(new UpdateProgress("status.update_tosu_download", p))));
+                        await _componentInstaller.InstallTosuAsync(
+                            tosuAsset,
+                            temporaryRoot,
+                            new Progress<int>(p => progress?.Report(new UpdateProgress("status.update_tosu_download", p))),
+                            cancellationToken);
                         result.UpdatedTosu = true;
                         result.InstalledTosu = tosuRelease.TagName;
                     }
@@ -158,8 +180,11 @@ public sealed class UpdateService : IDisposable
                     if (result.AddonUpdateAvailable)
                     {
                         progress?.Report(new UpdateProgress($"status.update_analyser_download|{addonRelease.TagName}", 0));
-                        await InstallAddonAsync(addonAsset, temporaryRoot, cancellationToken,
-                            new Progress<int>(p => progress?.Report(new UpdateProgress("status.update_analyser_download", p))));
+                        await _componentInstaller.InstallAddonAsync(
+                            addonAsset,
+                            temporaryRoot,
+                            new Progress<int>(p => progress?.Report(new UpdateProgress("status.update_analyser_download", p))),
+                            cancellationToken);
                         result.UpdatedAddon = true;
                         result.InstalledAddon = addonRelease.TagName;
                     }
@@ -185,7 +210,7 @@ public sealed class UpdateService : IDisposable
                 savedState.UpdatedUtc = DateTime.UtcNow;
             }
 
-            await SaveStateAsync(savedState, cancellationToken);
+            await _stateStore.SaveAsync(savedState, cancellationToken);
 
             result.Success = true;
             progress?.Report(new UpdateProgress(
@@ -242,17 +267,6 @@ public sealed class UpdateService : IDisposable
         }
     }
 
-    private async Task<GitHubRelease> GetLatestReleaseAsync(string repository, CancellationToken cancellationToken)
-    {
-        using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        requestTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-        using var response = await _httpClient.GetAsync($"https://api.github.com/repos/{repository}/releases/latest", requestTimeout.Token);
-        response.EnsureSuccessStatusCode();
-        await using var content = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonSerializer.DeserializeAsync<GitHubRelease>(content, _jsonOptions, cancellationToken)
-            ?? throw new InvalidOperationException($"GitHub returned an empty release for {repository}.");
-    }
-
     private async Task<OffsetStatus> CheckLazerOffsetsAsync(string? version, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(version))
@@ -289,184 +303,6 @@ public sealed class UpdateService : IDisposable
             }
         }
         return new OffsetStatus("unsupported", "");
-    }
-
-    private async Task InstallTosuAsync(GitHubAsset asset, string temporaryRoot, CancellationToken cancellationToken, IProgress<int>? downloadProgress)
-    {
-        var archivePath = Path.Combine(temporaryRoot, "tosu.zip");
-        var extractPath = Path.Combine(temporaryRoot, "tosu-extract");
-        await DownloadAsync(asset, archivePath, cancellationToken, downloadProgress);
-        ZipFile.ExtractToDirectory(archivePath, extractPath, overwriteFiles: true);
-        var executableName = GetTosuExecutableName();
-        var files = Directory.EnumerateFiles(extractPath, executableName, SearchOption.AllDirectories).ToArray();
-        if (files.Length != 1)
-        {
-            throw new InvalidOperationException($"The tosu archive does not contain a single {executableName} executable.");
-        }
-
-        Directory.CreateDirectory(AppPaths.TosuDirectory);
-        var target = Path.Combine(AppPaths.TosuDirectory, executableName);
-        await StopOwnedProcessAsync(target, cancellationToken);
-        var staged = target + ".new";
-        var previous = target + ".previous";
-        TryDeleteFile(staged);
-        TryDeleteFile(previous);
-        File.Copy(files[0], staged, overwrite: true);
-        try
-        {
-            if (File.Exists(target))
-            {
-                File.Move(target, previous, overwrite: true);
-            }
-
-            File.Move(staged, target, overwrite: true);
-            TryDeleteFile(previous);
-            MakeExecutableIfNeeded(target);
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Error("Installing tosu executable", exception);
-            if (!File.Exists(target) && File.Exists(previous))
-            {
-                File.Move(previous, target, overwrite: true);
-            }
-
-            TryDeleteFile(staged);
-            throw;
-        }
-    }
-
-    private async Task InstallAddonAsync(GitHubAsset asset, string temporaryRoot, CancellationToken cancellationToken, IProgress<int>? downloadProgress)
-    {
-        var archivePath = Path.Combine(temporaryRoot, "addon.zip");
-        var extractPath = Path.Combine(temporaryRoot, "addon-extract");
-        await DownloadAsync(asset, archivePath, cancellationToken, downloadProgress);
-        ZipFile.ExtractToDirectory(archivePath, extractPath, overwriteFiles: true);
-
-        var metadataFiles = Directory.EnumerateFiles(extractPath, "metadata.txt", SearchOption.AllDirectories)
-            .Where(path => File.ReadAllText(path).Contains("Name: ManiaMapAnalyser", StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (metadataFiles.Length != 1)
-        {
-            throw new InvalidOperationException("The addon archive does not contain a single ManiaMapAnalyser root.");
-        }
-
-        var sourceRoot = Path.GetDirectoryName(metadataFiles[0])!;
-        var staticRoot = Path.Combine(AppPaths.TosuDirectory, "static");
-        var target = Path.Combine(staticRoot, "ManiaMapAnalyser");
-        var staged = Path.Combine(staticRoot, "ManiaMapAnalyser.new");
-        var backupRoot = Path.Combine(AppPaths.TosuDirectory, ".update-backup");
-        var backup = Path.Combine(backupRoot, "ManiaMapAnalyser-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
-
-        Directory.CreateDirectory(staticRoot);
-        TryDeleteDirectory(staged);
-        CopyDirectory(sourceRoot, staged);
-        if (Directory.Exists(target))
-        {
-            Directory.CreateDirectory(backupRoot);
-            Directory.Move(target, backup);
-        }
-        try
-        {
-            Directory.Move(staged, target);
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Error("Installing ManiaMapAnalyser", exception);
-            if (Directory.Exists(backup) && !Directory.Exists(target))
-            {
-                Directory.Move(backup, target);
-            }
-
-            TryDeleteDirectory(staged);
-            throw;
-        }
-    }
-
-    private async Task DownloadAsync(GitHubAsset asset, string destination, CancellationToken cancellationToken, IProgress<int>? progress)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, asset.DownloadUrl);
-        request.Headers.UserAgent.ParseAdd(UserAgent);
-        request.Headers.Accept.ParseAdd("application/octet-stream");
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
-        await using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true))
-        {
-            var buffer = new byte[64 * 1024];
-            long copied = 0;
-            int read;
-            while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
-            {
-                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                copied += read;
-                if (total is > 0)
-                {
-                    progress?.Report((int)Math.Clamp(copied * 100 / total.Value, 0, 100));
-                }
-            }
-            await output.FlushAsync(cancellationToken);
-        }
-
-        // The write stream must be _disposed before opening the destination for
-        // hashing. This matters on Windows, where the FileShare.None handle
-        // otherwise remains open until the end of the method.
-        if (new FileInfo(destination).Length == 0)
-        {
-            throw new InvalidOperationException("The downloaded file is empty.");
-        }
-
-        if (string.IsNullOrWhiteSpace(asset.Digest) ||
-            !asset.Digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("GitHub did not provide a SHA-256 digest for the downloaded component.");
-        }
-
-        await using var hashStream = File.OpenRead(destination);
-        var actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, cancellationToken));
-        var expected = asset.Digest["sha256:".Length..];
-        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("The downloaded file failed its SHA-256 integrity check.");
-        }
-    }
-
-    private async Task StopOwnedProcessAsync(string executablePath, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(executablePath))
-        {
-            return;
-        }
-
-        var expected = Path.GetFullPath(executablePath);
-        foreach (var candidate in Process.GetProcessesByName("tosu"))
-        {
-            try
-            {
-                var path = candidate.MainModule?.FileName;
-                if (path is null || !string.Equals(Path.GetFullPath(path), expected,
-                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (!candidate.HasExited)
-                {
-                    candidate.Kill(entireProcessTree: true);
-                }
-
-                await candidate.WaitForExitAsync(cancellationToken);
-            }
-            catch (InvalidOperationException exception)
-            {
-                AppLogger.Warning("Stopping owned tosu process", "The process exited before it could be stopped.", exception);
-            }
-            catch (System.ComponentModel.Win32Exception exception)
-            {
-                AppLogger.Warning("Stopping owned tosu process", "The process could not be inspected or stopped.", exception);
-            }
-            finally { candidate.Dispose(); }
-        }
     }
 
     private void EnsureTosuEnvironment()
@@ -536,35 +372,6 @@ STATIC_FOLDER_PATH=./static
   "enableUpdateCheck": false
 }
 """, new UTF8Encoding(false));
-    }
-
-    private async Task<InstallState> LoadStateAsync(CancellationToken cancellationToken)
-    {
-        foreach (var path in new[] { AppPaths.InstallStatePath, Path.Combine(AppPaths.BaseDirectory, "install-state.json") })
-        {
-            if (!File.Exists(path))
-            {
-                continue;
-            }
-
-            try
-            {
-                await using var stream = File.OpenRead(path);
-                return await JsonSerializer.DeserializeAsync<InstallState>(stream, _jsonOptions, cancellationToken) ?? new InstallState();
-            }
-            catch (Exception exception)
-            {
-                AppLogger.Error($"Loading install state '{path}'", exception);
-            }
-        }
-        return new InstallState();
-    }
-
-    private async Task SaveStateAsync(InstallState state, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(AppPaths.DataDirectory);
-        await using var stream = File.Create(AppPaths.InstallStatePath);
-        await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken);
     }
 
     private bool HasUsableComponents() =>
@@ -667,31 +474,6 @@ STATIC_FOLDER_PATH=./static
 
     private static bool IsRecoverableNetworkError(Exception exception) => exception is HttpRequestException or TaskCanceledException or IOException;
 
-    private static void CopyDirectory(string source, string target)
-    {
-        Directory.CreateDirectory(target);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
-        }
-
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)), overwrite: true);
-        }
-    }
-
-    private static void MakeExecutableIfNeeded(string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-            UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-    }
-
     private static void TryDeleteFile(string path)
     {
         try
@@ -737,23 +519,6 @@ STATIC_FOLDER_PATH=./static
     }
 
     private sealed record OffsetStatus(string Status, string Source);
-
-    private sealed class GitHubRelease
-    {
-        [JsonPropertyName("tag_name")] public string TagName { get; set; } = "";
-        [JsonPropertyName("assets")] public List<GitHubAsset> Assets { get; set; } = new();
-    }
-
-    private sealed class GitHubAsset
-    {
-        [JsonPropertyName("name")] public string Name { get; set; } = "";
-        [JsonPropertyName("browser_download_url")] public string DownloadUrl { get; set; } = "";
-        [JsonPropertyName("digest")]
-        public string? Digest
-        {
-            get; set;
-        }
-    }
 
     private sealed class OffsetResponse
     {

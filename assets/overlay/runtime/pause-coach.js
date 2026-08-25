@@ -111,6 +111,8 @@
     if (raw && typeof raw === "object") {
       const values = Array.isArray(raw.array)
         ? raw.array
+        : Array.isArray(raw.list)
+          ? raw.list
         : (raw.acronym || raw.name
           ? [raw]
           : Object.keys(raw).filter(key => raw[key] === true));
@@ -208,7 +210,14 @@
   }
 
   function create(options) {
-    const config = Object.assign({}, DEFAULTS, options || {});
+    // C# RealtimePlayAnalyzer is the canonical native domain implementation.
+    // The browser runtime is retained only as a compatibility/preview fallback;
+    // consume the same contract defaults so it cannot silently drift while the
+    // fallback remains in production documents.
+    const configured = window.__overlayPauseCoachOptions && typeof window.__overlayPauseCoachOptions === "object"
+      ? window.__overlayPauseCoachOptions
+      : {};
+    const config = Object.assign({}, DEFAULTS, configured, options || {});
     let session = null;
     let previous = null;
     let sessionCounter = 0;

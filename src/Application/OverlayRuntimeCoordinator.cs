@@ -83,8 +83,9 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
             return Task.FromCanceled<OverlayRuntimeState>(cancellationToken);
         }
 
-        var pending = new PendingEvent(runtimeEvent, completion: new TaskCompletionSource<OverlayRuntimeState>(
-            TaskCreationOptions.RunContinuationsAsynchronously));
+        var completion = new TaskCompletionSource<OverlayRuntimeState>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingEvent(runtimeEvent, completion);
         if (cancellationToken.CanBeCanceled)
         {
             pending.Cancellation = cancellationToken.Register(
@@ -95,7 +96,7 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
                         registrationState.Completion.TrySetCanceled(registrationState.Token);
                     }
                 },
-                new CancellationRegistrationState(pending.Completion, cancellationToken));
+                new CancellationRegistrationState(completion, cancellationToken));
         }
 
         lock (_writeGate)
@@ -110,7 +111,59 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
             _nextSequence = Math.Max(_nextSequence, runtimeEvent.Sequence);
         }
 
-        return pending.Completion.Task;
+        return completion.Task;
+    }
+
+    /// <summary>
+    /// Allocates the event sequence and enqueues the event under the same
+    /// write lock. Callers that need acknowledgement must not read
+    /// <see cref="Current"/> and then manufacture a sequence separately: a
+    /// realtime transition can be queued between those two operations.
+    /// </summary>
+    public Task<OverlayRuntimeState> DispatchAsync(
+        Func<long, OverlayRuntimeEvent> createEvent,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(createEvent);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<OverlayRuntimeState>(cancellationToken);
+        }
+
+        var completion = new TaskCompletionSource<OverlayRuntimeState>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_writeGate)
+        {
+            if (Volatile.Read(ref _stopped) != 0)
+            {
+                return Task.FromException<OverlayRuntimeState>(
+                    new InvalidOperationException("The overlay runtime coordinator is not accepting events."));
+            }
+
+            OverlayRuntimeEvent runtimeEvent = createEvent(++_nextSequence);
+            var pending = new PendingEvent(runtimeEvent, completion);
+            if (cancellationToken.CanBeCanceled)
+            {
+                pending.Cancellation = cancellationToken.Register(
+                    static state =>
+                    {
+                        if (state is CancellationRegistrationState registrationState)
+                        {
+                            registrationState.Completion.TrySetCanceled(registrationState.Token);
+                        }
+                    },
+                    new CancellationRegistrationState(completion, cancellationToken));
+            }
+
+            if (!_events.Writer.TryWrite(pending))
+            {
+                pending.Cancellation.Dispose();
+                return Task.FromException<OverlayRuntimeState>(
+                    new InvalidOperationException("The overlay runtime coordinator is not accepting events."));
+            }
+        }
+
+        return completion.Task;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -147,11 +200,13 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
                     OverlayRuntimeState previous = _current;
                     OverlayRuntimeState next = OverlayRuntimeReducer.Apply(previous, pending.Event);
                     Volatile.Write(ref _current, next);
+                    bool accepted = !ReferenceEquals(previous, next);
                     PublishTransition(new OverlayRuntimeTransition(
                         pending.Event,
                         previous,
                         next,
-                        !ReferenceEquals(previous, next)));
+                        accepted,
+                        accepted ? null : OverlayRuntimeReducer.DescribeRejection(previous, pending.Event)));
                     if (HasViewStateChange(previous, next))
                     {
                         PublishViewState(OverlayViewStateComposer.Compose(next));
@@ -228,7 +283,13 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
 
     private static bool HasViewStateChange(OverlayRuntimeState previous, OverlayRuntimeState next) =>
         !ReferenceEquals(previous.LatestRealtime, next.LatestRealtime)
-        || !ReferenceEquals(previous.LatestAnalysis, next.LatestAnalysis);
+        || !ReferenceEquals(previous.LatestAnalysis, next.LatestAnalysis)
+        || previous.OverlayMode != next.OverlayMode
+        || !string.Equals(previous.VisibilityPolicy, next.VisibilityPolicy, StringComparison.Ordinal)
+        || previous.OsuWindowMinimized != next.OsuWindowMinimized
+        || previous.PresentationReady != next.PresentationReady
+        || previous.PresentationVisible != next.PresentationVisible
+        || previous.PresentationSurfaceGeneration != next.PresentationSurfaceGeneration;
 
     private sealed class PendingEvent
     {

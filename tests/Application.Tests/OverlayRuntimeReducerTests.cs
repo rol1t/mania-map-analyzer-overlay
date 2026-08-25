@@ -59,6 +59,100 @@ public sealed class OverlayRuntimeReducerTests
         Assert.Equal(30_000, state.LatestRealtime!.MapTimeMs);
     }
 
+    [Fact]
+    public void PartialRealtimeFramePreservesConfirmedMapAndAttemptIdentity()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new RealtimeTelemetryReceived(
+                1,
+                Telemetry("674175", RealtimePlayState.Playing, 20_000, "session-A")));
+
+        RealtimeAnalysisSnapshot partial = Snapshot(
+            string.Empty,
+            RealtimePlayState.Paused,
+            30_000) with
+        {
+            BeatmapId = string.Empty,
+            Score = 123_456,
+            Accuracy = 0.97
+        };
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new RealtimeTelemetryReceived(
+                2,
+                new TosuRealtimeTelemetry(
+                    "native-http",
+                    "Play",
+                    2,
+                    true,
+                    new RealtimeTelemetrySample(string.Empty, RealtimePlayState.Paused, 30_000),
+                    partial)));
+
+        Assert.Equal("674175", state.BeatmapId);
+        Assert.Equal("session-A", state.SessionId);
+        Assert.Equal(1, state.BeatmapGeneration);
+        Assert.Equal("674175", state.LatestRealtime!.BeatmapId);
+        Assert.Equal("session-A", state.LatestRealtime.SessionId);
+        Assert.Equal(30_000, state.LatestRealtime.MapTimeMs);
+        Assert.Equal(123_456, state.LatestRealtime.Score);
+    }
+
+    [Fact]
+    public void TosuConnectionRejectsLateCallbackFromOlderTransportGeneration()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new TosuConnectionChanged(1, TosuConnectionState.Running, 2));
+
+        OverlayRuntimeState stale = OverlayRuntimeReducer.Apply(
+            state,
+            new TosuConnectionChanged(2, TosuConnectionState.Stopped, 1));
+
+        Assert.Same(state, stale);
+        Assert.Equal(TosuConnectionState.Running, stale.TosuConnection);
+        Assert.Equal(2, stale.TosuTransportGeneration);
+        Assert.Equal(1, stale.LastEventSequence);
+
+        OverlayRuntimeState unversioned = OverlayRuntimeReducer.Apply(
+            stale,
+            new TosuConnectionChanged(3, TosuConnectionState.Failed, 0));
+
+        Assert.Same(stale, unversioned);
+
+        OverlayRuntimeState current = OverlayRuntimeReducer.Apply(
+            stale,
+            new TosuConnectionChanged(3, TosuConnectionState.Starting, 3));
+
+        Assert.Equal(TosuConnectionState.Starting, current.TosuConnection);
+        Assert.Equal(3, current.TosuTransportGeneration);
+    }
+
+    [Fact]
+    public void RejectionDiagnosticsCarryCausalAnalysisIdentity()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new RealtimeTelemetryReceived(
+                1,
+                Telemetry("674175", RealtimePlayState.Playing, 1_000, "session-A")));
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new RealtimeTelemetryReceived(
+                2,
+                Telemetry("776655", RealtimePlayState.Playing, 500, "session-B")));
+
+        OverlayRuntimeRejection rejection = OverlayRuntimeReducer.DescribeRejection(
+            state,
+            new AnalysisSnapshotReceived(3, Analysis("674175"), BeatmapGeneration: 1));
+
+        Assert.Equal(OverlayRuntimeRejectionKind.StaleAnalysisBeatmapGeneration, rejection.Kind);
+        Assert.Equal(1, rejection.EventGeneration);
+        Assert.Equal(2, rejection.CurrentGeneration);
+        Assert.Equal("674175", rejection.EventBeatmapId);
+        Assert.Equal("776655", rejection.CurrentBeatmapId);
+    }
+
     [Theory]
     [InlineData("always", false, false, true)]
     [InlineData("during-play", true, false, true)]
@@ -226,6 +320,36 @@ public sealed class OverlayRuntimeReducerTests
             new AnalysisSnapshotReceived(5, Analysis("776655")));
         Assert.Equal("776655", state.LatestAnalysis!.Beatmap.Id);
         Assert.Null(state.PendingAnalysis);
+    }
+
+    [Fact]
+    public void CausallyOlderAnalysisCompletionIsRejectedAfterMapGenerationAdvances()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new RealtimeTelemetryReceived(
+                1,
+                Telemetry("674175", RealtimePlayState.Playing, 1_000, "session-A")));
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new AnalysisSnapshotReceived(2, Analysis("674175"), state.BeatmapGeneration));
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new RealtimeTelemetryReceived(
+                3,
+                Telemetry("776655", RealtimePlayState.Playing, 500, "session-B")));
+
+        AnalysisSnapshot stale = Analysis("674175") with
+        {
+            Difficulty = new DifficultySnapshot { StarRating = 9.99 }
+        };
+        OverlayRuntimeState afterStaleCompletion = OverlayRuntimeReducer.Apply(
+            state,
+            new AnalysisSnapshotReceived(4, stale, BeatmapGeneration: 1));
+
+        Assert.Same(state.LatestAnalysis, afterStaleCompletion.LatestAnalysis);
+        Assert.Null(afterStaleCompletion.PendingAnalysis);
+        Assert.Equal("776655", afterStaleCompletion.BeatmapId);
     }
 
     [Fact]

@@ -10,6 +10,17 @@ namespace ManiaMapAnalyzerOverlay.Application;
 /// </summary>
 public sealed record OverlayViewState
 {
+    public const int CurrentSchemaVersion = 1;
+
+    /// <summary>
+    /// Wire-contract version. This is independent from <see cref="Version"/>,
+    /// which orders state instances within one presentation epoch.
+    /// </summary>
+    public int SchemaVersion
+    {
+        get; init;
+    } = CurrentSchemaVersion;
+
     /// <summary>
     /// Changes on every application process start. Presentation documents can
     /// outlive the process, so Version alone is not a globally ordered value.
@@ -88,6 +99,11 @@ public sealed record OverlayPresentationViewState
     }
 
     public bool Visible
+    {
+        get; init;
+    }
+
+    public long SurfaceGeneration
     {
         get; init;
     }

@@ -25,6 +25,16 @@ public sealed record OverlayRuntimeState
         get; init;
     }
 
+    public TosuConnectionState TosuConnection
+    {
+        get; init;
+    }
+
+    public long TosuTransportGeneration
+    {
+        get; init;
+    }
+
     public bool OverlayMode
     {
         get; init;
@@ -69,6 +79,17 @@ public sealed record OverlayRuntimeState
     }
 
     public bool PresentationVisible
+    {
+        get; init;
+    }
+
+    /// <summary>
+    /// Identifies the logical presentation document/window that reported
+    /// readiness. A zero value represents an older unversioned producer during
+    /// the migration; positive generations reject feedback from an older
+    /// surface after WebView recreation.
+    /// </summary>
+    public long PresentationSurfaceGeneration
     {
         get; init;
     }

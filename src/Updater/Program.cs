@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,6 +12,10 @@ internal static class Program
 {
     private const string Repository = "rol1t/mania-map-analyzer-overlay";
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private static string ProductVersion =>
+        typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(Program).Assembly.GetName().Version?.ToString(3)
+        ?? "0.0.0";
 
     private static async Task<int> Main(string[] args)
     {
@@ -133,7 +138,7 @@ internal static class Program
     private static HttpClient CreateHttpClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay.Updater", "2.3.0"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ManiaMapAnalyzerOverlay.Updater", ProductVersion));
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return client;
     }

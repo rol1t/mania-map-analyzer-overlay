@@ -147,6 +147,82 @@ public sealed class DanSnapshotTests
     }
 
     [Fact]
+    public void TosuStarRatingFillsMissingAnalyzerMetric()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test", StarRating = 4.75 },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Partial,
+            [Metric("difficulty.label", "Reform 4 low")],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+
+        Assert.Equal(4.75, snapshot.Difficulty.StarRating);
+    }
+
+    [Fact]
+    public void AnalyzerStarRatingRemainsAuthoritativeOverTosuMetadata()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Test", StarRating = 4.75 },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [Metric("difficulty.star", 5.5)],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+
+        Assert.Equal(5.5, snapshot.Difficulty.StarRating);
+    }
+
+    [Fact]
+    public void DelayedTosuMetadataEnrichesFirstSnapshotWithoutReplacingAnalysis()
+    {
+        AnalysisSnapshot first = new()
+        {
+            Beatmap = new BeatmapSnapshot { Id = "map", Title = "Test" },
+            Difficulty = new DifficultySnapshot { LnPercent = 42 },
+            Skills = [new SkillMetric { Id = "skills.stream", Value = 12.5 }]
+        };
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash", "set"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata
+            {
+                Title = "Test",
+                Mapper = "Mapper",
+                Bpm = 180,
+                StarRating = 4.75,
+                CircleSize = 7
+            },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+
+        AnalysisSnapshot enriched = HeadlessSnapshotConverter.WithLatestBeatmapMetadata(first, beatmap);
+
+        Assert.Equal("Mapper", enriched.Beatmap.Mapper);
+        Assert.Equal("180", enriched.Beatmap.BpmLabel);
+        Assert.Equal(4.75, enriched.Difficulty.StarRating);
+        Assert.Equal(7, enriched.Difficulty.Keys);
+        Assert.Equal(42, enriched.Difficulty.LnPercent);
+        Assert.Equal(12.5, Assert.Single(enriched.Skills).Value);
+    }
+
+    [Fact]
     public void SkillsUseDisplayLabelsInsteadOfMetricIds()
     {
         TosuBeatmapSnapshot beatmap = new(

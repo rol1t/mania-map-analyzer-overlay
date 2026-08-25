@@ -12,6 +12,7 @@ public sealed class LatestWinsSnapshotPublisher<T>
 {
     private readonly Func<T, Task> _publishAsync;
     private readonly Action<Exception>? _publishFailed;
+    private readonly TimeSpan? _publishTimeout;
     private readonly object _gate = new();
     private T? _latestSnapshot;
     private bool _hasLatestSnapshot;
@@ -24,10 +25,20 @@ public sealed class LatestWinsSnapshotPublisher<T>
 
     public LatestWinsSnapshotPublisher(
         Func<T, Task> publishAsync,
-        Action<Exception>? publishFailed = null)
+        Action<Exception>? publishFailed = null,
+        TimeSpan? publishTimeout = null)
     {
         _publishAsync = publishAsync ?? throw new ArgumentNullException(nameof(publishAsync));
         _publishFailed = publishFailed;
+        if (publishTimeout is { } timeout && timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(publishTimeout),
+                publishTimeout,
+                "The publish timeout must be positive.");
+        }
+
+        _publishTimeout = publishTimeout;
     }
 
     public T? LatestSnapshot
@@ -149,7 +160,15 @@ public sealed class LatestWinsSnapshotPublisher<T>
         Exception? failure = null;
         try
         {
-            await _publishAsync(work.Snapshot).ConfigureAwait(false);
+            Task publishTask = _publishAsync(work.Snapshot);
+            if (_publishTimeout is { } timeout)
+            {
+                await publishTask.WaitAsync(timeout).ConfigureAwait(false);
+            }
+            else
+            {
+                await publishTask.ConfigureAwait(false);
+            }
         }
         catch (Exception exception)
         {

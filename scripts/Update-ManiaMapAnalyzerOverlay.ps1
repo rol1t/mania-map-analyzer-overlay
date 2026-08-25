@@ -15,7 +15,14 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 if ($Quiet) { $ProgressPreference = 'SilentlyContinue' }
 
-$updaterVersion = '2.3.0'
+$versionFile = Join-Path $PSScriptRoot '..\VERSION'
+if (-not (Test-Path -LiteralPath $versionFile)) {
+    throw "Canonical VERSION file was not found: $versionFile"
+}
+$updaterVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($updaterVersion)) {
+    throw "Canonical VERSION file is empty: $versionFile"
+}
 $githubHeaders = @{
     'User-Agent' = "ManiaMapAnalyzerOverlayUpdater/$updaterVersion"
     'Accept' = 'application/vnd.github+json'

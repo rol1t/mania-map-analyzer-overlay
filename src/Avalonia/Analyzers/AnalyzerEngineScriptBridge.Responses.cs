@@ -215,11 +215,20 @@ public sealed partial class AnalyzerEngineScriptBridge
                        isBeatmapParseFailure
             ? AnalysisDiagnosticSeverity.Warning
             : AnalysisDiagnosticSeverity.Error;
+        var properties = isBeatmapParseFailure
+            ? new[]
+            {
+                new KeyValuePair<string, string>(
+                    AnalyzerDiagnosticClassifier.FailureKindProperty,
+                    AnalyzerDiagnosticClassifier.BeatmapParseFailureKind)
+            }
+            : null;
         return new AnalysisDiagnostic(
             severity,
             code,
             errorMessage,
-            string.IsNullOrWhiteSpace(stage) ? details : stage + ": " + details);
+            string.IsNullOrWhiteSpace(stage) ? details : stage + ": " + details,
+            properties);
     }
 
     private static string? GetString(JsonElement element, string propertyName)

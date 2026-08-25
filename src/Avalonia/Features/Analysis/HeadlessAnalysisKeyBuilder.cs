@@ -17,6 +17,7 @@ public static class HeadlessAnalysisKeyBuilder
         ArgumentNullException.ThrowIfNull(snapshot);
 
         return new HeadlessBeatmapKey(
+            snapshot.Identity.Id,
             snapshot.Identity.StableKey,
             snapshot.Rate,
             CreateModsKey(snapshot.Mods),
@@ -66,6 +67,27 @@ public static class HeadlessAnalysisKeyBuilder
     {
         var sceneKey = BuildSceneKey(snapshot, configuration);
         return !sceneKey.Equals(lastSceneKey);
+    }
+
+    /// <summary>
+    /// Returns whether two analysis keys refer to the same verified beatmap
+    /// file. Rate, modifiers and effective configuration are deliberately not
+    /// part of this comparison: changing those values is an explicit user
+    /// action and can be analysed immediately, while a carousel map change
+    /// still needs the controller's transient-observation guard.
+    /// </summary>
+    public static bool IsSameBeatmapRevision(
+        HeadlessAnalysisKey left,
+        HeadlessAnalysisKey right)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+
+        return string.Equals(
+                left.BeatmapKey.StableKey,
+                right.BeatmapKey.StableKey,
+                StringComparison.OrdinalIgnoreCase)
+            && left.BeatmapKey.RawBeatmapLength == right.BeatmapKey.RawBeatmapLength;
     }
 
     private static string CreateModsKey(System.Collections.Immutable.ImmutableArray<string> mods)

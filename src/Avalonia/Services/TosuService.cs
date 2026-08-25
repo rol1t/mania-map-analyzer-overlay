@@ -5,8 +5,8 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Platform;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
@@ -17,12 +17,20 @@ public sealed class TosuService : IDisposable
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };
     private Process? _process;
     private WindowsProcessJob? _processJob;
+    private long _transportGeneration;
     private bool _disposed;
 
     public event EventHandler<TosuStateChangedEventArgs>? StateChanged;
 
     public string? ExecutablePath => FindExecutable();
     public bool IsRunning => _process is { HasExited: false };
+    public TosuConnectionState ConnectionState
+    {
+        get;
+        private set;
+    }
+
+    public long TransportGeneration => Volatile.Read(ref _transportGeneration);
 
     /// <summary>
     /// Reads a complete Tosu v2 snapshot for the native realtime analyzer.
@@ -30,6 +38,13 @@ public sealed class TosuService : IDisposable
     /// WebView, which may be hidden while osu! is playing.
     /// </summary>
     public async Task<JsonElement?> GetGameplayPayloadAsync(CancellationToken cancellationToken = default)
+    {
+        TosuRealtimePayloadResult result = await GetGameplayPayloadResultAsync(cancellationToken);
+        return result.Payload;
+    }
+
+    public async Task<TosuRealtimePayloadResult> GetGameplayPayloadResultAsync(
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
 
@@ -40,69 +55,69 @@ public sealed class TosuService : IDisposable
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                return null;
+                return TosuRealtimePayloadResult.Failure(
+                    TosuRealtimePayloadFailureKind.HttpFailure,
+                    response.StatusCode,
+                    $"HTTP {(int)response.StatusCode} from json/v2.");
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            return document.RootElement.Clone();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidOperationException)
-        {
-            AppLogger.Warning("Reading tosu realtime payload", "The full gameplay payload could not be read.", exception);
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Reads the authoritative osu! gameplay state from tosu. The overlay uses
-    /// this as a native fallback because a browser websocket can miss a
-    /// state-only update while the game is switching screens.
-    /// </summary>
-    public async Task<TosuGameplayState?> GetGameplayStateAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-
-        try
-        {
-            using var response = await _httpClient.GetAsync(
-                ServerUrl + "json/v2?overlay_state=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            string content = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(content))
             {
-                return null;
+                return TosuRealtimePayloadResult.Failure(
+                    TosuRealtimePayloadFailureKind.EmptyResponse,
+                    detail: "json/v2 returned an empty response.");
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            return TosuRealtimePayloadNormalizer.TryReadGameplayState(
-                document.RootElement,
-                DateTimeOffset.UtcNow,
-                out var gameplay)
-                ? gameplay
-                : null;
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return TosuRealtimePayloadResult.Failure(
+                    TosuRealtimePayloadFailureKind.MalformedPayload,
+                    detail: "json/v2 returned a non-object JSON root.");
+            }
+
+            return TosuRealtimePayloadResult.Success(document.RootElement.Clone());
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidOperationException)
+        catch (TaskCanceledException exception)
         {
-            AppLogger.Warning("Reading tosu gameplay state", "The gameplay state could not be read.", exception);
+            AppLogger.Warning("Reading tosu realtime payload", "The Tosu realtime request timed out.", exception);
+            return TosuRealtimePayloadResult.Failure(
+                TosuRealtimePayloadFailureKind.TransportUnavailable,
+                detail: exception.Message);
         }
-
-        return null;
-    }
-
-    public async Task<bool?> GetIsPlayingAsync(CancellationToken cancellationToken = default)
-    {
-        var state = await GetGameplayStateAsync(cancellationToken);
-        return state?.IsPlaying;
+        catch (JsonException exception)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "Tosu returned malformed realtime JSON.", exception);
+            return TosuRealtimePayloadResult.Failure(
+                TosuRealtimePayloadFailureKind.MalformedPayload,
+                detail: exception.Message);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "The Tosu realtime endpoint was unavailable.", exception);
+            return TosuRealtimePayloadResult.Failure(
+                TosuRealtimePayloadFailureKind.TransportUnavailable,
+                detail: exception.Message);
+        }
+        catch (IOException exception)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "The Tosu realtime response stream failed.", exception);
+            return TosuRealtimePayloadResult.Failure(
+                TosuRealtimePayloadFailureKind.TransportUnavailable,
+                detail: exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            AppLogger.Warning("Reading tosu realtime payload", "Tosu returned an invalid realtime response.", exception);
+            return TosuRealtimePayloadResult.Failure(
+                TosuRealtimePayloadFailureKind.MalformedPayload,
+                detail: exception.Message);
+        }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -110,14 +125,15 @@ public sealed class TosuService : IDisposable
         ThrowIfDisposed();
         if (_process is { HasExited: false })
         {
-            Publish("status.tosu_already_running", true);
+            Publish("status.tosu_already_running", TosuConnectionState.Running);
             return;
         }
 
+        Interlocked.Increment(ref _transportGeneration);
         var executable = FindExecutable();
         if (executable is null)
         {
-            Publish("status.tosu_not_found", false);
+            Publish("status.tosu_not_found", TosuConnectionState.Unavailable);
             return;
         }
 
@@ -143,7 +159,7 @@ public sealed class TosuService : IDisposable
 
             _process.EnableRaisingEvents = true;
             _process.Exited += OnProcessExited;
-            Publish("status.tosu_starting", false);
+            Publish("status.tosu_starting", TosuConnectionState.Starting);
 
             var ready = await WaitForServerAsync(cancellationToken);
             if (!ready)
@@ -153,13 +169,15 @@ public sealed class TosuService : IDisposable
                     new TimeoutException("tosu started, but its local server did not become available."));
             }
 
-            Publish(ready ? "status.tosu_running" : "status.tosu_started_server_unavailable", ready);
+            Publish(
+                ready ? "status.tosu_running" : "status.tosu_started_server_unavailable",
+                ready ? TosuConnectionState.Running : TosuConnectionState.Unavailable);
         }
         catch (Exception exception)
         {
             AppLogger.Error("Starting tosu", exception);
             Stop();
-            Publish("status.tosu_start_failed|" + exception.Message, false);
+            Publish("status.tosu_start_failed|" + exception.Message, TosuConnectionState.Failed);
         }
     }
 
@@ -197,7 +215,7 @@ public sealed class TosuService : IDisposable
             runningProcess.Dispose();
         }
 
-        Publish("status.tosu_stopped", false);
+        Publish("status.tosu_stopped", TosuConnectionState.Stopped);
     }
 
     private async Task<bool> WaitForServerAsync(CancellationToken cancellationToken)
@@ -290,13 +308,27 @@ public sealed class TosuService : IDisposable
 
     private void OnProcessExited(object? sender, EventArgs e)
     {
-        if (!_disposed)
+        // Process.Exited may be queued after Stop/Restart has already installed
+        // a different process. The event sender is the only reliable identity
+        // at this boundary; the current transport generation alone is not
+        // sufficient because stale callbacks would otherwise carry the new
+        // generation and stop the new polling host.
+        if (!_disposed && ReferenceEquals(sender, _process))
         {
-            Publish("status.tosu_stopped", false);
+            Publish("status.tosu_stopped", TosuConnectionState.Stopped);
         }
     }
 
-    private void Publish(string message, bool isRunning) => StateChanged?.Invoke(this, new TosuStateChangedEventArgs(message, isRunning));
+    private void Publish(string message, TosuConnectionState state)
+    {
+        ConnectionState = state;
+        StateChanged?.Invoke(
+            this,
+            new TosuStateChangedEventArgs(
+                message,
+                state,
+                TransportGeneration));
+    }
 
     private void ThrowIfDisposed()
     {
@@ -320,10 +352,23 @@ public sealed class TosuService : IDisposable
 }
 public sealed class TosuStateChangedEventArgs : EventArgs
 {
-    public TosuStateChangedEventArgs(string message, bool isRunning)
+    public TosuStateChangedEventArgs(
+        string message,
+        TosuConnectionState state,
+        long transportGeneration)
     {
         Message = message;
-        IsRunning = isRunning;
+        State = state;
+        IsRunning = state == TosuConnectionState.Running;
+        TransportGeneration = transportGeneration;
+    }
+
+    public TosuStateChangedEventArgs(string message, bool isRunning)
+        : this(
+            message,
+            isRunning ? TosuConnectionState.Running : TosuConnectionState.Stopped,
+            0)
+    {
     }
 
     public string Message
@@ -331,6 +376,16 @@ public sealed class TosuStateChangedEventArgs : EventArgs
         get;
     }
     public bool IsRunning
+    {
+        get;
+    }
+
+    public TosuConnectionState State
+    {
+        get;
+    }
+
+    public long TransportGeneration
     {
         get;
     }
