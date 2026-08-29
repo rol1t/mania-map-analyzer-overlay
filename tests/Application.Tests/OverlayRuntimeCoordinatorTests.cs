@@ -1,6 +1,6 @@
 ﻿using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Application.Tests;
@@ -156,7 +156,7 @@ public sealed class OverlayRuntimeCoordinatorTests
 
         Assert.Equal("1540669", final.BeatmapId);
         Assert.Same(analysis, final.LatestAnalysis);
-        Assert.Null(final.PendingAnalysis);
+        Assert.Equal(AnalysisRequestStatus.Completed, final.AnalysisRequest?.Status);
     }
 
     [Fact]
@@ -392,7 +392,7 @@ public sealed class OverlayRuntimeCoordinatorTests
         Assert.Equal(29_000, viewState.Realtime?.MapTimeMs);
     }
 
-    private static TosuRealtimeTelemetry CreateTelemetry(
+    private static RealtimeTelemetryUpdate CreateTelemetry(
         RealtimePlayState state,
         int mapTimeMs,
         string sessionId,
@@ -416,7 +416,7 @@ public sealed class OverlayRuntimeCoordinatorTests
                 : PauseCoachWidgetState.Playing,
             false,
             []);
-        return new TosuRealtimeTelemetry(
+        return new RealtimeTelemetryUpdate(
             "native-http",
             "Play",
             2,

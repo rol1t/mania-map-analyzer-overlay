@@ -1,7 +1,7 @@
 ﻿using System.Collections.Immutable;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
+namespace ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 /// <summary>Normalized gameplay state used by the realtime session tracker.</summary>
 public enum RealtimePlayState

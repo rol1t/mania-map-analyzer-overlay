@@ -2,7 +2,7 @@
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 
@@ -33,7 +33,7 @@ public sealed class TosuRealtimeTelemetrySource : IRealtimeTelemetrySource
         _source = source;
     }
 
-    public async Task<TosuRealtimeTelemetry?> ReadAsync(CancellationToken cancellationToken = default)
+    public async Task<RealtimeTelemetryUpdate?> ReadAsync(CancellationToken cancellationToken = default)
     {
         JsonElement? payload = await _readPayload(cancellationToken).ConfigureAwait(false);
         return payload is JsonElement value

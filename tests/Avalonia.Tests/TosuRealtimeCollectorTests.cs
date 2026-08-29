@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Linq;
 using System.Text.Json;
+using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
+using Xunit;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis.Tests;
+namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
 
 public sealed class TosuRealtimeCollectorTests
 {
@@ -17,11 +19,11 @@ public sealed class TosuRealtimeCollectorTests
     {
         var collector = NewCollector();
         collector.Process(Payload("SelectPlay", 1, false, 0, 0, 0, 0, 0, []), source, _start);
-        TosuRealtimeTelemetry first = collector.Process(Payload("Play", 2, false, 0, 1000, 98.5, 2, 0, [0, 1]), source, _start.AddSeconds(1))!;
-        TosuRealtimeTelemetry fiveSeconds = collector.Process(Payload("Play", 2, false, 5_000, 10_000, 98, 10, 0, Enumerable.Range(0, 5).Select(index => index - 1).ToArray()), source, _start.AddSeconds(5))!;
-        TosuRealtimeTelemetry tenSeconds = collector.Process(Payload("Play", 2, false, 10_000, 20_000, 97.5, 20, 1, Enumerable.Range(0, 8).Select(index => index - 2).ToArray()), source, _start.AddSeconds(10))!;
-        TosuRealtimeTelemetry twentyFiveSeconds = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(25))!;
-        TosuRealtimeTelemetry paused = collector.Process(Payload("Play", 2, true, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(26))!;
+        RealtimeTelemetryUpdate first = collector.Process(Payload("Play", 2, false, 0, 1000, 98.5, 2, 0, [0, 1]), source, _start.AddSeconds(1))!;
+        RealtimeTelemetryUpdate fiveSeconds = collector.Process(Payload("Play", 2, false, 5_000, 10_000, 98, 10, 0, Enumerable.Range(0, 5).Select(index => index - 1).ToArray()), source, _start.AddSeconds(5))!;
+        RealtimeTelemetryUpdate tenSeconds = collector.Process(Payload("Play", 2, false, 10_000, 20_000, 97.5, 20, 1, Enumerable.Range(0, 8).Select(index => index - 2).ToArray()), source, _start.AddSeconds(10))!;
+        RealtimeTelemetryUpdate twentyFiveSeconds = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(25))!;
+        RealtimeTelemetryUpdate paused = collector.Process(Payload("Play", 2, true, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), source, _start.AddSeconds(26))!;
 
         Assert.Equal(PauseCoachWidgetState.Playing, first.Snapshot.WidgetState);
         Assert.Equal(PauseCoachWidgetState.Playing, fiveSeconds.Snapshot.WidgetState);
@@ -51,8 +53,8 @@ public sealed class TosuRealtimeCollectorTests
     public void PartialLazerPausePacketPreservesFullGameplayTelemetry()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry playing = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), "native-http", _start)!;
-        TosuRealtimeTelemetry paused = collector.Process(Raw("""
+        RealtimeTelemetryUpdate playing = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, Enumerable.Range(0, 16).Select(index => index - 4).ToArray()), "native-http", _start)!;
+        RealtimeTelemetryUpdate paused = collector.Process(Raw("""
         {
           "state": { "number": 2, "name": "Play" },
           "game": { "paused": true, "focused": true }
@@ -72,7 +74,7 @@ public sealed class TosuRealtimeCollectorTests
     public void ListShapedModsAreNormalizedWithoutDroppingTheActiveModifier()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry telemetry = collector.Process(Raw("""
+        RealtimeTelemetryUpdate telemetry = collector.Process(Raw("""
         {
           "state": { "number": 2, "name": "Play" },
           "game": { "paused": false },
@@ -94,7 +96,7 @@ public sealed class TosuRealtimeCollectorTests
     public void NumericBeatmapIdIsPreservedByNativePayloadNormalizer()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry telemetry = collector.Process(Raw("""
+        RealtimeTelemetryUpdate telemetry = collector.Process(Raw("""
         {
           "state": { "number": 2, "name": "Play" },
           "game": { "paused": true },
@@ -118,10 +120,10 @@ public sealed class TosuRealtimeCollectorTests
     public void PauseResumeKeepsSessionAndRetryStartsNewSession()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry playing = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]), "native-http", _start)!;
-        TosuRealtimeTelemetry paused = collector.Process(Payload("Play", 2, true, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]), "native-http", _start.AddSeconds(25))!;
-        TosuRealtimeTelemetry resumed = collector.Process(Payload("Play", 2, false, 26_000, 55_000, 96.1, 55, 4, [0, 1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
-        TosuRealtimeTelemetry retry = collector.Process(Payload("Play", 2, false, 0, 0, 100, 0, 0, [0]), "native-http", _start.AddSeconds(27))!;
+        RealtimeTelemetryUpdate playing = collector.Process(Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]), "native-http", _start)!;
+        RealtimeTelemetryUpdate paused = collector.Process(Payload("Play", 2, true, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]), "native-http", _start.AddSeconds(25))!;
+        RealtimeTelemetryUpdate resumed = collector.Process(Payload("Play", 2, false, 26_000, 55_000, 96.1, 55, 4, [0, 1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
+        RealtimeTelemetryUpdate retry = collector.Process(Payload("Play", 2, false, 0, 0, 100, 0, 0, [0]), "native-http", _start.AddSeconds(27))!;
 
         Assert.Equal(playing.Snapshot.SessionId, paused.Snapshot.SessionId);
         Assert.Equal(playing.Snapshot.SessionId, resumed.Snapshot.SessionId);
@@ -135,7 +137,7 @@ public sealed class TosuRealtimeCollectorTests
         var collector = NewCollector();
         collector.Process(Payload("Play", 2, false, 5_000, 5_000, 98, 3, 0, [1, 2, 3]), "native-http", _start);
         collector.Process(Payload("Play", 2, false, 6_000, 6_000, 98, 3, 0, [1, 2]), "native-http", _start.AddSeconds(1));
-        TosuRealtimeTelemetry grown = collector.Process(
+        RealtimeTelemetryUpdate grown = collector.Process(
             Payload("Play", 2, false, 7_000, 7_000, 98, 4, 0, [1, 2, 3, 4]),
             "native-http",
             _start.AddSeconds(2))!;
@@ -152,7 +154,7 @@ public sealed class TosuRealtimeCollectorTests
 
         // During a lazer transition Tosu can report the menu while the game
         // object still carries paused=true from the previous play frame.
-        TosuRealtimeTelemetry menu = collector.Process(
+        RealtimeTelemetryUpdate menu = collector.Process(
             Payload("SelectPlay", 5, true, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
             "native-http",
             _start.AddSeconds(26))!;
@@ -165,12 +167,12 @@ public sealed class TosuRealtimeCollectorTests
     public void LobbyStateDoesNotCarryThePreviousMapSession()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry playing = collector.Process(
+        RealtimeTelemetryUpdate playing = collector.Process(
             Payload("Play", 2, false, 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
             "native-http",
             _start)!;
 
-        TosuRealtimeTelemetry lobby = collector.Process(Raw("""
+        RealtimeTelemetryUpdate lobby = collector.Process(Raw("""
         {
           "state": { "number": 11, "name": "lobby" },
           "game": { "paused": false },
@@ -188,13 +190,13 @@ public sealed class TosuRealtimeCollectorTests
     public void OneCarouselMapFrameDoesNotReplaceTheActiveAttempt()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry playing = collector.Process(
+        RealtimeTelemetryUpdate playing = collector.Process(
             PayloadWithMap("Play", 2, false, "map-a", 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
             "native-http",
             _start)!;
 
         // The first selected carousel entry is a transient menu observation.
-        TosuRealtimeTelemetry transient = collector.Process(
+        RealtimeTelemetryUpdate transient = collector.Process(
             PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
             "native-http",
             _start.AddMilliseconds(350))!;
@@ -203,7 +205,7 @@ public sealed class TosuRealtimeCollectorTests
 
         // Returning to the original map during the same transition must not
         // create a retry/session boundary merely because map-b appeared once.
-        TosuRealtimeTelemetry backToOriginal = collector.Process(
+        RealtimeTelemetryUpdate backToOriginal = collector.Process(
             PayloadWithMap("Play", 2, false, "map-a", 26_000, 55_000, 96.1, 55, 4, [0, 1, 2, 3, 4]),
             "native-http",
             _start.AddSeconds(1))!;
@@ -216,7 +218,7 @@ public sealed class TosuRealtimeCollectorTests
     public void TwoConsecutiveCarouselFramesCommitTheNewMap()
     {
         var collector = NewCollector();
-        TosuRealtimeTelemetry playing = collector.Process(
+        RealtimeTelemetryUpdate playing = collector.Process(
             PayloadWithMap("Play", 2, false, "map-a", 25_000, 50_000, 96.2, 50, 3, [0, 1, 2, 3]),
             "native-http",
             _start)!;
@@ -225,7 +227,7 @@ public sealed class TosuRealtimeCollectorTests
             PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
             "native-http",
             _start.AddMilliseconds(350));
-        TosuRealtimeTelemetry committed = collector.Process(
+        RealtimeTelemetryUpdate committed = collector.Process(
             PayloadWithMap("SelectPlay", 5, false, "map-b", 0, 0, 100, 0, 0, []),
             "native-http",
             _start.AddMilliseconds(700))!;
@@ -243,7 +245,7 @@ public sealed class TosuRealtimeCollectorTests
         var collector = NewCollector();
         collector.Process(Payload("Play", 2, false, 0, 1000, 99, 1, 0, [1]), "native-http", _start);
         collector.Process(Payload("Play", 2, false, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(25));
-        TosuRealtimeTelemetry results = collector.Process(Payload("Results", 7, true, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
+        RealtimeTelemetryUpdate results = collector.Process(Payload("Results", 7, true, 25_000, 25_000, 94, 25, 2, [1, 2, 3, 4]), "native-http", _start.AddSeconds(26))!;
 
         Assert.Equal(RealtimePlayState.Results, results.Snapshot.State);
         Assert.Equal(PauseCoachWidgetState.Ready, results.Snapshot.WidgetState);

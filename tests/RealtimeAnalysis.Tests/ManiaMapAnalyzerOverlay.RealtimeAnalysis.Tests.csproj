@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
@@ -15,13 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Avalonia\ManiaMapAnalyzerOverlay.Avalonia.csproj" />
     <ProjectReference Include="..\..\src\RealtimeAnalysis\ManiaMapAnalyzerOverlay.RealtimeAnalysis.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\fixtures\tosu-v2\*.json"
-          Link="Fixtures\Tosu\%(Filename)%(Extension)"
-          CopyToOutputDirectory="PreserveNewest" />
+    <Using Include="Xunit" />
   </ItemGroup>
+
 </Project>

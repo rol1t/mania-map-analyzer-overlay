@@ -25,6 +25,7 @@ using ManiaMapAnalyzerOverlay.Avalonia.Platform;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
 using ManiaMapAnalyzerOverlay.Avalonia.ViewModels;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using ManiaMapAnalyzerOverlay.ReplayAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Views;
@@ -255,6 +256,8 @@ public partial class MainWindow : Window
         {
             _headlessAnalysisController.StateChanged -= HeadlessAnalysisController_StateChanged;
             _headlessAnalysisController.ResultProduced -= HeadlessAnalysisController_ResultProduced;
+            _headlessAnalysisController.AnalysisRequestStarted -= HeadlessAnalysisController_AnalysisRequestStarted;
+            _headlessAnalysisController.AnalysisRequestFailed -= HeadlessAnalysisController_AnalysisRequestFailed;
             _headlessAnalysisController.BeatmapSourceStateChanged -= HeadlessAnalysisController_BeatmapSourceStateChanged;
             var disposeTask = _headlessAnalysisController.DisposeAsync().AsTask();
             _ = ObserveControllerDisposeAsync(disposeTask);
@@ -542,7 +545,11 @@ public partial class MainWindow : Window
             // Headless analysis has its own offscreen WebView. Presentation
             // navigation and overlay recreation therefore cannot reset the
             // analyzer runtime or deliver messages to a detached document.
-            var presenter = new RuntimeAnalysisSnapshotPresenter(async (snapshot, cancellationToken) =>
+            var presenter = new RuntimeAnalysisSnapshotPresenter(async (
+                snapshot,
+                requestId,
+                configurationIdentity,
+                cancellationToken) =>
             {
                 OverlayRuntimeState current = _runtimeCoordinator.Current;
                 // When the matching realtime transition is already queued but
@@ -558,10 +565,15 @@ public partial class MainWindow : Window
                     sequence => new AnalysisSnapshotReceived(
                         sequence,
                         snapshot,
-                        beatmapGeneration),
+                        beatmapGeneration,
+                        requestId,
+                        configurationIdentity ?? string.Empty,
+                        requestId is null
+                            ? AnalysisSnapshotProducer.Unspecified
+                            : AnalysisSnapshotProducer.Headless),
                     cancellationToken);
                 if (!ReferenceEquals(accepted.LatestAnalysis, snapshot)
-                    && !ReferenceEquals(accepted.PendingAnalysis, snapshot))
+                    && !ReferenceEquals(accepted.AnalysisRequest?.Snapshot, snapshot))
                 {
                     throw new InvalidOperationException(
                         $"Application runtime rejected analysis for beatmap '{snapshot.Beatmap.Id}'.");
@@ -578,6 +590,8 @@ public partial class MainWindow : Window
 
             _headlessAnalysisController.StateChanged += HeadlessAnalysisController_StateChanged;
             _headlessAnalysisController.ResultProduced += HeadlessAnalysisController_ResultProduced;
+            _headlessAnalysisController.AnalysisRequestStarted += HeadlessAnalysisController_AnalysisRequestStarted;
+            _headlessAnalysisController.AnalysisRequestFailed += HeadlessAnalysisController_AnalysisRequestFailed;
             _headlessAnalysisController.BeatmapSourceStateChanged += HeadlessAnalysisController_BeatmapSourceStateChanged;
 
             // Ensure the WebView has finished loading the analysis page before
@@ -734,6 +748,44 @@ public partial class MainWindow : Window
             _lastSupervisorState = state;
             UpdateHeadlessStatusUi(state);
         });
+    }
+
+    private void HeadlessAnalysisController_AnalysisRequestStarted(
+        object? sender,
+        HeadlessAnalysisRequestStartedEventArgs e)
+    {
+        HeadlessAnalysisKey key = e.AnalysisKey;
+        string beatmapId = key.BeatmapKey.BeatmapId;
+        OverlayRuntimeState current = _runtimeCoordinator.Current;
+        long generation = string.Equals(current.BeatmapId, beatmapId, StringComparison.Ordinal)
+            ? current.BeatmapGeneration
+            : 0;
+        PostShadowRuntimeEvent(sequence => new AnalysisRequestStarted(
+            sequence,
+            e.RequestId,
+            generation,
+            beatmapId,
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(key)));
+    }
+
+    private void HeadlessAnalysisController_AnalysisRequestFailed(
+        object? sender,
+        HeadlessAnalysisRequestFailedEventArgs e)
+    {
+        HeadlessAnalysisKey key = e.AnalysisKey;
+        string beatmapId = key.BeatmapKey.BeatmapId;
+        OverlayRuntimeState current = _runtimeCoordinator.Current;
+        long generation = string.Equals(current.BeatmapId, beatmapId, StringComparison.Ordinal)
+            ? current.BeatmapGeneration
+            : 0;
+        PostShadowRuntimeEvent(sequence => new AnalysisRequestFailed(
+            sequence,
+            e.RequestId,
+            e.FailureCode,
+            e.FailureMessage,
+            generation,
+            beatmapId,
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(key)));
     }
 
     private void HeadlessAnalysisController_ResultProduced(object? sender, HeadlessAnalysisResultEventArgs e)
@@ -1653,11 +1705,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        long beatmapGeneration = _runtimeCoordinator.Current.BeatmapGeneration;
+        OverlayRuntimeState current = _runtimeCoordinator.Current;
+        long beatmapGeneration = OverlayRuntimeAnalysisCausality.ResolveBeatmapGeneration(
+            current,
+            snapshot);
         PostShadowRuntimeEvent(sequence => new AnalysisSnapshotReceived(
             sequence,
             snapshot,
-            beatmapGeneration));
+            beatmapGeneration,
+            Producer: AnalysisSnapshotProducer.BrowserFallback));
         _lastAnalyzerSnapshot = snapshot;
         if (!_overlayMode || _overlayNativePlayStateKnown || snapshot.Gameplay.IsPlaying is not bool isPlaying)
         {
@@ -2043,7 +2099,7 @@ public partial class MainWindow : Window
             }
 
             var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
-            await _headlessAnalysisController.PushSnapshotAsync(replaySnapshot, CancellationToken.None);
+            await _headlessAnalysisController.PushEnrichedSnapshotAsync(replaySnapshot, CancellationToken.None);
             AppLogger.Info(
                 "Replay import",
                 $"file={file.Name}; outcome={result.Outcome}; metrics={result.Metrics.Count}; " +
@@ -2964,7 +3020,7 @@ public partial class MainWindow : Window
             includePresentation: transition.Event is PresentationAvailabilityChanged));
     }
 
-    private void RequestHeadlessPollForRealtime(TosuRealtimeTelemetry telemetry)
+    private void RequestHeadlessPollForRealtime(RealtimeTelemetryUpdate telemetry)
     {
         string beatmapId = telemetry.Sample.BeatmapId.Trim();
         if (string.IsNullOrWhiteSpace(beatmapId))
@@ -3069,7 +3125,7 @@ public partial class MainWindow : Window
             $"runtimeVersion={shadow.Version}; eventSequence={shadow.LastEventSequence}; differences={signature}");
     }
 
-    private void ApplyNativeRealtimeTelemetry(TosuRealtimeTelemetry telemetry)
+    private void ApplyNativeRealtimeTelemetry(RealtimeTelemetryUpdate telemetry)
     {
         PostShadowRuntimeEvent(sequence => new RealtimeTelemetryReceived(sequence, telemetry));
         _overlayNativePlayStateKnown = true;
@@ -3088,7 +3144,7 @@ public partial class MainWindow : Window
         LogNativePauseCoachTelemetry(telemetry);
     }
 
-    private void LogNativePauseCoachTelemetry(TosuRealtimeTelemetry telemetry)
+    private void LogNativePauseCoachTelemetry(RealtimeTelemetryUpdate telemetry)
     {
         var snapshot = telemetry.Snapshot;
         bool? normalizedIsPlaying = snapshot.State switch

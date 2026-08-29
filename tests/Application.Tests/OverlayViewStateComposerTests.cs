@@ -1,6 +1,6 @@
 ﻿using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Application.Tests;

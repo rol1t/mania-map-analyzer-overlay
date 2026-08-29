@@ -20,7 +20,13 @@ The native application path is authoritative:
 
 `Tosu v2 payload → TosuRealtimeCollector → RealtimePlayAnalyzer → RealtimeAnalysisSnapshot → OverlayViewState`.
 
-`RealtimePlayAnalyzer` in `src/ReplayAnalysis/RealtimePauseCoach.cs` owns attempt lifecycle, bounded windows, insight thresholds and the native Pause Coach snapshot. The renderer receives that snapshot as a presenter payload and must not reinterpret it.
+Raw Tosu JSON is normalized by
+`src/Avalonia/Infrastructure/Tosu/TosuRealtimeCollector.cs`. The normalized
+sample then crosses into `src/RealtimeAnalysis`, where `RealtimePlayAnalyzer`
+owns attempt lifecycle, bounded windows, insight thresholds and the native
+Pause Coach snapshot. Exact `.osr` replay analysis remains in
+`src/ReplayAnalysis` and does not own realtime lifecycle. The renderer receives
+the resulting snapshot as a presenter payload and must not reinterpret it.
 
 `assets/overlay/runtime/pause-coach.js` remains temporarily as a compatibility/preview fallback for documents that have not received an application view-state yet. The desktop overlay declares native authority before the adapter starts, so that surface never creates a second browser coach session. The fallback is not allowed to replace an authoritative native snapshot. Its options are injected from the same C# `PauseCoachOptions` contract (`window.__overlayPauseCoachOptions`) so thresholds and window sizes cannot drift during this transition. The fallback is covered by direct JavaScript fixture tests and is scheduled for removal after all presentation surfaces consume `OverlayViewState` directly.
 

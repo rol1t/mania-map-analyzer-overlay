@@ -1,6 +1,6 @@
 ﻿using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Application.Tests;
@@ -34,7 +34,7 @@ public sealed class OverlayRuntimeReducerTests
             "session-A",
             RealtimePlayState.Paused,
             30_000);
-        var telemetry = new TosuRealtimeTelemetry(
+        var telemetry = new RealtimeTelemetryUpdate(
             "native-http",
             "Play",
             2,
@@ -81,7 +81,7 @@ public sealed class OverlayRuntimeReducerTests
             state,
             new RealtimeTelemetryReceived(
                 2,
-                new TosuRealtimeTelemetry(
+                new RealtimeTelemetryUpdate(
                     "native-http",
                     "Play",
                     2,
@@ -267,7 +267,7 @@ public sealed class OverlayRuntimeReducerTests
     [Fact]
     public void PresentationRecreationDoesNotDiscardLatestRealtimeState()
     {
-        var telemetry = new TosuRealtimeTelemetry(
+        var telemetry = new RealtimeTelemetryUpdate(
             "native-http",
             "Play",
             2,
@@ -319,7 +319,7 @@ public sealed class OverlayRuntimeReducerTests
             state,
             new AnalysisSnapshotReceived(5, Analysis("776655")));
         Assert.Equal("776655", state.LatestAnalysis!.Beatmap.Id);
-        Assert.Null(state.PendingAnalysis);
+        Assert.NotEqual(AnalysisRequestStatus.Pending, state.AnalysisRequest?.Status);
     }
 
     [Fact]
@@ -348,7 +348,7 @@ public sealed class OverlayRuntimeReducerTests
             new AnalysisSnapshotReceived(4, stale, BeatmapGeneration: 1));
 
         Assert.Same(state.LatestAnalysis, afterStaleCompletion.LatestAnalysis);
-        Assert.Null(afterStaleCompletion.PendingAnalysis);
+        Assert.NotEqual(AnalysisRequestStatus.Pending, afterStaleCompletion.AnalysisRequest?.Status);
         Assert.Equal("776655", afterStaleCompletion.BeatmapId);
     }
 
@@ -386,7 +386,8 @@ public sealed class OverlayRuntimeReducerTests
             new AnalysisSnapshotReceived(3, nextMapAnalysis));
 
         Assert.Equal("674175", state.LatestAnalysis!.Beatmap.Id);
-        Assert.Equal("1540669", state.PendingAnalysis!.Beatmap.Id);
+        Assert.Equal(AnalysisRequestStatus.Pending, state.AnalysisRequest?.Status);
+        Assert.Equal("1540669", state.AnalysisRequest?.Snapshot?.Beatmap.Id);
         Assert.Equal("674175", OverlayViewStateComposer.Compose(state).BeatmapId);
 
         state = OverlayRuntimeReducer.Apply(
@@ -396,7 +397,7 @@ public sealed class OverlayRuntimeReducerTests
         Assert.Equal("1540669", state.BeatmapId);
         Assert.Equal("1540669", state.LatestAnalysis!.Beatmap.Id);
         Assert.Equal(7.25, state.LatestAnalysis.Difficulty.StarRating);
-        Assert.Null(state.PendingAnalysis);
+        Assert.NotEqual(AnalysisRequestStatus.Pending, state.AnalysisRequest?.Status);
         OverlayViewState view = OverlayViewStateComposer.Compose(state);
         Assert.Equal("1540669", view.BeatmapId);
         Assert.Equal(7.25, view.Difficulty.StarRating);
@@ -419,7 +420,8 @@ public sealed class OverlayRuntimeReducerTests
             state,
             new RealtimeTelemetryReceived(3, Telemetry("998877", RealtimePlayState.Menu, 500, "session-B")));
 
-        Assert.Equal("1540669", state.PendingAnalysis!.Beatmap.Id);
+        Assert.Equal(AnalysisRequestStatus.Pending, state.AnalysisRequest?.Status);
+        Assert.Equal("1540669", state.AnalysisRequest?.Snapshot?.Beatmap.Id);
         Assert.Null(state.LatestAnalysis);
 
         state = OverlayRuntimeReducer.Apply(
@@ -428,7 +430,7 @@ public sealed class OverlayRuntimeReducerTests
 
         Assert.Equal("1540669", state.LatestAnalysis!.Beatmap.Id);
         Assert.Equal(7.25, state.LatestAnalysis.Difficulty.StarRating);
-        Assert.Null(state.PendingAnalysis);
+        Assert.NotEqual(AnalysisRequestStatus.Pending, state.AnalysisRequest?.Status);
     }
 
     [Fact]
@@ -486,7 +488,7 @@ public sealed class OverlayRuntimeReducerTests
         };
     }
 
-    private static TosuRealtimeTelemetry Telemetry(
+    private static RealtimeTelemetryUpdate Telemetry(
         string beatmapId,
         RealtimePlayState state,
         int mapTimeMs,
@@ -496,7 +498,7 @@ public sealed class OverlayRuntimeReducerTests
         {
             BeatmapId = beatmapId
         };
-        return new TosuRealtimeTelemetry(
+        return new RealtimeTelemetryUpdate(
             "native-http",
             "Play",
             2,

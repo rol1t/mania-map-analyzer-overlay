@@ -1,6 +1,6 @@
 ﻿using System.Collections.Immutable;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
+namespace ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 /// <summary>
 /// One normalized frame of tosu v2 telemetry. All fields are optional because

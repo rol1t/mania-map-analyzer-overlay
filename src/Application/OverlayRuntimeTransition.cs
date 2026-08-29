@@ -7,6 +7,10 @@ public enum OverlayRuntimeRejectionKind
     StaleTosuTransportGeneration,
     StalePresentationSurfaceGeneration,
     StaleAnalysisBeatmapGeneration,
+    UnknownAnalysisRequest,
+    StaleAnalysisRequest,
+    AnalysisRequestMetadataMismatch,
+    InvalidAnalysisRequestId,
     NoStateChange
 }
 

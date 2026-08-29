@@ -1,6 +1,6 @@
 ﻿using ManiaMapAnalyzerOverlay.Core.Analysis;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
+namespace ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 /// <summary>
 /// Deterministic aggregate-only builder for <see cref="PauseCoachSnapshot"/>.

@@ -1,12 +1,12 @@
 # Architecture completion plan
 
-Status: approved backlog; incremental implementation is in progress on
-`architecture-completion`.
+Status: approved backlog; incremental implementation continues after release
+`v2.4.0` on `architecture-completion`.
 
-Baseline audited: `origin/main` at `1894845` on 2026-08-24. The tree of the
-reviewed checkout matched that commit exactly. This document is the execution
-source of truth for completing the runtime migration. The broader rationale and
-original migration history remain in [ARCHITECTURE.md](ARCHITECTURE.md).
+Baseline re-audited: release `v2.4.0` at `0e8c331` on 2026-08-28. This document
+is the execution source of truth for completing the runtime migration. The
+broader rationale and original migration history remain in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Purpose
 
@@ -86,9 +86,10 @@ The migration is nevertheless still transitional:
 - the browser adapter and native host both consume Tosu realtime data;
 - the renderer still arbitrates native/browser authority and merges business
   snapshots;
-- runtime events do not encode all causal identities needed to reject stale
-  asynchronous results;
-- replay and realtime types currently share the `ReplayAnalysis` project;
+- headless analysis now carries an explicit causal request identity, while
+  replay requests and presentation surfaces still need their own generations;
+- realtime/Pause Coach and exact replay now live in separate domain projects;
+- raw Tosu JSON normalization now lives in Avalonia infrastructure;
 - documentation disagrees with the production authority model.
 
 Updater state persistence is now an injected boundary and writes a complete
@@ -108,8 +109,9 @@ step, not the final browser removal.
 
 ```text
 Tosu HTTP
-  +-> MainWindow polling
-  |     -> C# Tosu normalizer / RealtimePlayAnalyzer
+  +-> TosuRealtimeRuntimeHost / polling controller
+  |     -> Avalonia Tosu normalizer
+  |     -> RealtimeAnalysis / RealtimePlayAnalyzer
   |     -> OverlayRuntimeCoordinator
   |     -> OverlayViewState
   |     -> desktop/fullscreen publishers
@@ -230,10 +232,10 @@ Rules:
 - [ ] `OverlayRuntimeEvent.Sequence` remains an enqueue-order safeguard.
 - [x] Analysis snapshot events carry the observed beatmap generation and the
   reducer rejects a completion from an older map generation.
-- [ ] Extend the identity through explicit headless request and replay
-  completion contracts; the current presenter callback still uses the runtime
-  generation observed at delivery time.
-- [ ] Reducer acceptance checks causal identity before changing a state slot.
+- [x] Extend the identity through an explicit headless analysis request
+  contract; replay completion identity remains part of Work Package 2/LUNA-03.
+- [x] The reducer checks headless request identity, target generation and map
+  metadata before changing the analysis slot.
 - [x] Rejected events emit typed diagnostics containing the rejection reason,
   sequence/generation values and beatmap identities where applicable
   (`OverlayRuntimeRejection`).
@@ -253,7 +255,7 @@ Risk: low. Production behavior must not change.
 - [x] Record an ownership matrix for current and target owners of beatmap,
   attempt, realtime metrics, headless result, replay result, desired visibility,
   surface readiness and rendered version in `docs/ARCHITECTURE.md`.
-- [ ] Update `docs/ARCHITECTURE.md` to describe the current merged state rather
+- [x] Update `docs/ARCHITECTURE.md` to describe the current merged state rather
   than old "implemented locally" PR checkpoints.
 - [ ] Add or update ADRs for:
   - [ ] dedicated realtime bounded context;
@@ -270,9 +272,10 @@ Risk: low. Production behavior must not change.
   `NativeRealtimeApplicationScenarioTests` covers hidden 0/5/10/20/30-second
   collection, a Tosu lazer `Play + paused=true` transition, same-session
   continuity, recent timing data and latest-wins flush ordering.
-- [ ] Add stable and lazer fixtures for menu, play, pause, resume, retry,
-  failure, results, replay, spectator and partial packets.
-- [ ] Include the real lazer pause representation:
+- [x] Add stable and lazer fixtures for menu/select, play, pause, resume,
+  failure, results, retry, replay, spectator and partial packets. Presentation
+  recreation remains a later surface-delivery fixture.
+- [x] Include the real lazer pause representation:
   `state.name=Play`, `state.number=2`, `game.paused=true`.
 - [ ] Characterize current desktop, preview and fullscreen publication behavior
   before replacing it.
@@ -284,10 +287,10 @@ Risk: low. Production behavior must not change.
 
 ### Automated acceptance
 
-- [ ] Raw stable and lazer lifecycle fixtures reach the expected normalized
+- [x] Raw stable and lazer lifecycle fixtures reach the expected normalized
   gameplay state.
-- [ ] Existing Application, Core, ReplayAnalysis, Avalonia and Runtime tests
-  remain unchanged and green.
+- [x] Existing Application, Core, ReplayAnalysis, Avalonia and Runtime tests
+  remain green; the fixture suite adds coverage without removing existing tests.
 - [ ] The harness covers hidden collection, pause visibility, resume, results
   and presentation recreation without a real WebView.
 
@@ -308,37 +311,37 @@ Risk: medium because namespaces, test projects and Application references move.
 
 ### Tasks
 
-- [ ] Create a focused `RealtimeAnalysis` domain assembly, unless a dependency
+- [x] Create a focused `RealtimeAnalysis` domain assembly, unless a dependency
   audit recorded in an ADR proves `Core/Realtime` is materially simpler.
-- [ ] Move pure realtime contracts and behavior:
-  - [ ] `RealtimePlayState`;
-  - [ ] normalized sample and snapshot contracts;
-  - [ ] attempt/session tracker;
-  - [ ] `RealtimePlayAnalyzer`;
-  - [ ] Pause Coach options, thresholds, insight ranking and bounded windows.
-- [ ] Keep raw `JsonElement` Tosu parsing out of the realtime domain.
-- [ ] Move `TosuRealtimePayloadNormalizer` and the collector adapter to
+- [x] Move pure realtime contracts and behavior:
+  - [x] `RealtimePlayState`;
+  - [x] normalized sample and snapshot contracts;
+  - [x] attempt/session tracker;
+  - [x] `RealtimePlayAnalyzer`;
+  - [x] Pause Coach options, thresholds, insight ranking and bounded windows.
+- [x] Keep raw `JsonElement` Tosu parsing out of the realtime domain.
+- [x] Move `TosuRealtimePayloadNormalizer` and the collector adapter to
   `Avalonia/Infrastructure/Tosu` or another existing host boundary.
-- [ ] Move realtime tests out of `ReplayAnalysis.Tests` into the matching domain
+- [x] Move realtime tests out of `ReplayAnalysis.Tests` into the matching domain
   or infrastructure test project.
-- [ ] Ensure exact replay analysis does not reference realtime lifecycle or
+- [x] Ensure exact replay analysis does not reference realtime lifecycle or
   Pause Coach thresholds.
-- [ ] Update solution/project references so Application depends on realtime
+- [x] Update solution/project references so Application depends on realtime
   contracts directly, not on ReplayAnalysis for those types.
-- [ ] Preserve serialized names and view-state compatibility during the move.
+- [x] Preserve serialized names and view-state compatibility during the move.
 
 ### Automated acceptance
 
-- [ ] Existing realtime fixtures produce byte/field-equivalent snapshots.
-- [ ] Replay tests run without referencing Tosu payload normalization.
-- [ ] Dependency tests reject Tosu JSON parsing inside realtime/replay domain
+- [x] Existing realtime fixtures produce field-equivalent snapshots.
+- [x] Replay tests run without referencing Tosu payload normalization.
+- [x] Dependency tests reject Tosu JSON parsing inside realtime/replay domain
   assemblies.
-- [ ] No product behavior or threshold changes are included in this package.
+- [x] No product behavior or threshold changes are included in this package.
 
 ### Exit gate
 
-- [ ] Replay and realtime are distinct bounded contexts.
-- [ ] C# realtime behavior remains fully covered and unchanged.
+- [x] Replay and realtime are distinct bounded contexts.
+- [x] C# realtime behavior remains fully covered and unchanged.
 
 ## Work package 2 — complete the Application runtime contract
 
@@ -366,8 +369,8 @@ Risk: medium. This package should remain shadow/observational where practical.
   changes and application shutdown.
 - [ ] Keep drag coordinates, raw pointer movement and physical resize pixels out
   of the reducer.
-- [ ] Add `AnalysisRequestId` and beatmap generation to analysis completion and
-  failure events.
+- [x] Add `AnalysisRequestId`, beatmap generation and configuration identity to
+  analysis start/completion/failure events.
 - [ ] Add `ReplayRequestId` to replay completion and failure events.
 - [ ] Model `DesiredVisibility`, `SurfaceReady` and `ActualVisibility` as
   distinct concepts.
@@ -384,8 +387,9 @@ Risk: medium. This package should remain shadow/observational where practical.
 - [ ] Give `OverlayViewState` its own monotonic version.
 - [ ] Define equality/change detection from the actual presentation contract,
   not incidental object reference identity.
-- [ ] Replace the single unversioned `PendingAnalysis` slot with an explicitly
-  versioned completion model or bounded per-request tracking.
+- [x] Replace the single unversioned pending-analysis projection with an
+  explicit `AnalysisRequestSlot`; replay keeps its independent slot for
+  LUNA-03.
 - [ ] Add reducer diagnostics for every stale/rejected completion.
 - [ ] Define reset semantics for application restart separately from gameplay
   retry and presentation recreation.

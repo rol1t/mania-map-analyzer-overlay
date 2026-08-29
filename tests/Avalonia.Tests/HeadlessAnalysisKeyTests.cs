@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Immutable;
+using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
@@ -109,6 +110,84 @@ public sealed class HeadlessAnalysisKeyTests
 
         Assert.NotEqual(originalKey, newKey);
         Assert.True(HeadlessAnalysisKeyBuilder.IsNewSceneGeneration(snapshot, differentConfiguration, originalKey.SceneKey));
+    }
+
+    [Fact]
+    public void DifferentEffectiveOptionsProduceDifferentConfigurationIdentities()
+    {
+        var snapshot = CreateSnapshot();
+        EffectiveAnalysisConfiguration first = CreateConfiguration() with
+        {
+            DefaultOptions = ImmutableDictionary<string, JsonElement>.Empty.Add(
+                "strainWeight",
+                JsonSerializer.SerializeToElement(1.0))
+        };
+        EffectiveAnalysisConfiguration second = CreateConfiguration() with
+        {
+            DefaultOptions = ImmutableDictionary<string, JsonElement>.Empty.Add(
+                "strainWeight",
+                JsonSerializer.SerializeToElement(2.0))
+        };
+
+        HeadlessAnalysisKey firstKey = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshot, first.Normalize());
+        HeadlessAnalysisKey secondKey = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(snapshot, second.Normalize());
+
+        Assert.NotEqual(firstKey.SceneKey, secondKey.SceneKey);
+        Assert.NotEqual(
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(firstKey),
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(secondKey));
+    }
+
+    [Fact]
+    public void ConfigurationIdentityCanonicalizesNestedOptionPropertyOrder()
+    {
+        using JsonDocument firstDocument = JsonDocument.Parse("{\"weight\":2,\"enabled\":true}");
+        using JsonDocument secondDocument = JsonDocument.Parse("{\"enabled\":true,\"weight\":2}");
+        JsonElement firstValue = firstDocument.RootElement.Clone();
+        JsonElement secondValue = secondDocument.RootElement.Clone();
+        EffectiveAnalysisConfiguration first = CreateConfiguration() with
+        {
+            DefaultOptions = ImmutableDictionary<string, JsonElement>.Empty.Add("nested", firstValue)
+        };
+        EffectiveAnalysisConfiguration second = CreateConfiguration() with
+        {
+            DefaultOptions = ImmutableDictionary<string, JsonElement>.Empty.Add("nested", secondValue)
+        };
+
+        Assert.Equal(
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(first),
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(second));
+    }
+
+    [Fact]
+    public void SceneKeyUsesTheNormalizedEffectiveConfiguration()
+    {
+        var snapshot = CreateSnapshot();
+        var raw = new EffectiveAnalysisConfiguration();
+        EffectiveAnalysisConfiguration normalized = raw.Normalize();
+
+        Assert.Equal(
+            HeadlessAnalysisKeyBuilder.BuildSceneKey(snapshot, normalized),
+            HeadlessAnalysisKeyBuilder.BuildSceneKey(snapshot, raw));
+    }
+
+    [Fact]
+    public void DifferentWidgetContentsProduceDifferentConfigurationIdentities()
+    {
+        EffectiveAnalysisConfiguration first = CreateConfiguration();
+        EffectiveWidgetSpec originalWidget = first.Widgets[0];
+        var changedWidget = new EffectiveWidgetSpec(
+            "custom-overlay",
+            originalWidget.Sources,
+            originalWidget.Bindings);
+        EffectiveAnalysisConfiguration second = first with
+        {
+            Widgets = [changedWidget]
+        };
+
+        Assert.NotEqual(
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(first),
+            HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(second));
     }
 
     [Fact]

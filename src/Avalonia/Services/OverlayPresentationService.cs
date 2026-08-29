@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 

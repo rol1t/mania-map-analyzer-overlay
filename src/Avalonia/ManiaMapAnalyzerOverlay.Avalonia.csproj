@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
+    <ProjectReference Include="..\RealtimeAnalysis\ManiaMapAnalyzerOverlay.RealtimeAnalysis.csproj" />
     <ProjectReference Include="..\ReplayAnalysis\ManiaMapAnalyzerOverlay.ReplayAnalysis.csproj" />
     <ProjectReference Include="..\Application\ManiaMapAnalyzerOverlay.Application.csproj" />
     <Folder Include="Models\" />

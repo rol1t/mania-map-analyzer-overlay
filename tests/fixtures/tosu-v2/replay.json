@@ -1,0 +1,15 @@
+{
+  "state": { "name": "Replay", "number": 8 },
+  "game": { "paused": false, "focused": true },
+  "beatmap": {
+    "id": "674175",
+    "hash": "stable-674175-hash",
+    "time": { "live": 30000 }
+  },
+  "play": {
+    "score": 30000,
+    "accuracy": 0.97,
+    "combo": { "current": 24, "max": 24 },
+    "hits": { "0": 1, "50": 0, "100": 2, "300": 24 }
+  }
+}

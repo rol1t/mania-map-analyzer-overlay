@@ -1,5 +1,5 @@
 ﻿using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Application;
 
@@ -22,6 +22,12 @@ public static class OverlayRuntimeReducer
                 OverlayRuntimeRejectionKind.StaleSequence,
                 runtimeEvent.Sequence,
                 current.LastEventSequence);
+        }
+
+        OverlayRuntimeRejection? analysisRejection = DescribeAnalysisRejection(current, runtimeEvent);
+        if (analysisRejection is not null)
+        {
+            return analysisRejection;
         }
 
         return runtimeEvent switch
@@ -57,6 +63,17 @@ public static class OverlayRuntimeReducer
                     current.BeatmapGeneration,
                     analysis.Snapshot.Beatmap.Id,
                     current.BeatmapId),
+            AnalysisRequestStarted started
+                when started.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > started.BeatmapGeneration
+                => new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.StaleAnalysisBeatmapGeneration,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    started.BeatmapGeneration,
+                    current.BeatmapGeneration,
+                    started.BeatmapId,
+                    current.BeatmapId),
             _ => new OverlayRuntimeRejection(
                 OverlayRuntimeRejectionKind.NoStateChange,
                 runtimeEvent.Sequence,
@@ -82,7 +99,9 @@ public static class OverlayRuntimeReducer
         {
             RealtimeTelemetryReceived telemetry => ApplyRealtime(current, telemetry.Telemetry),
             TosuConnectionChanged connection => ApplyTosuConnection(current, connection),
+            AnalysisRequestStarted started => ApplyAnalysisRequestStarted(current, started),
             AnalysisSnapshotReceived analysis => ApplyAnalysis(current, analysis),
+            AnalysisRequestFailed failure => ApplyAnalysisRequestFailed(current, failure),
             PresentationAvailabilityChanged presentation => ApplyPresentationAvailability(current, presentation),
             OverlayModeChanged mode => current with { OverlayMode = mode.Enabled },
             OsuWindowStateChanged window => current with { OsuWindowMinimized = window.Minimized },
@@ -121,7 +140,7 @@ public static class OverlayRuntimeReducer
 
     private static OverlayRuntimeState ApplyRealtime(
         OverlayRuntimeState current,
-        TosuRealtimeTelemetry telemetry)
+        RealtimeTelemetryUpdate telemetry)
     {
         RealtimeAnalysisSnapshot incoming = telemetry.Snapshot;
         string currentBeatmapId = !string.IsNullOrWhiteSpace(current.BeatmapId)
@@ -163,7 +182,10 @@ public static class OverlayRuntimeReducer
             RealtimePlayState.Paused => true,
             _ => null
         };
-        AnalysisSnapshot? pendingAnalysis = current.PendingAnalysis;
+        AnalysisRequestSlot? analysisRequest = current.AnalysisRequest;
+        AnalysisSnapshot? pendingAnalysis = analysisRequest?.Status == AnalysisRequestStatus.Pending
+            ? analysisRequest.Snapshot
+            : null;
         bool pendingMatchesRealtime = pendingAnalysis is not null
             && !string.IsNullOrWhiteSpace(snapshot.BeatmapId)
             && string.Equals(
@@ -179,6 +201,17 @@ public static class OverlayRuntimeReducer
         AnalysisSnapshot? latestAnalysis = beatmapChanged && pendingMatchesRealtime
             ? pendingAnalysis
             : current.LatestAnalysis;
+
+        if (pendingMatchesRealtime && analysisRequest is not null)
+        {
+            analysisRequest = analysisRequest with
+            {
+                Status = AnalysisRequestStatus.Completed,
+                Snapshot = pendingAnalysis,
+                FailureCode = null,
+                FailureMessage = null
+            };
+        }
 
         return current with
         {
@@ -199,7 +232,7 @@ public static class OverlayRuntimeReducer
             // second time when the intended map becomes current. Keep it
             // pending until its own beatmap is confirmed (or a newer
             // analysis result replaces it).
-            PendingAnalysis = pendingMatchesRealtime ? null : pendingAnalysis
+            AnalysisRequest = analysisRequest
         };
     }
 
@@ -220,6 +253,8 @@ public static class OverlayRuntimeReducer
     {
         RealtimeTelemetryReceived telemetry => telemetry.Telemetry.Snapshot.BeatmapId,
         AnalysisSnapshotReceived analysis => analysis.Snapshot.Beatmap.Id,
+        AnalysisRequestStarted started => started.BeatmapId,
+        AnalysisRequestFailed failure => failure.BeatmapId,
         _ => null
     };
 
@@ -252,6 +287,30 @@ public static class OverlayRuntimeReducer
         };
     }
 
+    private static OverlayRuntimeState ApplyAnalysisRequestStarted(
+        OverlayRuntimeState current,
+        AnalysisRequestStarted started)
+    {
+        if (!started.RequestId.IsValid
+            || (started.BeatmapGeneration > 0
+                && current.BeatmapGeneration > started.BeatmapGeneration)
+            || (current.AnalysisRequest is { IsVersioned: true } active
+                && started.RequestId.Value <= active.RequestId.Value))
+        {
+            return current;
+        }
+
+        return current with
+        {
+            AnalysisRequest = new AnalysisRequestSlot(
+                started.RequestId,
+                started.BeatmapGeneration,
+                started.BeatmapId?.Trim() ?? string.Empty,
+                started.ConfigurationIdentity ?? string.Empty,
+                AnalysisRequestStatus.Running)
+        };
+    }
+
     private static OverlayRuntimeState ApplyAnalysis(
         OverlayRuntimeState current,
         AnalysisSnapshotReceived analysis)
@@ -263,26 +322,125 @@ public static class OverlayRuntimeReducer
             && current.BeatmapGeneration > analysis.BeatmapGeneration)
         {
             // Analysis is asynchronous and can finish after Tosu has already
-            // advanced to another beatmap. The beatmap id check below protects
-            // the normal path, while this causal generation rejects a late
-            // completion even when the payload is partial or identity-free.
+            // advanced to another beatmap. Keep the legacy compatibility path
+            // subject to the same generation guard as versioned requests.
             return current;
         }
 
-        string analysisBeatmapId = snapshot.Beatmap.Id;
+        if (analysis.RequestId is { } requestId && requestId.IsValid)
+        {
+            return ApplyVersionedAnalysis(current, analysis, requestId, snapshot);
+        }
+
+        // Anonymous compatibility snapshots remain observational after native
+        // authority is established. The host may explicitly activate the DOM
+        // fallback when headless presentation is unavailable; that transition
+        // replaces the old causal slot so late native completions stay stale.
+        bool isExplicitBrowserFallback = analysis.Producer == AnalysisSnapshotProducer.BrowserFallback;
+        if (current.AnalysisRequest?.IsVersioned == true && !isExplicitBrowserFallback)
+        {
+            return current;
+        }
+
+        OverlayRuntimeState next = ApplyAnalysisPayload(current, snapshot);
+        if (ReferenceEquals(next, current))
+        {
+            return current;
+        }
+
+        bool pending = !ReferenceEquals(next.LatestAnalysis, snapshot);
+        return next with
+        {
+            AnalysisRequest = new AnalysisRequestSlot(
+                default,
+                analysis.BeatmapGeneration,
+                snapshot.Beatmap.Id?.Trim() ?? string.Empty,
+                isExplicitBrowserFallback ? "browser-fallback" : "legacy",
+                pending ? AnalysisRequestStatus.Pending : AnalysisRequestStatus.Completed,
+                snapshot)
+        };
+    }
+
+    private static OverlayRuntimeState ApplyVersionedAnalysis(
+        OverlayRuntimeState current,
+        AnalysisSnapshotReceived analysis,
+        AnalysisRequestId requestId,
+        AnalysisSnapshot snapshot)
+    {
+        AnalysisRequestSlot? slot = current.AnalysisRequest;
+        if (slot is null
+            || !slot.IsVersioned
+            || slot.RequestId != requestId
+            || slot.Status == AnalysisRequestStatus.Failed)
+        {
+            return current;
+        }
+
+        if (slot.BeatmapGeneration > 0
+            && current.BeatmapGeneration > slot.BeatmapGeneration)
+        {
+            return current;
+        }
+
+        if (analysis.BeatmapGeneration > 0
+            && current.BeatmapGeneration > analysis.BeatmapGeneration)
+        {
+            return current;
+        }
+
+        string analysisBeatmapId = snapshot.Beatmap.Id?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(slot.BeatmapId)
+            && !string.IsNullOrWhiteSpace(analysisBeatmapId)
+            && !string.Equals(slot.BeatmapId, analysisBeatmapId, StringComparison.Ordinal))
+        {
+            return current;
+        }
+
+        if (!string.Equals(
+                analysis.ConfigurationIdentity ?? string.Empty,
+                slot.ConfigurationIdentity,
+                StringComparison.Ordinal))
+        {
+            return current;
+        }
+
+        OverlayRuntimeState next = ApplyAnalysisPayload(current, snapshot);
+        if (ReferenceEquals(next, current))
+        {
+            return current;
+        }
+
+        bool pending = !ReferenceEquals(next.LatestAnalysis, snapshot);
+        return next with
+        {
+            AnalysisRequest = slot with
+            {
+                Status = pending ? AnalysisRequestStatus.Pending : AnalysisRequestStatus.Completed,
+                Snapshot = snapshot,
+                FailureCode = null,
+                FailureMessage = null
+            }
+        };
+    }
+
+    private static OverlayRuntimeState ApplyAnalysisPayload(
+        OverlayRuntimeState current,
+        AnalysisSnapshot snapshot)
+    {
+        string analysisBeatmapId = snapshot.Beatmap.Id?.Trim() ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(current.BeatmapId)
             && !string.IsNullOrWhiteSpace(analysisBeatmapId)
             && !string.Equals(current.BeatmapId, analysisBeatmapId, StringComparison.Ordinal))
         {
-            // Headless polling and realtime polling are independent. The
-            // analyzer can finish the newly selected map a few milliseconds
-            // before the native realtime source reports its identity. Keep
-            // that result out of the active presentation slot until realtime
-            // confirms it; this also prevents a late previous-map completion
-            // from rolling the current card back.
             return current with
             {
-                PendingAnalysis = snapshot
+                AnalysisRequest = new AnalysisRequestSlot(
+                    current.AnalysisRequest?.RequestId ?? default,
+                    current.AnalysisRequest?.BeatmapGeneration ?? current.BeatmapGeneration,
+                    analysisBeatmapId,
+                    current.AnalysisRequest?.ConfigurationIdentity ?? "legacy",
+                    AnalysisRequestStatus.Pending,
+                    snapshot)
             };
         }
 
@@ -290,16 +448,277 @@ public static class OverlayRuntimeReducer
             && string.IsNullOrWhiteSpace(analysisBeatmapId)
             && current.LatestAnalysis is not null)
         {
-            // Identity-free partial analysis cannot displace a current
-            // beatmap's authoritative analysis slot.
             return current;
         }
 
         return current with
         {
-            LatestAnalysis = snapshot,
-            PendingAnalysis = null
+            LatestAnalysis = snapshot
         };
+    }
+
+    private static OverlayRuntimeState ApplyAnalysisRequestFailed(
+        OverlayRuntimeState current,
+        AnalysisRequestFailed failure)
+    {
+        if (!failure.RequestId.IsValid)
+        {
+            return current;
+        }
+
+        AnalysisRequestSlot? slot = current.AnalysisRequest;
+        if (slot is null
+            || !slot.IsVersioned
+            || slot.RequestId != failure.RequestId
+            || slot.Status != AnalysisRequestStatus.Running
+            || (slot.BeatmapGeneration > 0
+                && current.BeatmapGeneration > slot.BeatmapGeneration)
+            || (failure.BeatmapGeneration > 0
+                && current.BeatmapGeneration > failure.BeatmapGeneration)
+            || (!string.IsNullOrWhiteSpace(failure.BeatmapId)
+                && !string.IsNullOrWhiteSpace(slot.BeatmapId)
+                && !string.Equals(
+                    failure.BeatmapId.Trim(),
+                    slot.BeatmapId,
+                    StringComparison.Ordinal))
+            || (!string.IsNullOrWhiteSpace(failure.ConfigurationIdentity)
+                && !string.Equals(
+                    failure.ConfigurationIdentity,
+                    slot.ConfigurationIdentity,
+                    StringComparison.Ordinal)))
+        {
+            return current;
+        }
+
+        return current with
+        {
+            AnalysisRequest = slot with
+            {
+                Status = AnalysisRequestStatus.Failed,
+                FailureCode = string.IsNullOrWhiteSpace(failure.FailureCode)
+                    ? "analysis_failed"
+                    : failure.FailureCode.Trim(),
+                FailureMessage = failure.FailureMessage,
+                Snapshot = null
+            }
+        };
+    }
+
+    private static OverlayRuntimeRejection? DescribeAnalysisRejection(
+        OverlayRuntimeState current,
+        OverlayRuntimeEvent runtimeEvent)
+    {
+        switch (runtimeEvent)
+        {
+            case AnalysisRequestStarted started when !started.RequestId.IsValid:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.InvalidAnalysisRequestId,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventBeatmapId: started.BeatmapId,
+                    CurrentBeatmapId: current.BeatmapId);
+            case AnalysisRequestStarted started
+                when current.AnalysisRequest is { IsVersioned: true } active
+                    && started.RequestId.Value <= active.RequestId.Value:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.StaleAnalysisRequest,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventGeneration: started.BeatmapGeneration,
+                    CurrentGeneration: active.BeatmapGeneration,
+                    EventBeatmapId: started.BeatmapId,
+                    CurrentBeatmapId: active.BeatmapId);
+            case AnalysisSnapshotReceived completion
+                when completion.RequestId is null
+                    && current.AnalysisRequest is { IsVersioned: true } active
+                    && completion.Producer != AnalysisSnapshotProducer.BrowserFallback:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.StaleAnalysisRequest,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventGeneration: completion.BeatmapGeneration,
+                    CurrentGeneration: active.BeatmapGeneration,
+                    EventBeatmapId: completion.Snapshot.Beatmap.Id,
+                    CurrentBeatmapId: active.BeatmapId);
+            case AnalysisSnapshotReceived completion when completion.RequestId is { } requestId:
+                if (!requestId.IsValid)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.InvalidAnalysisRequestId,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventBeatmapId: completion.Snapshot.Beatmap.Id,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (current.AnalysisRequest is null)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.UnknownAnalysisRequest,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: completion.BeatmapGeneration,
+                        CurrentGeneration: current.BeatmapGeneration,
+                        EventBeatmapId: completion.Snapshot.Beatmap.Id,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (current.AnalysisRequest.RequestId != requestId
+                    || !current.AnalysisRequest.IsVersioned
+                    || current.AnalysisRequest.Status == AnalysisRequestStatus.Failed)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.StaleAnalysisRequest,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: completion.BeatmapGeneration,
+                        CurrentGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        EventBeatmapId: completion.Snapshot.Beatmap.Id,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                if (current.AnalysisRequest.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > current.AnalysisRequest.BeatmapGeneration)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.StaleAnalysisBeatmapGeneration,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        CurrentGeneration: current.BeatmapGeneration,
+                        EventBeatmapId: completion.Snapshot.Beatmap.Id,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (completion.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > completion.BeatmapGeneration)
+                {
+                    return null;
+                }
+
+                string completionBeatmapId = completion.Snapshot.Beatmap.Id?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(current.AnalysisRequest.BeatmapId)
+                    && !string.IsNullOrWhiteSpace(completionBeatmapId)
+                    && !string.Equals(
+                        current.AnalysisRequest.BeatmapId,
+                        completionBeatmapId,
+                        StringComparison.Ordinal))
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.AnalysisRequestMetadataMismatch,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: completion.BeatmapGeneration,
+                        CurrentGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        EventBeatmapId: completionBeatmapId,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                if (!string.Equals(
+                        completion.ConfigurationIdentity ?? string.Empty,
+                        current.AnalysisRequest.ConfigurationIdentity,
+                        StringComparison.Ordinal))
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.AnalysisRequestMetadataMismatch,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: completion.BeatmapGeneration,
+                        CurrentGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        EventBeatmapId: completionBeatmapId,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                return null;
+            case AnalysisRequestFailed failure when !failure.RequestId.IsValid:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.InvalidAnalysisRequestId,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventBeatmapId: failure.BeatmapId,
+                    CurrentBeatmapId: current.BeatmapId);
+            case AnalysisRequestFailed failure:
+                if (current.AnalysisRequest is null)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.UnknownAnalysisRequest,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (current.AnalysisRequest.RequestId != failure.RequestId
+                    || current.AnalysisRequest.Status != AnalysisRequestStatus.Running)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.StaleAnalysisRequest,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                if (current.AnalysisRequest.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > current.AnalysisRequest.BeatmapGeneration)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.StaleAnalysisBeatmapGeneration,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        CurrentGeneration: current.BeatmapGeneration,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (failure.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > failure.BeatmapGeneration)
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.StaleAnalysisBeatmapGeneration,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventGeneration: failure.BeatmapGeneration,
+                        CurrentGeneration: current.BeatmapGeneration,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.BeatmapId);
+                }
+
+                if (!string.IsNullOrWhiteSpace(failure.BeatmapId)
+                    && !string.IsNullOrWhiteSpace(current.AnalysisRequest.BeatmapId)
+                    && !string.Equals(
+                        failure.BeatmapId.Trim(),
+                        current.AnalysisRequest.BeatmapId,
+                        StringComparison.Ordinal))
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.AnalysisRequestMetadataMismatch,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                if (!string.IsNullOrWhiteSpace(failure.ConfigurationIdentity)
+                    && !string.Equals(
+                        failure.ConfigurationIdentity,
+                        current.AnalysisRequest.ConfigurationIdentity,
+                        StringComparison.Ordinal))
+                {
+                    return new OverlayRuntimeRejection(
+                        OverlayRuntimeRejectionKind.AnalysisRequestMetadataMismatch,
+                        runtimeEvent.Sequence,
+                        current.LastEventSequence,
+                        CurrentGeneration: current.AnalysisRequest.BeatmapGeneration,
+                        EventBeatmapId: failure.BeatmapId,
+                        CurrentBeatmapId: current.AnalysisRequest.BeatmapId);
+                }
+
+                return null;
+        }
+
+        return null;
     }
 
     private static OverlayRuntimeState ApplyPresentationAvailability(

@@ -13,16 +13,41 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
 public sealed class ArchitectureConventionTests
 {
     [Fact]
-    public void ApplicationAndReplayProjectsDoNotReferenceThePlatformLayer()
+    public void DomainAndApplicationProjectsKeepPlatformDependenciesPointingOutward()
     {
         string applicationProject = ReadRepositoryFile(
             Path.Combine("src", "Application", "ManiaMapAnalyzerOverlay.Application.csproj"));
+        string realtimeProject = ReadRepositoryFile(
+            Path.Combine("src", "RealtimeAnalysis", "ManiaMapAnalyzerOverlay.RealtimeAnalysis.csproj"));
         string replayProject = ReadRepositoryFile(
             Path.Combine("src", "ReplayAnalysis", "ManiaMapAnalyzerOverlay.ReplayAnalysis.csproj"));
 
         Assert.DoesNotContain("Avalonia", applicationProject, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Avalonia", realtimeProject, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Avalonia", replayProject, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ReplayAnalysis", applicationProject, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RealtimeAnalysis", applicationProject, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ReplayAnalysis", realtimeProject, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RealtimeAnalysis", replayProject, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Application", replayProject, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RawTosuJsonNormalizationStaysAtTheAvaloniaInfrastructureBoundary()
+    {
+        string collector = ReadRepositoryFile(
+            Path.Combine("src", "Avalonia", "Infrastructure", "Tosu", "TosuRealtimeCollector.cs"));
+        string realtimeContract = ReadRepositoryFile(
+            Path.Combine("src", "RealtimeAnalysis", "RealtimeTelemetryUpdate.cs"));
+        string realtimeAnalyzer = ReadRepositoryFile(
+            Path.Combine("src", "RealtimeAnalysis", "RealtimePauseCoach.cs"));
+
+        Assert.Contains("JsonElement", collector, StringComparison.Ordinal);
+        Assert.Contains("TosuRealtimePayloadNormalizer", collector, StringComparison.Ordinal);
+        Assert.DoesNotContain("JsonElement", realtimeContract, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Text.Json", realtimeContract, StringComparison.Ordinal);
+        Assert.DoesNotContain("JsonElement", realtimeAnalyzer, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Text.Json", realtimeAnalyzer, StringComparison.Ordinal);
     }
 
     [Fact]

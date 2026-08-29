@@ -25,7 +25,8 @@ public sealed record HeadlessSceneKey(
     string ConfigurationVersion,
     string DefaultEngineId,
     string DefaultAlgorithm,
-    int WidgetCount);
+    int WidgetCount,
+    string ConfigurationIdentity);
 
 /// <summary>
 /// Immutable typed key that identifies a full beatmap + effective configuration

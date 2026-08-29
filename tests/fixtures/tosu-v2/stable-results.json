@@ -1,0 +1,16 @@
+{
+  "state": { "name": "Results", "number": 7 },
+  "game": { "paused": true, "focused": true },
+  "beatmap": {
+    "id": "674175",
+    "hash": "stable-674175-hash",
+    "time": { "live": 30000 }
+  },
+  "play": {
+    "score": 30000,
+    "accuracy": 0.97,
+    "combo": { "current": 24, "max": 24 },
+    "hits": { "0": 1, "50": 0, "100": 2, "300": 24, "geki": 0, "katu": 0 },
+    "hitErrorArray": [10, 11, 12, 13, 14, 15, 16, 17]
+  }
+}

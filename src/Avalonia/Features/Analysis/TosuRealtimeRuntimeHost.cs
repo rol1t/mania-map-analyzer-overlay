@@ -6,7 +6,7 @@ using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 
@@ -26,7 +26,7 @@ public sealed class TosuRealtimeRuntimeHost : IDisposable
 
     public TosuRealtimeRuntimeHost(
         Func<CancellationToken, Task<JsonElement?>> readPayload,
-        Action<TosuRealtimeTelemetry> applyTelemetry,
+        Action<RealtimeTelemetryUpdate> applyTelemetry,
         TimeSpan interval,
         string source = "native-http",
         Action<string>? logBoundary = null,

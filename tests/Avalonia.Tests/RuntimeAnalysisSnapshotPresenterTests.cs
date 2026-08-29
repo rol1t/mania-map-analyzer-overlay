@@ -55,4 +55,23 @@ public sealed class RuntimeAnalysisSnapshotPresenterTests
         release.TrySetResult(null);
         await presentation;
     }
+    [Fact]
+    public async Task PreservesVersionedRequestAndConfigurationIdentity()
+    {
+        ManiaMapAnalyzerOverlay.Application.AnalysisRequestId? receivedRequest = null;
+        string? receivedConfiguration = null;
+        var presenter = new RuntimeAnalysisSnapshotPresenter(
+            (snapshot, requestId, configurationIdentity, _) =>
+            {
+                receivedRequest = requestId;
+                receivedConfiguration = configurationIdentity;
+                return Task.CompletedTask;
+            });
+        var requestId = new ManiaMapAnalyzerOverlay.Application.AnalysisRequestId(42);
+
+        await presenter.PresentAsync(new AnalysisSnapshot(), requestId, "config-A");
+
+        Assert.Equal(requestId, receivedRequest);
+        Assert.Equal("config-A", receivedConfiguration);
+    }
 }

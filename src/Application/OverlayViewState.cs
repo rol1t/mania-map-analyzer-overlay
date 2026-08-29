@@ -1,5 +1,5 @@
 ﻿using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Application;
 

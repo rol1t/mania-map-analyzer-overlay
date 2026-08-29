@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
@@ -23,7 +23,7 @@ public sealed class OverlayGameplayPollingControllerTests
             _ =>
             {
                 Interlocked.Increment(ref readCount);
-                return Task.FromResult<TosuRealtimeTelemetry?>(null);
+                return Task.FromResult<RealtimeTelemetryUpdate?>(null);
             },
             _ => { },
             TimeSpan.FromSeconds(1),
@@ -45,7 +45,7 @@ public sealed class OverlayGameplayPollingControllerTests
         var readStarted = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseRead = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queuedDispatches = new List<Action>();
-        var applied = new List<TosuRealtimeTelemetry>();
+        var applied = new List<RealtimeTelemetryUpdate>();
         var timer = new FakeTimer();
 
         using var controller = new OverlayGameplayPollingController(
@@ -79,7 +79,7 @@ public sealed class OverlayGameplayPollingControllerTests
     {
         var firstReadStarted = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstRead = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var applied = new List<TosuRealtimeTelemetry>();
+        var applied = new List<RealtimeTelemetryUpdate>();
         var timers = new Queue<FakeTimer>([new FakeTimer(), new FakeTimer()]);
         var readCount = 0;
 
@@ -113,7 +113,7 @@ public sealed class OverlayGameplayPollingControllerTests
         Assert.Equal(40_000, applied[0].Snapshot.MapTimeMs);
     }
 
-    private static TosuRealtimeTelemetry CreateTelemetry(int mapTimeMs)
+    private static RealtimeTelemetryUpdate CreateTelemetry(int mapTimeMs)
     {
         var snapshot = new RealtimeAnalysisSnapshot(
             "session-A",
@@ -131,7 +131,7 @@ public sealed class OverlayGameplayPollingControllerTests
             PauseCoachWidgetState.Playing,
             false,
             []);
-        return new TosuRealtimeTelemetry(
+        return new RealtimeTelemetryUpdate(
             "native-http",
             "Play",
             2,

@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <RootNamespace>ManiaMapAnalyzerOverlay.Application</RootNamespace>
+    <RootNamespace>ManiaMapAnalyzerOverlay.RealtimeAnalysis</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
-    <ProjectReference Include="..\RealtimeAnalysis\ManiaMapAnalyzerOverlay.RealtimeAnalysis.csproj" />
   </ItemGroup>
+
 </Project>

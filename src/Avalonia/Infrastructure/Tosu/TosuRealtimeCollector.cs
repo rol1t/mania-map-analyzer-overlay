@@ -1,40 +1,12 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
-
-/// <summary>
-/// Normalized diagnostic context for one raw Tosu v2 payload.
-/// </summary>
-public sealed record TosuRealtimeTelemetry(
-    string Source,
-    string RawStateName,
-    int? RawStateNumber,
-    bool? RawPaused,
-    RealtimeTelemetrySample Sample,
-    RealtimeAnalysisSnapshot Snapshot)
-{
-    public int JudgementTotal => Sample.Judgements.Total;
-
-    public int HitErrorSampleCount => Sample.HitErrorArray.Length;
-}
-
-/// <summary>
-/// Transport-neutral source for normalized Tosu realtime telemetry.
-/// </summary>
-public interface IRealtimeTelemetrySource
-{
-    Task<TosuRealtimeTelemetry?> ReadAsync(CancellationToken cancellationToken = default);
-
-    void Reset();
-}
+namespace ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 
 /// <summary>Gameplay state projected from one raw Tosu v2 payload.</summary>
 public sealed record TosuGameplayState(string Name, int? Number, bool? IsPlaying, bool? IsPaused);
@@ -49,7 +21,7 @@ public sealed class TosuRealtimeCollector
 {
     private readonly RealtimePlayAnalyzer _analyzer;
     private RealtimeTelemetrySample? _lastSample;
-    private TosuRealtimeTelemetry? _lastTelemetry;
+    private RealtimeTelemetryUpdate? _lastTelemetry;
     private string _candidateBeatmapId = string.Empty;
     private int _candidateBeatmapObservations;
 
@@ -60,7 +32,7 @@ public sealed class TosuRealtimeCollector
 
     public RealtimeAnalysisSnapshot? LastSnapshot => _analyzer.LastSnapshot;
 
-    public TosuRealtimeTelemetry? Process(
+    public RealtimeTelemetryUpdate? Process(
         JsonElement payload,
         string source = "native-http",
         DateTimeOffset? receivedAt = null)
@@ -92,9 +64,10 @@ public sealed class TosuRealtimeCollector
                 return _lastTelemetry with
                 {
                     Source = source,
-                    RawStateName = normalized.RawStateName,
-                    RawStateNumber = normalized.RawStateNumber,
-                    RawPaused = normalized.RawPaused
+                    Diagnostics = new RealtimeSourceDiagnostics(
+                        normalized.RawStateName,
+                        normalized.RawStateNumber,
+                        normalized.RawPaused)
                 };
             }
 
@@ -109,11 +82,12 @@ public sealed class TosuRealtimeCollector
 
         _lastSample = normalized.Sample;
         var snapshot = _analyzer.Process(normalized.Sample);
-        var telemetry = new TosuRealtimeTelemetry(
+        var telemetry = new RealtimeTelemetryUpdate(
             source,
-            normalized.RawStateName,
-            normalized.RawStateNumber,
-            normalized.RawPaused,
+            new RealtimeSourceDiagnostics(
+                normalized.RawStateName,
+                normalized.RawStateNumber,
+                normalized.RawPaused),
             normalized.Sample,
             snapshot);
         _lastTelemetry = telemetry;

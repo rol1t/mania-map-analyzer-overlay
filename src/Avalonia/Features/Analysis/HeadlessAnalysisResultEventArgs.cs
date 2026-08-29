@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 
@@ -18,7 +19,8 @@ public sealed class HeadlessAnalysisResultEventArgs : EventArgs
         string? actualAlgorithm,
         IReadOnlyList<AnalysisDiagnostic> diagnostics,
         AnalysisSnapshot snapshot,
-        bool isSceneResult)
+        bool isSceneResult,
+        AnalysisRequestId? requestId = null)
     {
         ArgumentNullException.ThrowIfNull(beatmap);
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -30,6 +32,7 @@ public sealed class HeadlessAnalysisResultEventArgs : EventArgs
         Diagnostics = diagnostics;
         Snapshot = snapshot;
         IsSceneResult = isSceneResult;
+        RequestId = requestId;
     }
 
     public TosuBeatmapSnapshot Beatmap
@@ -58,6 +61,11 @@ public sealed class HeadlessAnalysisResultEventArgs : EventArgs
     }
 
     public bool IsSceneResult
+    {
+        get;
+    }
+
+    public AnalysisRequestId? RequestId
     {
         get;
     }

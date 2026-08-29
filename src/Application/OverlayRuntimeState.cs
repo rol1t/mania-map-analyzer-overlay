@@ -1,5 +1,5 @@
 ﻿using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Application;
 
@@ -105,12 +105,11 @@ public sealed record OverlayRuntimeState
     }
 
     /// <summary>
-    /// A completed headless result whose beatmap is ahead of the latest
-    /// realtime frame. It is promoted only when realtime confirms the same
-    /// beatmap, so a fast analysis cannot be lost without allowing a stale
-    /// completion to replace the currently rendered map.
+    /// Causal slot for the latest headless analysis execution. The slot
+    /// records who produced the result and whether it is still running,
+    /// waiting for realtime confirmation, complete, or failed.
     /// </summary>
-    public AnalysisSnapshot? PendingAnalysis
+    public AnalysisRequestSlot? AnalysisRequest
     {
         get; init;
     }

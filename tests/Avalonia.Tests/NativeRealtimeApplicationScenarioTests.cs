@@ -6,7 +6,7 @@ using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
@@ -47,7 +47,7 @@ public sealed class NativeRealtimeApplicationScenarioTests
 
         await coordinator.DispatchAsync(new OverlayModeChanged(1, true));
         await coordinator.DispatchAsync(new PresentationAvailabilityChanged(2, true, false, 1));
-        TosuRealtimeTelemetry telemetry = Assert.IsType<TosuRealtimeTelemetry>(await source.ReadAsync());
+        RealtimeTelemetryUpdate telemetry = Assert.IsType<RealtimeTelemetryUpdate>(await source.ReadAsync());
         await coordinator.DispatchAsync(new RealtimeTelemetryReceived(3, telemetry));
         OverlayRuntimeState minimized = await coordinator.DispatchAsync(
             new OsuWindowStateChanged(4, true));
@@ -102,7 +102,7 @@ public sealed class NativeRealtimeApplicationScenarioTests
         var telemetrySequence = 3L;
         for (; index < payloads.Count; telemetrySequence++)
         {
-            TosuRealtimeTelemetry telemetry = Assert.IsType<TosuRealtimeTelemetry>(await source.ReadAsync());
+            RealtimeTelemetryUpdate telemetry = Assert.IsType<RealtimeTelemetryUpdate>(await source.ReadAsync());
             latest = await coordinator.DispatchAsync(new RealtimeTelemetryReceived(telemetrySequence, telemetry));
             if (telemetry.Snapshot.State == RealtimePlayState.Playing && firstPlaying is null)
             {
@@ -135,7 +135,7 @@ public sealed class NativeRealtimeApplicationScenarioTests
         payloads.Add(Payload("Play", paused: true, mapTimeMs: 40_000, score: 40_000, accuracy: 97.5, hits: 52, offsets: [4, 3, -1, 2]));
         for (; index < payloads.Count; telemetrySequence++)
         {
-            TosuRealtimeTelemetry telemetry = Assert.IsType<TosuRealtimeTelemetry>(await source.ReadAsync());
+            RealtimeTelemetryUpdate telemetry = Assert.IsType<RealtimeTelemetryUpdate>(await source.ReadAsync());
             latest = await coordinator.DispatchAsync(new RealtimeTelemetryReceived(telemetrySequence, telemetry));
         }
 

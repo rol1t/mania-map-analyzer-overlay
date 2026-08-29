@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
@@ -46,9 +47,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     // on the same beatmap must not allow a cached NM result to replace a DT
     // result (or vice versa) after WebView recreation.
     private HeadlessAnalysisKey? _lastPublishedAnalysisKey;
+    private AnalysisRequestId? _lastPublishedAnalysisRequestId;
+    private string? _lastPublishedAnalysisConfigurationIdentity;
     private HeadlessAnalysisKey? _candidateAnalysisKey;
     private int _candidateAnalysisObservations;
     private string _confirmedRealtimeBeatmapId = string.Empty;
+    private long _nextAnalysisRequestId;
     private AnalyzerEngineSupervisorState _currentState = AnalyzerEngineSupervisorState.NotStartedState;
     private int _pollInFlight;
     private bool _disposed;
@@ -84,6 +88,15 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     public event EventHandler<AnalyzerEngineSupervisorState>? StateChanged;
 
     public event EventHandler<HeadlessAnalysisResultEventArgs>? ResultProduced;
+
+    /// <summary>
+    /// Raised before analyzer work begins. The host forwards this event to the
+    /// Application runtime so a completion can be accepted only for the
+    /// request that is still current.
+    /// </summary>
+    public event EventHandler<HeadlessAnalysisRequestStartedEventArgs>? AnalysisRequestStarted;
+
+    public event EventHandler<HeadlessAnalysisRequestFailedEventArgs>? AnalysisRequestFailed;
 
     public event EventHandler<HeadlessBeatmapSourceStateEventArgs>? BeatmapSourceStateChanged;
 
@@ -294,10 +307,14 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     {
         AnalysisSnapshot? snapshot;
         HeadlessAnalysisKey? publishedKey;
+        AnalysisRequestId? publishedRequestId;
+        string? publishedConfigurationIdentity;
         lock (_sync)
         {
             snapshot = _lastSnapshot;
             publishedKey = _lastPublishedAnalysisKey;
+            publishedRequestId = _lastPublishedAnalysisRequestId;
+            publishedConfigurationIdentity = _lastPublishedAnalysisConfigurationIdentity;
         }
 
         if (snapshot is null)
@@ -340,12 +357,22 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         {
             ["headlessReplay"] = true
         };
-        await _presenter.PresentAsync(
-            snapshot with
-            {
-                Extensions = replayExtensions
-            },
-            cancellationToken).ConfigureAwait(false);
+        AnalysisSnapshot replaySnapshot = snapshot with
+        {
+            Extensions = replayExtensions
+        };
+        if (publishedRequestId is { } requestId)
+        {
+            await _presenter.PresentAsync(
+                replaySnapshot,
+                requestId,
+                publishedConfigurationIdentity ?? string.Empty,
+                cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _presenter.PresentAsync(replaySnapshot, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static bool IsSameBeatmap(AnalysisSnapshot snapshot, TosuBeatmapSnapshot current)
@@ -408,6 +435,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 _lastAnalysisKey = null;
                 _lastSceneKey = null;
                 _lastPublishedAnalysisKey = null;
+                _lastPublishedAnalysisRequestId = null;
+                _lastPublishedAnalysisConfigurationIdentity = null;
                 _candidateAnalysisKey = null;
                 _candidateAnalysisObservations = 0;
             }
@@ -434,29 +463,132 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     public Task PushSnapshotAsync(
         AnalysisSnapshot snapshot,
         CancellationToken cancellationToken = default) =>
-        PushSnapshotCoreAsync(snapshot, null, cancellationToken);
+        PushSnapshotCoreAsync(snapshot, null, null, commitAnalysisKey: false, cancellationToken);
 
     public Task PushSnapshotAsync(
         AnalysisSnapshot snapshot,
         HeadlessAnalysisKey analysisKey,
         CancellationToken cancellationToken = default) =>
-        PushSnapshotCoreAsync(snapshot, analysisKey, cancellationToken);
+        PushSnapshotCoreAsync(snapshot, analysisKey, null, commitAnalysisKey: true, cancellationToken);
+
+    public Task PushSnapshotAsync(
+        AnalysisSnapshot snapshot,
+        AnalysisRequestId requestId,
+        HeadlessAnalysisKey analysisKey,
+        CancellationToken cancellationToken = default) =>
+        PushSnapshotCoreAsync(snapshot, analysisKey, requestId, commitAnalysisKey: true, cancellationToken);
+
+    /// <summary>
+    /// Publishes presentation-only enrichment, such as imported replay data,
+    /// without discarding the causal identity of the headless result it
+    /// enriches. If another analysis becomes authoritative while the
+    /// enrichment is in flight, the stale enrichment is not cached.
+    /// </summary>
+    public async Task PushEnrichedSnapshotAsync(
+        AnalysisSnapshot snapshot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        HeadlessAnalysisKey? publishedKey;
+        AnalysisRequestId? publishedRequestId;
+        string? publishedConfigurationIdentity;
+        lock (_sync)
+        {
+            publishedKey = _lastPublishedAnalysisKey;
+            publishedRequestId = _lastPublishedAnalysisRequestId;
+            publishedConfigurationIdentity = _lastPublishedAnalysisConfigurationIdentity;
+        }
+
+        try
+        {
+            if (publishedRequestId is { } requestId)
+            {
+                if (string.IsNullOrWhiteSpace(publishedConfigurationIdentity))
+                {
+                    throw new InvalidOperationException(
+                        "A versioned analysis enrichment requires its effective configuration identity.");
+                }
+
+                await _presenter.PresentAsync(
+                    snapshot,
+                    requestId,
+                    publishedConfigurationIdentity,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _presenter.PresentAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            }
+
+            lock (_sync)
+            {
+                if (Equals(_lastPublishedAnalysisKey, publishedKey)
+                    && _lastPublishedAnalysisRequestId == publishedRequestId
+                    && string.Equals(
+                        _lastPublishedAnalysisConfigurationIdentity,
+                        publishedConfigurationIdentity,
+                        StringComparison.Ordinal))
+                {
+                    _lastSnapshot = snapshot;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Warning(
+                "Headless snapshot enrichment",
+                $"Could not push enriched snapshot: {exception.Message}",
+                exception);
+            if (publishedRequestId is not null)
+            {
+                throw;
+            }
+        }
+    }
 
     private async Task PushSnapshotCoreAsync(
         AnalysisSnapshot snapshot,
         HeadlessAnalysisKey? analysisKey,
+        AnalysisRequestId? requestId,
+        bool commitAnalysisKey,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
         try
         {
-            await _presenter.PresentAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            if (requestId is { } versionedRequestId)
+            {
+                if (analysisKey is null)
+                {
+                    throw new InvalidOperationException(
+                        "A versioned analysis snapshot requires its effective analysis key.");
+                }
+
+                await _presenter.PresentAsync(
+                    snapshot,
+                    versionedRequestId,
+                    HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(analysisKey),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _presenter.PresentAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            }
             lock (_sync)
             {
                 _lastSnapshot = snapshot;
-                _lastPublishedAnalysisKey = analysisKey;
-                if (analysisKey is not null)
+                _lastPublishedAnalysisKey = commitAnalysisKey ? analysisKey : null;
+                _lastPublishedAnalysisRequestId = requestId;
+                _lastPublishedAnalysisConfigurationIdentity = requestId is not null && analysisKey is not null
+                    ? HeadlessAnalysisKeyBuilder.BuildConfigurationIdentity(analysisKey)
+                    : null;
+                if (commitAnalysisKey && analysisKey is not null)
                 {
                     // Deduplication is a completion checkpoint, not an
                     // in-flight marker. A fast A -> B -> C transition can make
@@ -476,6 +608,10 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         catch (Exception exception)
         {
             AppLogger.Warning("Headless snapshot push", $"Could not push snapshot: {exception.Message}", exception);
+            if (requestId is not null)
+            {
+                throw;
+            }
         }
     }
 
@@ -486,6 +622,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         {
             _lastSnapshot = snapshot;
             _lastPublishedAnalysisKey = null;
+            _lastPublishedAnalysisRequestId = null;
+            _lastPublishedAnalysisConfigurationIdentity = null;
         }
     }
 
@@ -755,6 +893,9 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             return;
         }
 
+        AnalysisRequestId? requestId = null;
+        TosuBeatmapSnapshot? requestBeatmap = null;
+        HeadlessAnalysisKey? requestKey = null;
         try
         {
             TosuBeatmapSnapshot snapshot;
@@ -876,6 +1017,10 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 "Headless beatmap poll",
                 $"New beatmap {snapshot.Identity.StableKey} title={snapshot.Metadata.Title} version={snapshot.Metadata.Version} rate={snapshot.Rate} mods=[{string.Join(",", snapshot.Mods)}] effective={analysisKey.SceneKey}");
 
+            requestId = BeginAnalysisRequest(snapshot, analysisKey);
+            requestBeatmap = snapshot;
+            requestKey = analysisKey;
+
             if (_sceneRunner is not null && _widgetRunner is not null)
             {
                 var sceneSpec = BuildSceneSpec(snapshot);
@@ -884,7 +1029,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                     try
                     {
                         var sceneSnapshot = await _sceneRunner.RunAsync(sceneSpec, cancellationToken).ConfigureAwait(false);
-                        await PushSceneSnapshotAsync(snapshot, sceneSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
+                        await PushSceneSnapshotAsync(snapshot, sceneSnapshot, analysisKey, requestId.Value, cancellationToken).ConfigureAwait(false);
                         return;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -911,6 +1056,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
 
             if (supervisor is null)
             {
+                ReportAnalysisRequestFailure(
+                    requestId.Value,
+                    requestBeatmap,
+                    requestKey,
+                    "analysis_supervisor_unavailable",
+                    "The analyzer supervisor was unavailable before execution started.");
                 return;
             }
 
@@ -924,11 +1075,17 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             if (result is null)
             {
                 AppLogger.Info("Headless analysis", $"Headless analysis returned no result for {snapshot.Identity.StableKey}. DOM adapter remains the explicit fallback for this beatmap.");
+                ReportAnalysisRequestFailure(
+                    requestId.Value,
+                    requestBeatmap,
+                    requestKey,
+                    "analysis_no_result",
+                    "The analyzer returned no result.");
                 return;
             }
 
             LogAnalysisResult(snapshot, result);
-            await PushAnalysisResultSnapshotAsync(snapshot, result, analysisKey, cancellationToken).ConfigureAwait(false);
+            await PushAnalysisResultSnapshotAsync(snapshot, result, analysisKey, requestId.Value, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -936,6 +1093,18 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         }
         catch (Exception exception)
         {
+            if (requestId is { } failedRequestId
+                && requestBeatmap is not null
+                && requestKey is not null)
+            {
+                ReportAnalysisRequestFailure(
+                    failedRequestId,
+                    requestBeatmap,
+                    requestKey,
+                    "analysis_failed",
+                    exception.Message);
+            }
+
             AppLogger.Error("Polling headless beatmap", exception, userVisible: false);
         }
         finally
@@ -944,10 +1113,57 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         }
     }
 
+    private AnalysisRequestId BeginAnalysisRequest(
+        TosuBeatmapSnapshot beatmap,
+        HeadlessAnalysisKey analysisKey)
+    {
+        var requestId = new AnalysisRequestId(Interlocked.Increment(ref _nextAnalysisRequestId));
+        var args = new HeadlessAnalysisRequestStartedEventArgs(requestId, beatmap, analysisKey);
+        try
+        {
+            AnalysisRequestStarted?.Invoke(this, args);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Starting headless analysis request", exception, userVisible: false);
+        }
+
+        return requestId;
+    }
+
+    private void ReportAnalysisRequestFailure(
+        AnalysisRequestId requestId,
+        TosuBeatmapSnapshot? beatmap,
+        HeadlessAnalysisKey? analysisKey,
+        string failureCode,
+        string? failureMessage)
+    {
+        if (beatmap is null || analysisKey is null)
+        {
+            return;
+        }
+
+        var args = new HeadlessAnalysisRequestFailedEventArgs(
+            requestId,
+            beatmap,
+            analysisKey,
+            failureCode,
+            failureMessage);
+        try
+        {
+            AnalysisRequestFailed?.Invoke(this, args);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Reporting headless analysis request failure", exception, userVisible: false);
+        }
+    }
+
     private async Task PushSceneSnapshotAsync(
         TosuBeatmapSnapshot snapshot,
         WidgetAnalysisSceneSnapshot sceneSnapshot,
         HeadlessAnalysisKey analysisKey,
+        AnalysisRequestId requestId,
         CancellationToken cancellationToken)
     {
         if (!await IsCurrentAnalysisAsync(analysisKey, cancellationToken).ConfigureAwait(false))
@@ -972,6 +1188,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
                 _lastAnalysisKey = null;
                 _lastSceneKey = null;
                 _lastPublishedAnalysisKey = null;
+                _lastPublishedAnalysisRequestId = null;
+                _lastPublishedAnalysisConfigurationIdentity = null;
                 _candidateAnalysisKey = null;
                 _candidateAnalysisObservations = 0;
             }
@@ -994,11 +1212,16 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             // Publish the diagnostic snapshot, but do not mark this analysis
             // identity as complete. The next poll must be able to recreate a
             // failed worker/runtime without requiring a map or modifier change.
-            await PushSnapshotAsync(headlessSnapshot, cancellationToken).ConfigureAwait(false);
+            await PushSnapshotCoreAsync(
+                headlessSnapshot,
+                analysisKey,
+                requestId,
+                commitAnalysisKey: false,
+                cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await PushSnapshotAsync(headlessSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
+            await PushSnapshotAsync(headlessSnapshot, requestId, analysisKey, cancellationToken).ConfigureAwait(false);
         }
 
         ResultProduced?.Invoke(this, new HeadlessAnalysisResultEventArgs(
@@ -1007,7 +1230,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             actualAlgorithm,
             firstWidget.Diagnostics,
             headlessSnapshot,
-            isSceneResult: true));
+            isSceneResult: true,
+            requestId: requestId));
     }
 
     private static bool HasTransientEngineFailure(ComposedWidgetSnapshot widget)
@@ -1082,10 +1306,12 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
     {
         AnalysisSnapshot? current;
         HeadlessAnalysisKey? publishedKey;
+        AnalysisRequestId? publishedRequestId;
         lock (_sync)
         {
             current = _lastSnapshot;
             publishedKey = _lastPublishedAnalysisKey;
+            publishedRequestId = _lastPublishedAnalysisRequestId;
         }
 
         if (current is null || publishedKey is null || !publishedKey.Equals(analysisKey))
@@ -1102,13 +1328,21 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         AppLogger.Debug(
             "Headless snapshot metadata",
             $"Refreshed delayed Tosu metadata for {beatmap.Identity.StableKey}: star={enriched.Difficulty.StarRating?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; bpm={enriched.Beatmap.BpmLabel}; keys={enriched.Difficulty.Keys?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}.");
-        await PushSnapshotAsync(enriched, analysisKey, cancellationToken).ConfigureAwait(false);
+        if (publishedRequestId is { } requestId)
+        {
+            await PushSnapshotAsync(enriched, requestId, analysisKey, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await PushSnapshotAsync(enriched, analysisKey, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task PushAnalysisResultSnapshotAsync(
         TosuBeatmapSnapshot snapshot,
         AnalysisResult result,
         HeadlessAnalysisKey analysisKey,
+        AnalysisRequestId requestId,
         CancellationToken cancellationToken)
     {
         if (!await IsCurrentAnalysisAsync(analysisKey, cancellationToken).ConfigureAwait(false))
@@ -1118,7 +1352,7 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
         }
 
         var headlessSnapshot = HeadlessSnapshotConverter.FromAnalysisResult(snapshot, null, result);
-        await PushSnapshotAsync(headlessSnapshot, analysisKey, cancellationToken).ConfigureAwait(false);
+        await PushSnapshotAsync(headlessSnapshot, requestId, analysisKey, cancellationToken).ConfigureAwait(false);
 
         ResultProduced?.Invoke(this, new HeadlessAnalysisResultEventArgs(
             snapshot,
@@ -1126,7 +1360,8 @@ public sealed class HeadlessAnalysisController : IAsyncDisposable
             result.ActualAlgorithm,
             result.Diagnostics,
             headlessSnapshot,
-            isSceneResult: false));
+            isSceneResult: false,
+            requestId: requestId));
     }
 
     private void LogSceneResult(WidgetAnalysisSceneSnapshot sceneSnapshot)

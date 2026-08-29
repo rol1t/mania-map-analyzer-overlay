@@ -2,11 +2,13 @@
 
 Status: architecture direction approved; merged runtime remains transitional.
 
-Re-audited against `origin/main` at `1894845` on 2026-08-24. The serialized
+Re-audited against release `v2.4.0` (`0e8c331`) on 2026-08-28. The serialized
 Application runtime, native realtime path, composed view-state, fullscreen
-transport and isolated headless WebView are present. `MainWindow`, browser
-Tosu/Pause Coach compatibility, renderer arbitration and mirrored legacy state
-still retain production responsibilities, so the migration is not complete.
+transport and isolated headless WebView are present. Realtime/Pause Coach is
+now a distinct domain assembly and raw Tosu normalization lives at the
+Avalonia infrastructure boundary. `MainWindow`, browser Tosu/Pause Coach
+compatibility, renderer arbitration and mirrored legacy state still retain
+production responsibilities, so the migration is not complete.
 
 The detailed, current execution backlog is
 [ARCHITECTURE_COMPLETION_PLAN.md](ARCHITECTURE_COMPLETION_PLAN.md). Its work
@@ -14,7 +16,7 @@ packages supersede the implementation-status wording in the historical PR A-J
 sequence below. That sequence remains useful as design history, but must not be
 used to infer which responsibilities are already authoritative.
 
-Approved direction: 2026-08-23. Current-state audit: 2026-08-24.
+Approved direction: 2026-08-23. Current-state audit: 2026-08-28.
 
 Quality baseline for this working tree: the Release solution build completes
 with 94 existing analyzer/compiler warnings and zero errors on the configured
@@ -121,15 +123,13 @@ canonical attempt.
 
 ### Medium
 
-1. `ReplayAnalysis` contains deterministic replay, realtime Pause Coach domain
-   behavior, and Tosu JSON normalization that belong to separate boundaries.
-2. `Core` contains domain contracts, orchestration contracts, and presentation
+1. `Core` contains domain contracts, orchestration contracts, and presentation
    snapshot contracts.
-3. `MainWindow` creates and coordinates infrastructure services instead of
+2. `MainWindow` creates and coordinates infrastructure services instead of
    receiving focused controllers from a composition root.
-4. Concurrency is coordinated through unrelated locks, semaphores, interlocked
+3. Concurrency is coordinated through unrelated locks, semaphores, interlocked
    flags, dispatcher callbacks, and generation counters.
-5. Logs are primarily free text rather than structured runtime transitions.
+4. Logs are primarily free text rather than structured runtime transitions.
 
 ## State ownership
 
@@ -138,11 +138,11 @@ canonical attempt.
 | Gameplay state | C# normalizer, coordinator, MainWindow compatibility flags, browser adapter | `OverlayRuntimeCoordinator` | Remove compatibility flags after parity sequences pass |
 | Tosu connection | `TosuService` plus typed coordinator event | typed `TosuConnectionState` + transport generation | Move reconnect/backoff policy behind the host |
 | Native realtime collection | `TosuRealtimeRuntimeHost` and polling controller; `TosuRealtimePayloadResult` at HTTP boundary | Application-owned realtime port | Start from application lifecycle and keep transport/reconnect outcomes typed |
-| Tosu normalization | `TosuRealtimeCollector` for native path; browser adapter fallback | one shared normalization boundary | Prove HTTP/WebSocket fixture parity before deleting fallback |
+| Tosu normalization | `Avalonia/Infrastructure/Tosu/TosuRealtimeCollector` for native path; browser adapter fallback | one infrastructure normalization boundary | Prove HTTP/WebSocket fixture parity before deleting fallback |
 | Beatmap identity | Tosu source, collector, browser adapter, snapshots, renderer | application beatmap state | Reject carousel/intermediate and identity-free stale updates |
 | Attempt/session ID | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Native view-state delivery on every surface |
 | Realtime metrics | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Cross-runtime fixtures and manual surface acceptance |
-| Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` | Causal request identity and complete Application composition |
+| Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` | `AnalysisRequestId`/generation checks and complete Application composition |
 | Replay result | replay session and renderer | versioned `ReplayAnalysisState` | Keep exact replay independent from realtime slots |
 | Desired visibility | coordinator derivation plus MainWindow compatibility mirror | pure application derivation | Remove legacy visibility mirror after parity |
 | Browser readiness | MainWindow, delivery controller and publisher | `PresentationSurfaceState` | Give preview/fullscreen explicit generations |
@@ -339,9 +339,8 @@ general-purpose dependency injection container is planned.
 
 ## Solution structure
 
-The merged solution already contains Application. One additional domain
-boundary is justified to prevent exact replay from becoming the home of
-realtime analysis:
+The solution now contains a distinct realtime domain boundary so exact replay
+does not become the home of realtime analysis:
 
 ```text
 src/Core
@@ -365,12 +364,8 @@ src/Updater
   in Avalonia services but is decomposed along release/download/install/state
   boundaries.
 
-A separate Infrastructure assembly is not required initially. Infrastructure
-folders inside Avalonia are sufficient until another host needs to reuse them.
-If the dependency audit proves that a `Core/Realtime` namespace is materially
-simpler than a new project, that deviation must be recorded in an ADR before
-implementation. The migration must not begin with unrelated project/folder
-renames.
+A separate Infrastructure assembly is not required. Infrastructure folders
+inside Avalonia are sufficient until another host needs to reuse them.
 
 ## Existing components to preserve
 
@@ -431,8 +426,11 @@ services, window, presenter, and clock. It must cover:
 
 Recorded raw fixtures:
 
+- `stable-select-play.json`;
 - `stable-playing.json`;
 - `stable-paused.json`;
+- `stable-resumed.json`;
+- `stable-failed.json`;
 - `stable-results.json`;
 - `lazer-playing.json`;
 - `lazer-paused.json`;
@@ -459,9 +457,10 @@ DPI, and Win32 visibility checks. Manual runtime acceptance remains required.
 CI should enforce:
 
 - Core does not reference Avalonia, WebView, Windows, or Infrastructure;
-- ReplayAnalysis does not reference Avalonia;
+- RealtimeAnalysis and ReplayAnalysis do not reference Avalonia or each other;
 - Application does not reference Avalonia or `MainWindow`;
-- after the Tosu migration, ReplayAnalysis does not parse Tosu JSON;
+- raw Tosu JSON normalization remains in Avalonia infrastructure and does not
+  enter RealtimeAnalysis or ReplayAnalysis;
 - MainWindow does not reference realtime collector/analyzer implementations;
 - renderer assets do not contain Tosu routes, session lifecycle, retry logic,
   or metrics calculations;

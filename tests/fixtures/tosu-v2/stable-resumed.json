@@ -1,0 +1,18 @@
+{
+  "state": { "name": "Playing", "number": 2 },
+  "game": { "paused": false, "focused": true },
+  "beatmap": {
+    "id": "674175",
+    "hash": "stable-674175-hash",
+    "time": { "live": 31000 }
+  },
+  "play": {
+    "score": 31000,
+    "accuracy": 0.968,
+    "combo": { "current": 26, "max": 26 },
+    "mods": { "array": [{ "acronym": "DT" }] },
+    "hits": { "0": 1, "50": 0, "100": 2, "300": 26, "geki": 0, "katu": 0 },
+    "hitErrorArray": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "unstableRate": 32.1
+  }
+}

@@ -1,4 +1,4 @@
-﻿namespace ManiaMapAnalyzerOverlay.ReplayAnalysis;
+﻿namespace ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 /// <summary>
 /// Cumulative judgement counts parsed from tosu telemetry. The values are

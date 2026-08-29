@@ -1,8 +1,8 @@
 ﻿using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis.Tests;
+namespace ManiaMapAnalyzerOverlay.RealtimeAnalysis.Tests;
 
 public sealed class PauseCoachAnalyzerTests
 {

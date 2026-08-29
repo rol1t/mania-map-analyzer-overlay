@@ -1,7 +1,7 @@
 ﻿using System.Globalization;
 using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
@@ -31,8 +31,8 @@ public sealed class TosuRealtimeTelemetrySourceTests
 
         for (var index = 0; index < payloads.Length; index++)
         {
-            TosuRealtimeTelemetry expected = (await http.ReadAsync())!;
-            TosuRealtimeTelemetry actual = (await websocket.ReadAsync())!;
+            RealtimeTelemetryUpdate expected = (await http.ReadAsync())!;
+            RealtimeTelemetryUpdate actual = (await websocket.ReadAsync())!;
 
             Assert.Equal("native-http", expected.Source);
             Assert.Equal("websocket", actual.Source);

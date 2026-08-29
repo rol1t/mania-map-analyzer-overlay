@@ -1,8 +1,10 @@
 ﻿using System.Text.Json;
+using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
+using Xunit;
 
-namespace ManiaMapAnalyzerOverlay.ReplayAnalysis.Tests;
+namespace ManiaMapAnalyzerOverlay.Avalonia.Tests;
 
 /// <summary>
 /// Test-only characterization harness for the pre-coordinator pipeline.
@@ -115,7 +117,7 @@ public sealed class CurrentPipelineCharacterizationTests
 
         public RealtimeAnalysisSnapshot Push(JsonElement payload)
         {
-            TosuRealtimeTelemetry telemetry = _collector.Process(
+            RealtimeTelemetryUpdate telemetry = _collector.Process(
                 payload,
                 "characterization",
                 _start.AddSeconds(_sampleNumber++))!;

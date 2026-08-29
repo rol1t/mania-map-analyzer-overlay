@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
@@ -80,6 +81,53 @@ public sealed class HeadlessAnalysisControllerCompletionTests
         finally
         {
             presenter.Release();
+            await controller.DisposeAsync();
+            Directory.Delete(catalogRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnrichedSnapshotPreservesPublishedRequestCausality()
+    {
+        string catalogRoot = Path.Combine(
+            Path.GetTempPath(),
+            "mania-map-analyzer-headless-enrichment-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(catalogRoot);
+
+        var presenter = new VersionedRecordingPresenter();
+        var controller = CreateController(catalogRoot, presenter);
+        TosuBeatmapSnapshot beatmap = CreateSnapshot();
+        HeadlessAnalysisKey key = HeadlessAnalysisKeyBuilder.BuildAnalysisKey(
+            beatmap,
+            EffectiveAnalysisConfigurationStore.CreateDefault());
+        var requestId = new AnalysisRequestId(42);
+        var analysis = new AnalysisSnapshot
+        {
+            SourceId = "headless",
+            Beatmap = new BeatmapSnapshot { Id = beatmap.Identity.Id },
+            Difficulty = new DifficultySnapshot { StarRating = 4.2 }
+        };
+        AnalysisSnapshot enriched = analysis with
+        {
+            Difficulty = new DifficultySnapshot { StarRating = 4.3 }
+        };
+
+        try
+        {
+            await controller.PushSnapshotAsync(analysis, requestId, key);
+            await controller.PushEnrichedSnapshotAsync(enriched);
+
+            Assert.Equal(2, presenter.Calls.Count);
+            Assert.All(presenter.Calls, call => Assert.Equal(requestId, call.RequestId));
+            Assert.All(
+                presenter.Calls,
+                call => Assert.Equal(key.SceneKey.ConfigurationIdentity, call.ConfigurationIdentity));
+            Assert.Same(enriched, controller.LastSnapshot);
+            Assert.Equal(key, ReadPrivateField(controller, "_lastPublishedAnalysisKey"));
+            Assert.Equal(requestId, ReadPrivateField(controller, "_lastPublishedAnalysisRequestId"));
+        }
+        finally
+        {
             await controller.DisposeAsync();
             Directory.Delete(catalogRoot, recursive: true);
         }
@@ -175,4 +223,37 @@ public sealed class HeadlessAnalysisControllerCompletionTests
 
         public void Release() => _release.TrySetResult(null);
     }
+
+    private sealed class VersionedRecordingPresenter : IAnalysisSnapshotPresenter
+    {
+        public List<PresentationCall> Calls
+        {
+            get;
+        } = [];
+
+        public Task PresentAsync(
+            AnalysisSnapshot snapshot,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Calls.Add(new PresentationCall(snapshot, null, null));
+            return Task.CompletedTask;
+        }
+
+        public Task PresentAsync(
+            AnalysisSnapshot snapshot,
+            AnalysisRequestId requestId,
+            string configurationIdentity,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Calls.Add(new PresentationCall(snapshot, requestId, configurationIdentity));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed record PresentationCall(
+        AnalysisSnapshot Snapshot,
+        AnalysisRequestId? RequestId,
+        string? ConfigurationIdentity);
 }

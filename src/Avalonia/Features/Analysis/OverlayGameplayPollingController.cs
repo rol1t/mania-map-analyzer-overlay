@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
-using ManiaMapAnalyzerOverlay.ReplayAnalysis;
+using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
 
@@ -60,8 +60,8 @@ public sealed class AvaloniaOverlayGameplayPollingTimer : IOverlayGameplayPollin
 /// </summary>
 public sealed class OverlayGameplayPollingController : IDisposable
 {
-    private readonly Func<CancellationToken, Task<TosuRealtimeTelemetry?>> _readTelemetry;
-    private readonly Action<TosuRealtimeTelemetry> _applyTelemetry;
+    private readonly Func<CancellationToken, Task<RealtimeTelemetryUpdate?>> _readTelemetry;
+    private readonly Action<RealtimeTelemetryUpdate> _applyTelemetry;
     private readonly Action<string>? _logBoundary;
     private readonly Action<Exception>? _handleFailure;
     private readonly TimeSpan _interval;
@@ -76,8 +76,8 @@ public sealed class OverlayGameplayPollingController : IDisposable
     private bool _disposed;
 
     public OverlayGameplayPollingController(
-        Func<CancellationToken, Task<TosuRealtimeTelemetry?>> readTelemetry,
-        Action<TosuRealtimeTelemetry> applyTelemetry,
+        Func<CancellationToken, Task<RealtimeTelemetryUpdate?>> readTelemetry,
+        Action<RealtimeTelemetryUpdate> applyTelemetry,
         TimeSpan interval,
         Action<string>? logBoundary = null,
         Action<Exception>? handleFailure = null,
@@ -223,7 +223,7 @@ public sealed class OverlayGameplayPollingController : IDisposable
                 return;
             }
 
-            TosuRealtimeTelemetry? telemetry = await _readTelemetry(cancellationToken).ConfigureAwait(false);
+            RealtimeTelemetryUpdate? telemetry = await _readTelemetry(cancellationToken).ConfigureAwait(false);
             if (telemetry is null)
             {
                 _logBoundary?.Invoke("payload-null-or-normalization-failed");
