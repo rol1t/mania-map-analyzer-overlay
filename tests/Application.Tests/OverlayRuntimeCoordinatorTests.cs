@@ -392,6 +392,61 @@ public sealed class OverlayRuntimeCoordinatorTests
         Assert.Equal(29_000, viewState.Realtime?.MapTimeMs);
     }
 
+    [Fact]
+    public async Task ViewStateVersionChangesOnlyWhenRenderedContractChanges()
+    {
+        await using var coordinator = new OverlayRuntimeCoordinator();
+        var viewStates = new List<OverlayViewState>();
+        coordinator.ViewStateChanged += (_, args) => viewStates.Add(args.ViewState);
+
+        await coordinator.DispatchAsync(new RealtimeTelemetryReceived(
+            1,
+            CreateTelemetry(RealtimePlayState.Playing, 1_000, "session-A")));
+        await coordinator.DispatchAsync(new RealtimeTelemetryReceived(
+            2,
+            CreateTelemetry(RealtimePlayState.Playing, 1_000, "session-A") with
+            {
+                Snapshot = CreateTelemetry(RealtimePlayState.Playing, 1_000, "session-A").Snapshot with
+                {
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }
+            }));
+
+        OverlayViewState first = Assert.Single(viewStates);
+        Assert.Equal(1, first.Version);
+        Assert.Equal(1, first.RuntimeVersion);
+
+        await coordinator.DispatchAsync(new VisibilityPolicyChanged(3, "paused-only"));
+
+        Assert.Equal(2, viewStates.Count);
+        Assert.Equal(2, viewStates[1].Version);
+        Assert.Equal(3, viewStates[1].RuntimeVersion);
+    }
+
+    [Fact]
+    public void PresentationContractSeparatesDesiredAndActualVisibility()
+    {
+        OverlayRuntimeState state = OverlayRuntimeReducer.Apply(
+            OverlayRuntimeState.Empty,
+            new OverlayModeChanged(1, true));
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new RealtimeTelemetryReceived(
+                2,
+                CreateTelemetry(RealtimePlayState.Playing, 1_000, "session-A")));
+        state = OverlayRuntimeReducer.Apply(
+            state,
+            new PresentationAvailabilityChanged(3, Ready: true, Visible: false, SurfaceGeneration: 1));
+
+        OverlayViewState view = OverlayViewStateComposer.Compose(state);
+
+        Assert.True(view.Presentation.DesiredVisibility);
+        Assert.True(view.Presentation.SurfaceReady);
+        Assert.False(view.Presentation.ActualVisibility);
+        Assert.False(state.ActualVisibility);
+        Assert.True(state.DesiredVisibility);
+    }
+
     private static RealtimeTelemetryUpdate CreateTelemetry(
         RealtimePlayState state,
         int mapTimeMs,

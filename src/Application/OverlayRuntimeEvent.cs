@@ -46,9 +46,44 @@ public sealed record AnalysisRequestFailed(
     string BeatmapId = "",
     string ConfigurationIdentity = "") : OverlayRuntimeEvent(Sequence);
 
+public sealed record ReplayAnalysisRequestStarted(
+    long Sequence,
+    ReplayRequestId RequestId,
+    long BeatmapGeneration,
+    string BeatmapId,
+    string BeatmapHash) : OverlayRuntimeEvent(Sequence);
+
+public sealed record ReplayAnalysisCompleted(
+    long Sequence,
+    ReplayRequestId RequestId,
+    long BeatmapGeneration,
+    string BeatmapId,
+    string BeatmapHash,
+    ReplayOverlaySnapshot Snapshot) : OverlayRuntimeEvent(Sequence);
+
+public sealed record ReplayAnalysisRequestFailed(
+    long Sequence,
+    ReplayRequestId RequestId,
+    string FailureCode,
+    string? FailureMessage = null,
+    long BeatmapGeneration = 0,
+    string BeatmapId = "",
+    string BeatmapHash = "") : OverlayRuntimeEvent(Sequence);
+
+public sealed record ReplayAnalysisRequestCancelled(
+    long Sequence,
+    ReplayRequestId RequestId,
+    string? CancellationMessage = null,
+    long BeatmapGeneration = 0,
+    string BeatmapId = "",
+    string BeatmapHash = "") : OverlayRuntimeEvent(Sequence);
+
 public sealed record PresentationAvailabilityChanged(
     long Sequence,
     bool Ready,
+    // Ready/Visible are feedback from the current surface. Desired
+    // visibility is derived from application policy and is not supplied by
+    // a platform callback.
     bool Visible,
     long SurfaceGeneration = 0) : OverlayRuntimeEvent(Sequence);
 

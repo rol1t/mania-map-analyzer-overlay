@@ -1810,7 +1810,7 @@ public partial class MainWindow : Window
                 // serialized desktop publisher instead of invoking a second,
                 // competing appearance script on the WebView.
                 _presentationDelivery.SubmitDesktop(
-                    OverlayViewStateComposer.Compose(_runtimeCoordinator.Current));
+                    _runtimeCoordinator.CurrentViewState);
             }
             applied = true;
         }
@@ -2055,6 +2055,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        ReplayAnalysisRequest? replayRequest = null;
+        bool replayTerminalEventPublished = false;
         try
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2088,23 +2090,76 @@ public partial class MainWindow : Window
             }
 
             var beatmap = await _headlessAnalysisController.BeatmapSource.GetCurrentAsync();
-            var result = await _replayAnalysisSession.AnalyzeAsync(beatmap);
-            var baseSnapshot = _headlessAnalysisController.LastSnapshot;
-            if (baseSnapshot is null)
+            OverlayRuntimeState runtime = _runtimeCoordinator.Current;
+            long beatmapGeneration = string.Equals(
+                    runtime.BeatmapId,
+                    beatmap.Identity.Id,
+                    StringComparison.Ordinal)
+                ? runtime.BeatmapGeneration
+                : 0;
+            replayRequest = _replayAnalysisSession.CreateRequest(beatmap, beatmapGeneration);
+            await _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestStarted(
+                sequence,
+                replayRequest.RequestId,
+                replayRequest.BeatmapGeneration,
+                replayRequest.BeatmapId,
+                replayRequest.BeatmapHash));
+
+            AnalysisResult result;
+            try
             {
-                baseSnapshot = HeadlessSnapshotConverter.FromComposed(
-                    beatmap,
-                    null,
-                    new ComposedWidgetSnapshot("replay-base", AnalysisOutcome.Success, [], []));
+                result = await _replayAnalysisSession.AnalyzeAsync(replayRequest);
+            }
+            catch (OperationCanceledException)
+            {
+                await PublishReplayCancellationAsync(replayRequest, "Replay analysis was cancelled.");
+                replayTerminalEventPublished = true;
+                throw;
+            }
+            catch (ReplayAnalysisException exception)
+            {
+                await PublishReplayFailureAsync(replayRequest, exception.Code, exception.Message);
+                replayTerminalEventPublished = true;
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await PublishReplayFailureAsync(replayRequest, "replay.unexpected", exception.Message);
+                replayTerminalEventPublished = true;
+                throw;
             }
 
-            var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
-            await _headlessAnalysisController.PushEnrichedSnapshotAsync(replaySnapshot, CancellationToken.None);
+            ReplayOverlaySnapshot? replaySnapshot = HeadlessSnapshotConverter.ToReplaySnapshot(result);
+            if (result.Outcome == AnalysisOutcome.Cancelled)
+            {
+                await PublishReplayCancellationAsync(
+                    replayRequest,
+                    result.Diagnostics.FirstOrDefault()?.Message);
+            }
+            else if (result.Outcome == AnalysisOutcome.Failed || replaySnapshot is null)
+            {
+                await PublishReplayFailureAsync(
+                    replayRequest,
+                    result.Diagnostics.FirstOrDefault()?.Code ?? "replay.analysis_failed",
+                    result.Diagnostics.FirstOrDefault()?.Message ?? "Replay analysis did not produce a result.");
+            }
+            else
+            {
+                await _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisCompleted(
+                    sequence,
+                    replayRequest.RequestId,
+                    replayRequest.BeatmapGeneration,
+                    replayRequest.BeatmapId,
+                    replayRequest.BeatmapHash,
+                    replaySnapshot));
+            }
+
+            replayTerminalEventPublished = true;
             AppLogger.Info(
                 "Replay import",
                 $"file={file.Name}; outcome={result.Outcome}; metrics={result.Metrics.Count}; " +
-                $"replayData={replaySnapshot.Replay?.HasData.ToString() ?? "false"}; " +
-                $"columns={replaySnapshot.Replay?.Columns.Count.ToString() ?? "0"}");
+                $"replayData={replaySnapshot?.HasData.ToString() ?? "false"}; " +
+                $"columns={replaySnapshot?.Columns.Count.ToString() ?? "0"}");
             var diagnostic = result.Diagnostics.FirstOrDefault();
             if (result.Outcome == AnalysisOutcome.Success)
             {
@@ -2120,17 +2175,59 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayCancellationAsync(replayRequest, "Replay analysis was cancelled.");
+            }
         }
         catch (ReplayAnalysisException exception)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayFailureAsync(replayRequest, exception.Code, exception.Message);
+            }
+
             AppLogger.Warning("Importing replay", exception.Message, exception);
             _model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
         }
         catch (Exception exception)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayFailureAsync(replayRequest, "replay.unexpected", exception.Message);
+            }
+
             AppLogger.Error("Importing replay", exception);
             _model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
         }
+    }
+
+    private Task PublishReplayFailureAsync(
+        ReplayAnalysisRequest request,
+        string failureCode,
+        string? failureMessage)
+    {
+        return _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestFailed(
+            sequence,
+            request.RequestId,
+            failureCode,
+            failureMessage,
+            request.BeatmapGeneration,
+            request.BeatmapId,
+            request.BeatmapHash));
+    }
+
+    private Task PublishReplayCancellationAsync(
+        ReplayAnalysisRequest request,
+        string? cancellationMessage)
+    {
+        return _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestCancelled(
+            sequence,
+            request.RequestId,
+            cancellationMessage,
+            request.BeatmapGeneration,
+            request.BeatmapId,
+            request.BeatmapHash));
     }
 
     private void Dashboard_Click(object? sender, RoutedEventArgs e) => Navigate(BaseUrl + "/");
@@ -3236,7 +3333,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _presentationDelivery.SubmitFullscreen(OverlayViewStateComposer.Compose(runtime));
+        _presentationDelivery.SubmitFullscreen(_runtimeCoordinator.CurrentViewState);
     }
 
     private async Task PublishNativePauseCoachSnapshotToBrowserCoreAsync(OverlayViewState viewState)

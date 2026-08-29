@@ -371,9 +371,10 @@ Risk: medium. This package should remain shadow/observational where practical.
   of the reducer.
 - [x] Add `AnalysisRequestId`, beatmap generation and configuration identity to
   analysis start/completion/failure events.
-- [ ] Add `ReplayRequestId` to replay completion and failure events.
-- [ ] Model `DesiredVisibility`, `SurfaceReady` and `ActualVisibility` as
-  distinct concepts.
+  - [x] Add `ReplayRequestId` to replay start/completion/failure/cancellation
+    events and keep it in an independent Application replay slot.
+  - [x] Model `DesiredVisibility`, `SurfaceReady` and `ActualVisibility` as
+    distinct concepts.
 - [x] Ensure `ViewStateChanged` fires whenever the composed presentation
   contract changes, not only when realtime/analysis object references change.
 - [x] Preserve confirmed beatmap and attempt identity when a partial realtime
@@ -384,12 +385,16 @@ Risk: medium. This package should remain shadow/observational where practical.
   surface unification remains part of work package 4.
 - [x] Add the initial typed Tosu connection state and transport-generation
   boundary. The transport host still remains in `MainWindow` until WP3.
-- [ ] Give `OverlayViewState` its own monotonic version.
-- [ ] Define equality/change detection from the actual presentation contract,
-  not incidental object reference identity.
-- [x] Replace the single unversioned pending-analysis projection with an
-  explicit `AnalysisRequestSlot`; replay keeps its independent slot for
-  LUNA-03.
+  - [x] Give `OverlayViewState` its own monotonic version. The coordinator
+    allocates the rendered-contract version independently from runtime event
+    versions while retaining `RuntimeVersion` for diagnostics.
+- [x] Define equality/change detection from the actual presentation
+    contract, not incidental object reference identity. Version/epoch metadata
+    are excluded from content equality, while nested serialized contract data
+    remains covered.
+  - [x] Replace the single unversioned pending-analysis projection with an
+    explicit `AnalysisRequestSlot`; replay now keeps its independent
+    `ReplayAnalysisRequestSlot` for LUNA-03.
 - [ ] Add reducer diagnostics for every stale/rejected completion.
 - [ ] Define reset semantics for application restart separately from gameplay
   retry and presentation recreation.

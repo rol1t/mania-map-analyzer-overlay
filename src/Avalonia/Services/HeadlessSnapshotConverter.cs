@@ -56,25 +56,7 @@ public static class HeadlessSnapshotConverter
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(result);
 
-        var composed = new ComposedWidgetSnapshot(
-            "replay-post-play",
-            result.Outcome,
-            result.Metrics.Select(metric => new ResolvedSemanticMetric(
-                metric.Key,
-                metric.Value,
-                new AnalysisMetricProvenance(
-                    "replay-post-play",
-                    metric.Key,
-                    result.EngineId,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    result.RequestedAlgorithm,
-                    result.ActualAlgorithm,
-                    result.Outcome))),
-            result.Diagnostics);
-
-        var replay = BuildReplay(composed);
+        var replay = ToReplaySnapshot(result);
         if (replay is not null && current.Replay is not null)
         {
             // Preserve live context that is not part of exact timing metrics
@@ -92,6 +74,18 @@ public static class HeadlessSnapshotConverter
         {
             Replay = replay
         };
+    }
+
+    /// <summary>
+    /// Converts an exact replay analysis result into the replay-only
+    /// presentation contract. Unlike <see cref="WithReplayAnalysis"/>, this
+    /// method does not create or mutate a headless <see cref="AnalysisSnapshot"/>
+    /// and is therefore safe for the independent Application replay slot.
+    /// </summary>
+    public static ReplayOverlaySnapshot? ToReplaySnapshot(AnalysisResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return BuildReplay(CreateReplayComposition(result));
     }
 
     public static AnalysisSnapshot FromComposed(
@@ -508,5 +502,26 @@ public static class HeadlessSnapshotConverter
             Sections = sections,
             Insights = insights
         };
+    }
+
+    private static ComposedWidgetSnapshot CreateReplayComposition(AnalysisResult result)
+    {
+        return new ComposedWidgetSnapshot(
+            "replay-post-play",
+            result.Outcome,
+            result.Metrics.Select(metric => new ResolvedSemanticMetric(
+                metric.Key,
+                metric.Value,
+                new AnalysisMetricProvenance(
+                    "replay-post-play",
+                    metric.Key,
+                    result.EngineId,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    result.RequestedAlgorithm,
+                    result.ActualAlgorithm,
+                    result.Outcome))),
+            result.Diagnostics);
     }
 }

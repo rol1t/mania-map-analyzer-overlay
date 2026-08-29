@@ -143,7 +143,7 @@ canonical attempt.
 | Attempt/session ID | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Native view-state delivery on every surface |
 | Realtime metrics | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Cross-runtime fixtures and manual surface acceptance |
 | Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` | `AnalysisRequestId`/generation checks and complete Application composition |
-| Replay result | replay session and renderer | versioned `ReplayAnalysisState` | Keep exact replay independent from realtime slots |
+| Replay result | `ReplayAnalysisSession` feeds the versioned Application `ReplayAnalysisRequestSlot`; renderer consumes the composed replay block | versioned `ReplayAnalysisState` | Complete surface delivery and remove compatibility composition after parity |
 | Desired visibility | coordinator derivation plus MainWindow compatibility mirror | pure application derivation | Remove legacy visibility mirror after parity |
 | Browser readiness | MainWindow, delivery controller and publisher | `PresentationSurfaceState` | Give preview/fullscreen explicit generations |
 | Latest rendered state | native publisher and JavaScript globals | application presenter/coalescer | Remove browser snapshot arbitration after native cutover |
@@ -301,6 +301,12 @@ OverlayViewState
 Renderer responsibilities are limited to rendering these blocks, honoring the
 version, and reporting presentation measurements or input gestures. It does
 not parse Tosu, create sessions, calculate insights, or merge producers.
+
+Application policy intent is exposed as `Presentation.DesiredVisibility`;
+`SurfaceReady` and `ActualVisibility` are feedback from the current physical
+surface. The coordinator assigns `OverlayViewState.Version` only when the
+serialized rendered contract changes, while `RuntimeVersion` remains available
+for diagnostics.
 
 WebView recreation changes only the presentation generation. The delivery
 controller owns desktop/fullscreen logical generation counters, while the

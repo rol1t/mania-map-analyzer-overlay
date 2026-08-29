@@ -11,6 +11,11 @@ public enum OverlayRuntimeRejectionKind
     StaleAnalysisRequest,
     AnalysisRequestMetadataMismatch,
     InvalidAnalysisRequestId,
+    UnknownReplayRequest,
+    StaleReplayRequest,
+    StaleReplayBeatmapGeneration,
+    ReplayRequestMetadataMismatch,
+    InvalidReplayRequestId,
     NoStateChange
 }
 

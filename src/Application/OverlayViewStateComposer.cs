@@ -12,7 +12,7 @@ public static class OverlayViewStateComposer
 {
     private static readonly string _presentationEpoch = Guid.NewGuid().ToString("N");
 
-    public static OverlayViewState Compose(OverlayRuntimeState runtime)
+    public static OverlayViewState Compose(OverlayRuntimeState runtime, long? presentationVersion = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
@@ -27,6 +27,7 @@ public static class OverlayViewStateComposer
              string.IsNullOrWhiteSpace(beatmapId) ||
              string.Equals(analysis.Beatmap.Id, beatmapId, StringComparison.Ordinal));
         AnalysisSnapshot? presentationAnalysis = analysisMatchesBeatmap ? analysis : null;
+        ReplayOverlaySnapshot? replay = ResolveReplay(runtime, presentationAnalysis, beatmapId);
         var gameplay = runtime.GameplayStateKnown
             ? new GameplaySnapshot
             {
@@ -39,7 +40,8 @@ public static class OverlayViewStateComposer
         return new OverlayViewState
         {
             PresentationEpoch = _presentationEpoch,
-            Version = runtime.Version,
+            Version = presentationVersion ?? runtime.Version,
+            RuntimeVersion = runtime.Version,
             BeatmapGeneration = runtime.BeatmapGeneration,
             Producer = realtime is not null
                 ? "native"
@@ -55,7 +57,7 @@ public static class OverlayViewStateComposer
             Difficulty = presentationAnalysis?.Difficulty ?? new DifficultySnapshot(),
             Ranks = presentationAnalysis?.Ranks ?? Array.Empty<RankEstimate>(),
             Skills = presentationAnalysis?.Skills ?? Array.Empty<SkillMetric>(),
-            Replay = presentationAnalysis?.Replay,
+            Replay = replay,
             RealtimeReplay = realtime is not null ? BuildRealtimeReplay(realtime) : null,
             PauseCoach = realtime is not null
                 ? PauseCoachSnapshotMapper.ToSnapshot(realtime)
@@ -66,8 +68,11 @@ public static class OverlayViewStateComposer
                 OverlayMode = runtime.OverlayMode,
                 VisibilityPolicy = runtime.VisibilityPolicy,
                 OsuWindowMinimized = runtime.OsuWindowMinimized,
+                DesiredVisibility = runtime.DesiredVisibility,
                 Ready = runtime.PresentationReady,
                 Visible = runtime.PresentationVisible,
+                SurfaceReady = runtime.SurfaceReady,
+                ActualVisibility = runtime.ActualVisibility,
                 SurfaceGeneration = runtime.PresentationSurfaceGeneration
             }
         };
@@ -122,7 +127,7 @@ public static class OverlayViewStateComposer
             {
                 ["nativePauseCoach"] = true,
                 ["realtimeProducer"] = "native",
-                ["runtimeVersion"] = view.Version
+                ["runtimeVersion"] = view.RuntimeVersion
             }
         };
     }
@@ -155,6 +160,37 @@ public static class OverlayViewStateComposer
         Fidelity = "provisional",
         Reason = "Native Tosu v2 realtime telemetry."
     };
+
+    private static ReplayOverlaySnapshot? ResolveReplay(
+        OverlayRuntimeState runtime,
+        AnalysisSnapshot? presentationAnalysis,
+        string beatmapId)
+    {
+        ReplayAnalysisRequestSlot? replayRequest = runtime.ReplayRequest;
+        if (replayRequest is not null)
+        {
+            bool sameBeatmap = !string.IsNullOrWhiteSpace(replayRequest.BeatmapId)
+                && !string.IsNullOrWhiteSpace(beatmapId)
+                && string.Equals(replayRequest.BeatmapId, beatmapId, StringComparison.Ordinal);
+            bool sameGeneration = replayRequest.BeatmapGeneration <= 0
+                || replayRequest.BeatmapGeneration == runtime.BeatmapGeneration;
+
+            // Once an explicit replay request exists, its slot is the only
+            // source allowed to project exact replay data. A running/failed
+            // request must not fall back to an older replay embedded in a
+            // headless snapshot, which could show results for another file.
+            return replayRequest.Status == ReplayRequestStatus.Completed
+                && sameBeatmap
+                && sameGeneration
+                ? replayRequest.Snapshot
+                : null;
+        }
+
+        // Keep the legacy field readable for snapshots created before the
+        // dedicated replay slot was introduced. New imports no longer write
+        // this path.
+        return presentationAnalysis?.Replay;
+    }
 
     private static bool HasExactReplay(ReplayOverlaySnapshot? replay)
     {

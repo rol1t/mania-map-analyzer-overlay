@@ -10,6 +10,16 @@ public static class OverlayVisibilityDerivation
 {
     public static bool ShouldShowNativeOverlay(OverlayRuntimeState state)
     {
+        return ComputeDesiredVisibility(state);
+    }
+
+    /// <summary>
+    /// Computes policy intent without observing whether a presentation surface
+    /// has actually applied it. The result is application state and therefore
+    /// remains meaningful while the HWND/WebView is unavailable or hidden.
+    /// </summary>
+    public static bool ComputeDesiredVisibility(OverlayRuntimeState state)
+    {
         ArgumentNullException.ThrowIfNull(state);
         if (!state.OverlayMode)
         {

@@ -27,7 +27,18 @@ public sealed record OverlayViewState
     /// </summary>
     public string PresentationEpoch { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Monotonic version of the rendered presentation contract. The
+    /// coordinator allocates this independently from runtime event versions;
+    /// direct composition keeps the runtime version as a compatibility value.
+    /// </summary>
     public long Version
+    {
+        get; init;
+    }
+
+    /// <summary>Version of the source application runtime state.</summary>
+    public long RuntimeVersion
     {
         get; init;
     }
@@ -99,6 +110,21 @@ public sealed record OverlayPresentationViewState
     }
 
     public bool Visible
+    {
+        get; init;
+    }
+
+    public bool DesiredVisibility
+    {
+        get; init;
+    }
+
+    public bool SurfaceReady
+    {
+        get; init;
+    }
+
+    public bool ActualVisibility
     {
         get; init;
     }

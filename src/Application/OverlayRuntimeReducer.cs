@@ -30,6 +30,12 @@ public static class OverlayRuntimeReducer
             return analysisRejection;
         }
 
+        OverlayRuntimeRejection? replayRejection = DescribeReplayRejection(current, runtimeEvent);
+        if (replayRejection is not null)
+        {
+            return replayRejection;
+        }
+
         return runtimeEvent switch
         {
             TosuConnectionChanged connection
@@ -102,6 +108,10 @@ public static class OverlayRuntimeReducer
             AnalysisRequestStarted started => ApplyAnalysisRequestStarted(current, started),
             AnalysisSnapshotReceived analysis => ApplyAnalysis(current, analysis),
             AnalysisRequestFailed failure => ApplyAnalysisRequestFailed(current, failure),
+            ReplayAnalysisRequestStarted replayStarted => ApplyReplayRequestStarted(current, replayStarted),
+            ReplayAnalysisCompleted replayCompleted => ApplyReplayCompleted(current, replayCompleted),
+            ReplayAnalysisRequestFailed replayFailure => ApplyReplayRequestFailed(current, replayFailure),
+            ReplayAnalysisRequestCancelled replayCancelled => ApplyReplayRequestCancelled(current, replayCancelled),
             PresentationAvailabilityChanged presentation => ApplyPresentationAvailability(current, presentation),
             OverlayModeChanged mode => current with { OverlayMode = mode.Enabled },
             OsuWindowStateChanged window => current with { OsuWindowMinimized = window.Minimized },
@@ -255,6 +265,10 @@ public static class OverlayRuntimeReducer
         AnalysisSnapshotReceived analysis => analysis.Snapshot.Beatmap.Id,
         AnalysisRequestStarted started => started.BeatmapId,
         AnalysisRequestFailed failure => failure.BeatmapId,
+        ReplayAnalysisRequestStarted replayStarted => replayStarted.BeatmapId,
+        ReplayAnalysisCompleted replayCompleted => replayCompleted.BeatmapId,
+        ReplayAnalysisRequestFailed replayFailure => replayFailure.BeatmapId,
+        ReplayAnalysisRequestCancelled replayCancelled => replayCancelled.BeatmapId,
         _ => null
     };
 
@@ -502,6 +516,284 @@ public static class OverlayRuntimeReducer
                 Snapshot = null
             }
         };
+    }
+
+    private static OverlayRuntimeState ApplyReplayRequestStarted(
+        OverlayRuntimeState current,
+        ReplayAnalysisRequestStarted started)
+    {
+        if (!started.RequestId.IsValid
+            || (started.BeatmapGeneration > 0
+                && current.BeatmapGeneration > started.BeatmapGeneration)
+            || (current.ReplayRequest is { IsVersioned: true } active
+                && started.RequestId.Value <= active.RequestId.Value))
+        {
+            return current;
+        }
+
+        return current with
+        {
+            ReplayRequest = new ReplayAnalysisRequestSlot(
+                started.RequestId,
+                started.BeatmapGeneration,
+                started.BeatmapId?.Trim() ?? string.Empty,
+                started.BeatmapHash?.Trim() ?? string.Empty,
+                ReplayRequestStatus.Running)
+        };
+    }
+
+    private static OverlayRuntimeState ApplyReplayCompleted(
+        OverlayRuntimeState current,
+        ReplayAnalysisCompleted completed)
+    {
+        if (completed.Snapshot is null
+            || DescribeReplayRejection(current, completed) is not null)
+        {
+            return current;
+        }
+
+        ReplayAnalysisRequestSlot slot = current.ReplayRequest!;
+        return current with
+        {
+            ReplayRequest = slot with
+            {
+                Status = ReplayRequestStatus.Completed,
+                Snapshot = completed.Snapshot,
+                FailureCode = null,
+                FailureMessage = null
+            }
+        };
+    }
+
+    private static OverlayRuntimeState ApplyReplayRequestFailed(
+        OverlayRuntimeState current,
+        ReplayAnalysisRequestFailed failure)
+    {
+        if (DescribeReplayRejection(current, failure) is not null)
+        {
+            return current;
+        }
+
+        ReplayAnalysisRequestSlot slot = current.ReplayRequest!;
+        return current with
+        {
+            ReplayRequest = slot with
+            {
+                Status = ReplayRequestStatus.Failed,
+                Snapshot = null,
+                FailureCode = string.IsNullOrWhiteSpace(failure.FailureCode)
+                    ? "replay.analysis_failed"
+                    : failure.FailureCode.Trim(),
+                FailureMessage = failure.FailureMessage
+            }
+        };
+    }
+
+    private static OverlayRuntimeState ApplyReplayRequestCancelled(
+        OverlayRuntimeState current,
+        ReplayAnalysisRequestCancelled cancelled)
+    {
+        if (DescribeReplayRejection(current, cancelled) is not null)
+        {
+            return current;
+        }
+
+        ReplayAnalysisRequestSlot slot = current.ReplayRequest!;
+        return current with
+        {
+            ReplayRequest = slot with
+            {
+                Status = ReplayRequestStatus.Cancelled,
+                Snapshot = null,
+                FailureCode = "replay.cancelled",
+                FailureMessage = cancelled.CancellationMessage
+            }
+        };
+    }
+
+    private static OverlayRuntimeRejection? DescribeReplayRejection(
+        OverlayRuntimeState current,
+        OverlayRuntimeEvent runtimeEvent)
+    {
+        switch (runtimeEvent)
+        {
+            case ReplayAnalysisRequestStarted started when !started.RequestId.IsValid:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.InvalidReplayRequestId,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventGeneration: started.BeatmapGeneration,
+                    CurrentGeneration: current.BeatmapGeneration,
+                    EventBeatmapId: started.BeatmapId,
+                    CurrentBeatmapId: current.BeatmapId);
+            case ReplayAnalysisRequestStarted started
+                when started.BeatmapGeneration > 0
+                    && current.BeatmapGeneration > started.BeatmapGeneration:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.StaleReplayBeatmapGeneration,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventGeneration: started.BeatmapGeneration,
+                    CurrentGeneration: current.BeatmapGeneration,
+                    EventBeatmapId: started.BeatmapId,
+                    CurrentBeatmapId: current.BeatmapId);
+            case ReplayAnalysisRequestStarted started
+                when current.ReplayRequest is { IsVersioned: true } active
+                    && started.RequestId.Value <= active.RequestId.Value:
+                return new OverlayRuntimeRejection(
+                    OverlayRuntimeRejectionKind.StaleReplayRequest,
+                    runtimeEvent.Sequence,
+                    current.LastEventSequence,
+                    EventGeneration: started.BeatmapGeneration,
+                    CurrentGeneration: active.BeatmapGeneration,
+                    EventBeatmapId: started.BeatmapId,
+                    CurrentBeatmapId: active.BeatmapId);
+            case ReplayAnalysisCompleted completed:
+                return DescribeReplayResultRejection(
+                    current,
+                    completed.RequestId,
+                    completed.BeatmapGeneration,
+                    completed.BeatmapId,
+                    completed.BeatmapHash,
+                    runtimeEvent.Sequence);
+            case ReplayAnalysisRequestFailed failure:
+                return DescribeReplayResultRejection(
+                    current,
+                    failure.RequestId,
+                    failure.BeatmapGeneration,
+                    failure.BeatmapId,
+                    failure.BeatmapHash,
+                    runtimeEvent.Sequence);
+            case ReplayAnalysisRequestCancelled cancelled:
+                return DescribeReplayResultRejection(
+                    current,
+                    cancelled.RequestId,
+                    cancelled.BeatmapGeneration,
+                    cancelled.BeatmapId,
+                    cancelled.BeatmapHash,
+                    runtimeEvent.Sequence);
+        }
+
+        return null;
+    }
+
+    private static OverlayRuntimeRejection? DescribeReplayResultRejection(
+        OverlayRuntimeState current,
+        ReplayRequestId requestId,
+        long eventGeneration,
+        string eventBeatmapId,
+        string eventBeatmapHash,
+        long eventSequence)
+    {
+        if (!requestId.IsValid)
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.InvalidReplayRequestId,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: current.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: current.BeatmapId);
+        }
+
+        ReplayAnalysisRequestSlot? slot = current.ReplayRequest;
+        if (slot is null)
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.UnknownReplayRequest,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: current.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: current.BeatmapId);
+        }
+
+        if (slot.RequestId != requestId
+            || !slot.IsVersioned
+            || slot.Status != ReplayRequestStatus.Running)
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.StaleReplayRequest,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: slot.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: slot.BeatmapId);
+        }
+
+        if ((slot.BeatmapGeneration > 0 && current.BeatmapGeneration > slot.BeatmapGeneration)
+            || (eventGeneration > 0 && current.BeatmapGeneration > eventGeneration))
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.StaleReplayBeatmapGeneration,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration > 0 ? eventGeneration : slot.BeatmapGeneration,
+                CurrentGeneration: current.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: current.BeatmapId);
+        }
+
+        if (slot.BeatmapGeneration > 0
+            && eventGeneration > 0
+            && slot.BeatmapGeneration != eventGeneration)
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.ReplayRequestMetadataMismatch,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: slot.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: slot.BeatmapId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(eventBeatmapId)
+            && !string.IsNullOrWhiteSpace(slot.BeatmapId)
+            && !string.Equals(eventBeatmapId.Trim(), slot.BeatmapId, StringComparison.Ordinal))
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.ReplayRequestMetadataMismatch,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: slot.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: slot.BeatmapId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(eventBeatmapHash)
+            && !string.IsNullOrWhiteSpace(slot.BeatmapHash)
+            && !string.Equals(eventBeatmapHash.Trim(), slot.BeatmapHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.ReplayRequestMetadataMismatch,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: eventGeneration,
+                CurrentGeneration: slot.BeatmapGeneration,
+                EventBeatmapId: eventBeatmapId,
+                CurrentBeatmapId: slot.BeatmapId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(current.BeatmapId)
+            && !string.IsNullOrWhiteSpace(slot.BeatmapId)
+            && !string.Equals(current.BeatmapId, slot.BeatmapId, StringComparison.Ordinal))
+        {
+            return new OverlayRuntimeRejection(
+                OverlayRuntimeRejectionKind.StaleReplayBeatmapGeneration,
+                eventSequence,
+                current.LastEventSequence,
+                EventGeneration: slot.BeatmapGeneration,
+                CurrentGeneration: current.BeatmapGeneration,
+                EventBeatmapId: slot.BeatmapId,
+                CurrentBeatmapId: current.BeatmapId);
+        }
+
+        return null;
     }
 
     private static OverlayRuntimeRejection? DescribeAnalysisRejection(
