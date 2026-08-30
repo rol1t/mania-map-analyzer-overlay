@@ -199,6 +199,9 @@ node tests/Runtime/renderer-native-precedence.test.js
     typed failures; collection remains independent from presentation state.
   - **Do not:** redesign state normalization, add another polling source, or
     silently swallow transport errors.
+  - [x] Host lifecycle callbacks are bound to the attached Tosu instance, so a
+    queued event from a detached/replaced service cannot stop the current
+    polling generation; the boundary is covered by a fake-lifecycle test.
   - **Done when:** `MainWindow` and `TosuService` contain no realtime reconnect
     policy and host lifecycle tests are deterministic.
 

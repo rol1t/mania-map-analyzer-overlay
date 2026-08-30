@@ -10,8 +10,34 @@ using ManiaMapAnalyzerOverlay.Avalonia.Platform;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
+/// <summary>
+/// Minimal Tosu process lifecycle contract consumed by the native realtime
+/// host. Keeping the event boundary small lets the host reject callbacks from
+/// a detached service instance without depending on the concrete process
+/// implementation in lifecycle tests.
+/// </summary>
+public interface ITosuRealtimeLifecycle
+{
+    event EventHandler<TosuStateChangedEventArgs>? StateChanged;
+
+    bool IsRunning
+    {
+        get;
+    }
+
+    TosuConnectionState ConnectionState
+    {
+        get;
+    }
+
+    long TransportGeneration
+    {
+        get;
+    }
+}
+
 /// <summary>Starts and owns the bundled tosu process without platform-specific window APIs.</summary>
-public sealed class TosuService : IDisposable
+public sealed class TosuService : IDisposable, ITosuRealtimeLifecycle
 {
     private const string ServerUrl = "http://127.0.0.1:24050/";
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };

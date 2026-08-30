@@ -20,9 +20,10 @@ public sealed class TosuRealtimeRuntimeHost : IDisposable
     private readonly TosuRealtimeTelemetrySource _source;
     private readonly OverlayGameplayPollingController _polling;
     private readonly Action<Action> _lifecycleDispatch;
-    private TosuService? _tosu;
+    private readonly object _attachmentGate = new();
+    private ITosuRealtimeLifecycle? _tosu;
     private long _latestTransportGeneration;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public TosuRealtimeRuntimeHost(
         Func<CancellationToken, Task<JsonElement?>> readPayload,
@@ -65,39 +66,50 @@ public sealed class TosuRealtimeRuntimeHost : IDisposable
     /// Binds collection to the Tosu process lifecycle. The host remains active
     /// when a presentation surface is hidden or recreated.
     /// </summary>
-    public void Attach(TosuService tosu)
+    public void Attach(ITosuRealtimeLifecycle tosu)
     {
         ArgumentNullException.ThrowIfNull(tosu);
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (ReferenceEquals(_tosu, tosu))
+
+        TosuConnectionState connectionState;
+        lock (_attachmentGate)
         {
-            ApplyConnectionState(tosu.IsRunning ? TosuConnectionState.Running : tosu.ConnectionState);
-            return;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (ReferenceEquals(_tosu, tosu))
+            {
+                connectionState = tosu.IsRunning ? TosuConnectionState.Running : tosu.ConnectionState;
+            }
+            else
+            {
+                if (_tosu is not null)
+                {
+                    _tosu.StateChanged -= Tosu_StateChanged;
+                }
+
+                _tosu = tosu;
+                Volatile.Write(ref _latestTransportGeneration, tosu.TransportGeneration);
+                tosu.StateChanged += Tosu_StateChanged;
+                connectionState = tosu.IsRunning ? TosuConnectionState.Running : tosu.ConnectionState;
+            }
         }
 
-        if (_tosu is not null)
-        {
-            _tosu.StateChanged -= Tosu_StateChanged;
-        }
-
-        _tosu = tosu;
-        Volatile.Write(ref _latestTransportGeneration, tosu.TransportGeneration);
-        _tosu.StateChanged += Tosu_StateChanged;
-        ApplyConnectionState(tosu.IsRunning ? TosuConnectionState.Running : tosu.ConnectionState);
+        ApplyConnectionState(connectionState);
     }
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_attachmentGate)
         {
-            return;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        _disposed = true;
-        if (_tosu is not null)
-        {
-            _tosu.StateChanged -= Tosu_StateChanged;
-            _tosu = null;
+            _disposed = true;
+            if (_tosu is not null)
+            {
+                _tosu.StateChanged -= Tosu_StateChanged;
+                _tosu = null;
+            }
         }
 
         _polling.Dispose();
@@ -106,17 +118,32 @@ public sealed class TosuRealtimeRuntimeHost : IDisposable
 
     private void Tosu_StateChanged(object? sender, TosuStateChangedEventArgs e)
     {
-        if (!TryAdvanceTransportGeneration(e.TransportGeneration))
+        if (sender is not ITosuRealtimeLifecycle source)
         {
             return;
         }
 
+        lock (_attachmentGate)
+        {
+            if (_disposed || !ReferenceEquals(_tosu, source) || !TryAdvanceTransportGeneration(e.TransportGeneration))
+            {
+                return;
+            }
+        }
+
         _lifecycleDispatch(() =>
         {
-            if (!_disposed && IsCurrentTransportGeneration(e.TransportGeneration))
+            lock (_attachmentGate)
             {
-                ApplyConnectionState(e.State);
+                if (_disposed
+                    || !ReferenceEquals(_tosu, source)
+                    || !IsCurrentTransportGeneration(e.TransportGeneration))
+                {
+                    return;
+                }
             }
+
+            ApplyConnectionState(e.State);
         });
     }
 
@@ -153,6 +180,11 @@ public sealed class TosuRealtimeRuntimeHost : IDisposable
 
     private void ApplyConnectionState(TosuConnectionState state)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (state == TosuConnectionState.Running)
         {
             if (!IsRunning)

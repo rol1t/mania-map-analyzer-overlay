@@ -455,6 +455,9 @@ Risk: high because collection lifecycle affects every overlay mode.
   polling controller.
 - [x] Ensure a queued callback from a stopped generation cannot publish into a
   new lifecycle.
+- [x] Reject a queued `StateChanged` callback from a detached/replaced Tosu
+  service by source identity as well as transport generation; the host tests
+  this through its injectable lifecycle contract.
 - [x] Remove the unused duplicate `TosuService` state-only endpoint path; the
   native host now consumes one full `/json/v2` payload and one normalizer.
 - [x] Handle Tosu unavailable, transient HTTP failures and malformed/partial

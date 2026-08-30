@@ -1,8 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Features.Analysis;
+using ManiaMapAnalyzerOverlay.Avalonia.Services;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 using ManiaMapAnalyzerOverlay.RealtimeAnalysis;
 using Xunit;
@@ -113,6 +116,34 @@ public sealed class OverlayGameplayPollingControllerTests
         Assert.Equal(40_000, applied[0].Snapshot.MapTimeMs);
     }
 
+    [Fact]
+    public void QueuedStateFromDetachedTosuCannotStopTheCurrentPollingGeneration()
+    {
+        var lifecycleCallbacks = new List<Action>();
+        var timer = new FakeTimer();
+        using var host = new TosuRealtimeRuntimeHost(
+            _ => Task.FromResult<JsonElement?>(null),
+            _ => { },
+            TimeSpan.FromSeconds(1),
+            timerFactory: _ => timer,
+            dispatch: action => action(),
+            lifecycleDispatch: action => lifecycleCallbacks.Add(action));
+
+        var detached = new FakeTosuLifecycle(TosuConnectionState.Stopped, 1);
+        host.Attach(detached);
+        detached.Emit(TosuConnectionState.Stopped, 1);
+
+        var current = new FakeTosuLifecycle(TosuConnectionState.Running, 1);
+        host.Attach(current);
+        Assert.True(host.IsRunning);
+
+        Assert.Single(lifecycleCallbacks);
+        lifecycleCallbacks[0]();
+
+        Assert.True(host.IsRunning);
+        Assert.True(timer.IsRunning);
+    }
+
     private static RealtimeTelemetryUpdate CreateTelemetry(int mapTimeMs)
     {
         var snapshot = new RealtimeAnalysisSnapshot(
@@ -178,5 +209,48 @@ public sealed class OverlayGameplayPollingControllerTests
         public void Dispose() => IsRunning = false;
 
         public void RaiseTick() => Tick?.Invoke(this, EventArgs.Empty);
+    }
+
+    private sealed class FakeTosuLifecycle : ITosuRealtimeLifecycle
+    {
+        public FakeTosuLifecycle(TosuConnectionState state, long generation)
+        {
+            ConnectionState = state;
+            IsRunning = state == TosuConnectionState.Running;
+            TransportGeneration = generation;
+        }
+
+        public event EventHandler<TosuStateChangedEventArgs>? StateChanged;
+
+        public bool IsRunning
+        {
+            get;
+            private set;
+        }
+
+        public TosuConnectionState ConnectionState
+        {
+            get;
+            private set;
+        }
+
+        public long TransportGeneration
+        {
+            get;
+            private set;
+        }
+
+        public void Emit(TosuConnectionState state, long generation)
+        {
+            ConnectionState = state;
+            IsRunning = state == TosuConnectionState.Running;
+            TransportGeneration = generation;
+            StateChanged?.Invoke(
+                this,
+                new TosuStateChangedEventArgs(
+                    "test",
+                    state,
+                    generation));
+        }
     }
 }
