@@ -128,7 +128,21 @@
         merged[key] = previous[key];
       }
     });
+    // Realtime/browser frames do not carry headless analysis series. Keep the
+    // latest analyzer-owned timeline for the same map instead of making the
+    // graph disappear while the gameplay snapshot is refreshed.
+    if (!hasDifficultyTimeline(current.timeline) && hasDifficultyTimeline(previous.timeline)) {
+      merged.timeline = previous.timeline;
+    }
     return merged;
+  }
+
+  function hasDifficultyTimeline(timeline) {
+    if (!timeline || typeof timeline !== "object") return false;
+    if (Array.isArray(timeline.points)) return timeline.points.length >= 2;
+    return Array.isArray(timeline.times)
+      && Array.isArray(timeline.values)
+      && Math.min(timeline.times.length, timeline.values.length) >= 2;
   }
 
   function beatmapStatus(beatmap) {
@@ -563,6 +577,147 @@
     });
   }
 
+  function readDifficultyTimeline(snapshot) {
+    const timeline = snapshot && snapshot.difficulty && snapshot.difficulty.timeline;
+    if (!timeline || typeof timeline !== "object") return [];
+
+    const points = [];
+    if (Array.isArray(timeline.points)) {
+      timeline.points.forEach(function (point) {
+        const timeMs = Number(point && (point.timeMs ?? point.time));
+        const value = Number(point && point.value);
+        if (Number.isFinite(timeMs) && Number.isFinite(value) && timeMs >= 0) {
+          points.push({ timeMs: timeMs, value: value });
+        }
+      });
+    } else if (Array.isArray(timeline.times) && Array.isArray(timeline.values)) {
+      const count = Math.min(timeline.times.length, timeline.values.length);
+      for (let index = 0; index < count; index++) {
+        const timeMs = Number(timeline.times[index]);
+        const value = Number(timeline.values[index]);
+        if (Number.isFinite(timeMs) && Number.isFinite(value) && timeMs >= 0) {
+          points.push({ timeMs: timeMs, value: value });
+        }
+      }
+    }
+
+    points.sort(function (left, right) { return left.timeMs - right.timeMs; });
+    const ordered = [];
+    points.forEach(function (point) {
+      if (!ordered.length || point.timeMs > ordered[ordered.length - 1].timeMs) {
+        ordered.push(point);
+      }
+    });
+    return ordered.length >= 2 ? ordered : [];
+  }
+
+  function timelineSeriesSignature(points) {
+    if (!points.length) return "";
+    let checksum = 0;
+    const stride = Math.max(1, Math.floor(points.length / 32));
+    points.forEach(function (point, index) {
+      if (index % stride === 0 || index === points.length - 1) {
+        checksum += (point.timeMs * 0.000001 + point.value) * (index + 1);
+      }
+    });
+    const first = points[0];
+    const last = points[points.length - 1];
+    return [points.length, first.timeMs, first.value, last.timeMs, last.value, checksum].join(":");
+  }
+
+  function timelineCursorMs(snapshot) {
+    const coachTime = Number(snapshot && snapshot.pauseCoach && snapshot.pauseCoach.mapProgressMs);
+    if (Number.isFinite(coachTime) && coachTime >= 0) return coachTime;
+    const replayTime = Number(snapshot && snapshot.replay && snapshot.replay.mapProgressMs);
+    return Number.isFinite(replayTime) && replayTime >= 0 ? replayTime : null;
+  }
+
+  function interpolateTimelineValue(points, timeMs) {
+    if (!points.length || !Number.isFinite(timeMs)) return null;
+    if (timeMs <= points[0].timeMs) return points[0].value;
+    const last = points[points.length - 1];
+    if (timeMs >= last.timeMs) return last.value;
+    for (let index = 1; index < points.length; index++) {
+      const right = points[index];
+      if (timeMs <= right.timeMs) {
+        const left = points[index - 1];
+        const span = right.timeMs - left.timeMs;
+        const ratio = span > 0 ? (timeMs - left.timeMs) / span : 0;
+        return left.value + (right.value - left.value) * ratio;
+      }
+    }
+    return last.value;
+  }
+
+  function formatTimelineTime(timeMs) {
+    const seconds = Math.max(0, Math.round(Number(timeMs) / 1000));
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function renderDifficultyTimeline(snapshot) {
+    const container = byId("overlay-difficulty-timeline");
+    if (!container) return;
+
+    const points = readDifficultyTimeline(snapshot);
+    if (points.length < 2) {
+      container.hidden = true;
+      return;
+    }
+
+    container.hidden = false;
+    const startTime = points[0].timeMs;
+    const endTime = points[points.length - 1].timeMs;
+    let minValue = points[0].value;
+    let maxValue = points[0].value;
+    points.forEach(function (point) {
+      minValue = Math.min(minValue, point.value);
+      maxValue = Math.max(maxValue, point.value);
+    });
+    const valueSpan = Math.max(0.000001, maxValue - minValue);
+    const timeSpan = Math.max(1, endTime - startTime);
+    const width = 1000;
+    const height = 180;
+    const paddingTop = 8;
+    const paddingBottom = 8;
+    const plotHeight = height - paddingTop - paddingBottom;
+    const x = function (timeMs) { return ((timeMs - startTime) / timeSpan) * width; };
+    const y = function (value) { return paddingTop + (1 - (value - minValue) / valueSpan) * plotHeight; };
+    const linePath = points.map(function (point, index) {
+      return `${index === 0 ? "M" : "L"} ${x(point.timeMs).toFixed(2)} ${y(point.value).toFixed(2)}`;
+    }).join(" ");
+    const areaPath = `${linePath} L ${width.toFixed(2)} ${height.toFixed(2)} L 0 ${height.toFixed(2)} Z`;
+    const area = byId("overlay-difficulty-timeline-area");
+    const line = byId("overlay-difficulty-timeline-line");
+    const cursor = byId("overlay-difficulty-timeline-cursor");
+    const seriesSignature = timelineSeriesSignature(points);
+    if (container.__overlayTimelineSeriesSignature !== seriesSignature) {
+      container.__overlayTimelineSeriesSignature = seriesSignature;
+      if (area && typeof area.setAttribute === "function") area.setAttribute("d", areaPath);
+      if (line && typeof line.setAttribute === "function") line.setAttribute("d", linePath);
+      text("overlay-difficulty-timeline-start", formatTimelineTime(startTime), "0:00");
+      text("overlay-difficulty-timeline-end", formatTimelineTime(endTime), "—");
+    }
+
+    const cursorTime = timelineCursorMs(snapshot);
+    if (cursor && typeof cursor.setAttribute === "function" && Number.isFinite(cursorTime)) {
+      const boundedTime = Math.max(startTime, Math.min(endTime, cursorTime));
+      const cursorX = x(boundedTime).toFixed(2);
+      cursor.setAttribute("x1", cursorX);
+      cursor.setAttribute("x2", cursorX);
+      cursor.setAttribute("y1", "0");
+      cursor.setAttribute("y2", String(height));
+      cursor.hidden = false;
+      const currentValue = interpolateTimelineValue(points, boundedTime);
+      text("overlay-difficulty-timeline-current",
+        `${formatTimelineTime(boundedTime)} · ${formatNumber(currentValue, 2)}`,
+        "—");
+    } else {
+      if (cursor) cursor.hidden = true;
+      text("overlay-difficulty-timeline-current", "—", "—");
+    }
+  }
+
   function renderReplay(snapshot) {
     const replay = snapshot.replay;
     const hasReplayNodes = byId("overlay-replay") || byId("overlay-replay-ur") || byId("overlay-replay-insights");
@@ -883,7 +1038,8 @@
       beatmap: [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version,
         beatmap.mapper, beatmap.bpmLabel, backgroundUrlFor(beatmap)],
       gameplay: [gameplay.state, gameplay.isPlaying, gameplay.isPaused, gameplay.isFocused],
-      difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys],
+      difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys,
+        timelineSeriesSignature(readDifficultyTimeline(snapshot)), timelineCursorMs(snapshot)],
       ranks,
       skills,
       replay: [replay.hasData, replay.ur, replay.score, replay.mapProgressMs, replay.accuracy,
@@ -913,6 +1069,7 @@
     tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
+    renderDifficultyTimeline(effectiveSnapshot);
     renderReplay(effectiveSnapshot);
     renderPauseCoach(effectiveSnapshot);
     renderMainCard(effectiveSnapshot);

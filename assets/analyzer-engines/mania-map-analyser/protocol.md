@@ -78,9 +78,23 @@ DOM classes. A value is an object with `id`, `value`, and an optional `unit`:
   "algorithm.requested": { "id": "algorithm.requested", "value": "Mixed", "unit": "algorithm" },
   "algorithm.actual": { "id": "algorithm.actual", "value": "Roxy", "unit": "algorithm" },
   "skills.stream": { "id": "skills.stream", "value": 19.0, "unit": "MSD" },
-  "dan.rc.label": { "id": "dan.rc.label", "value": "Reform 4 mid/high", "unit": "label" }
+  "dan.rc.label": { "id": "dan.rc.label", "value": "Reform 4 mid/high", "unit": "label" },
+  "difficulty.timeline": {
+    "id": "difficulty.timeline",
+    "value": { "times": [0, 1000], "values": [2.1, 3.4] },
+    "unit": "difficulty/ms"
+  }
 }
 ```
+
+`difficulty.timeline` is an optional analyzer-provided series sampled along
+the map. `times` are milliseconds from the first object/map timeline and
+`values` are difficulty values on the selected estimator's native scale. The
+headless worker requests this series independently of the upstream Graph
+panel, and the adapter normalizes it to a bounded, strictly increasing pair
+of arrays. Hosts may render the series as a filled chart and place a playback
+cursor using realtime `mapProgressMs`; they must not infer difficulty values
+from gameplay telemetry when the metric is absent.
 
 Widgets should use `availableMetricIds` and handle missing metrics explicitly.
 The initial IDs are listed in `manifest.json`. Additional upstream output is

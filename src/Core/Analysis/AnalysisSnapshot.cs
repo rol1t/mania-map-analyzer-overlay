@@ -85,6 +85,47 @@ public sealed record DifficultySnapshot
     {
         get; init;
     }
+
+    /// <summary>
+    /// Difficulty sampled along the beatmap timeline. The samples are
+    /// analyzer output (not a renderer-side estimate) and are optional for
+    /// older/partial snapshots.
+    /// </summary>
+    public DifficultyTimelineSnapshot? Timeline
+    {
+        get; init;
+    }
+}
+
+/// <summary>
+/// A bounded, time-ordered difficulty series used by the overlay presenter.
+/// Times are milliseconds from the beginning of the map and values use the
+/// analyzer's native difficulty scale.
+/// </summary>
+public sealed record DifficultyTimelineSnapshot
+{
+    public IReadOnlyList<DifficultyTimelinePoint> Points
+    {
+        get; init;
+    } = Array.Empty<DifficultyTimelinePoint>();
+
+    public double? DurationMs
+    {
+        get; init;
+    }
+}
+
+public sealed record DifficultyTimelinePoint
+{
+    public double TimeMs
+    {
+        get; init;
+    }
+
+    public double Value
+    {
+        get; init;
+    }
 }
 
 public sealed record RankEstimate

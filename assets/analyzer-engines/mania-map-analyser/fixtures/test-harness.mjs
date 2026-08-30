@@ -71,6 +71,10 @@ const normalized = normalizePipelineResult({
         columnCount: 4,
         estDiff: "Reform 4 mid/high || LN 6 mid/high",
         numericDifficulty: null,
+        graph: {
+            times: [0, 1000, 2500, 4000],
+            values: [2.1, 3.4, 2.8, 4.2],
+        },
     },
     actualEstimatorAlgorithm: "Roxy",
     parsedSummary: {
@@ -103,6 +107,10 @@ assert.equal(normalized.analysis.metrics["difficulty.lnPercent"].value, 51.4);
 assert.equal(normalized.analysis.metrics["pattern.lnPercent"].value, 51.4);
 assert.equal(normalized.analysis.metrics["skills.stream"].value, 19);
 assert.equal(normalized.analysis.metrics["dan.ln.label"].value, "LN 6 mid/high");
+assert.deepEqual(normalized.analysis.metrics["difficulty.timeline"].value, {
+    times: [0, 1000, 2500, 4000],
+    values: [2.1, 3.4, 2.8, 4.2],
+});
 
 const missingNumbers = normalizePipelineResult({
     rework: {
@@ -226,6 +234,7 @@ assert.equal(directResult.analysis.metrics["difficulty.numeric"].value, 7.25);
 assert.deepEqual(directResult.analysis.rawResult.receivedOptions, {
     ...typedOptions,
     speedRate: 1.25,
+    withGraph: true,
     withEtterna: true,
     withInterlude: true,
 });

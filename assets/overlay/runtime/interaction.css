@@ -34,3 +34,116 @@ html.launcher-osu-minimized,
 html.launcher-osu-minimized body {
   background: transparent !important;
 }
+
+/* Application-owned difficulty series. The analyzer supplies the sampled
+   values; this block only paints them and tracks the current song position. */
+html.launcher-overlay-host .overlay-difficulty-timeline {
+  display: grid !important;
+  grid-column: 1 / -1 !important;
+  grid-row: auto !important;
+  gap: 5px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 104px !important;
+  min-height: 104px !important;
+  max-height: 104px !important;
+  box-sizing: border-box !important;
+  padding: 7px 9px 6px !important;
+  border: 1px solid rgba(105, 206, 209, .3) !important;
+  border-radius: 7px !important;
+  background: linear-gradient(180deg, rgba(18, 35, 43, .78), rgba(9, 15, 22, .76)) !important;
+  color: #c9d8dc !important;
+  position: relative !important;
+  z-index: 2 !important;
+  overflow: hidden !important;
+  font-family: 'Segoe UI', sans-serif !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline[hidden] {
+  display: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-header,
+html.launcher-overlay-host .overlay-difficulty-timeline-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  font-size: 9px !important;
+  line-height: 1.1 !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-title {
+  overflow: hidden !important;
+  color: #dfecef !important;
+  font-weight: 650 !important;
+  letter-spacing: .05em !important;
+  text-overflow: ellipsis !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-current {
+  color: #8ce4df !important;
+  font-variant-numeric: tabular-nums !important;
+  white-space: nowrap !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-plot {
+  display: block !important;
+  min-width: 0 !important;
+  height: 69px !important;
+  overflow: hidden !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-plot svg {
+  display: block !important;
+  width: 100% !important;
+  height: 69px !important;
+  overflow: hidden !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-area {
+  fill: rgba(255, 94, 117, .22) !important;
+  stroke: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-line {
+  fill: none !important;
+  stroke: #ff7182 !important;
+  stroke-width: 2.2 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-cursor {
+  stroke: #f5f7ff !important;
+  stroke-dasharray: 3 3 !important;
+  stroke-width: 1.5 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-footer {
+  color: #8e9ba4 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-footer span:nth-child(2) {
+  color: #6f858e !important;
+  letter-spacing: .04em !important;
+  text-transform: uppercase !important;
+}
+
+/* The horizontal/Companella layouts use an explicit grid; keep the series
+   across the complete card width rather than inside only one column. */
+html.overlay-layout-horizontal .main-card > .overlay-difficulty-timeline,
+html.overlay-layout-companella .main-card > .overlay-difficulty-timeline,
+html.overlay-layout-companella-replay .main-card > .overlay-difficulty-timeline {
+  grid-column: 1 / -1 !important;
+}
+
+/* Pause Coach Card intentionally hides source-card children, but the
+   timeline is an independent analysis presenter and remains visible. */
+html.overlay-pause-coach-card .main-card > *:not(.pause-coach-card-root):not(.overlay-difficulty-timeline) {
+  display: none !important;
+}

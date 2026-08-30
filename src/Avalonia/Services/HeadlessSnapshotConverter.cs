@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 using ManiaMapAnalyzerOverlay.ReplayAnalysis;
@@ -9,6 +10,8 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
 public static class HeadlessSnapshotConverter
 {
+    private const int MaxDifficultyTimelinePoints = 2048;
+
     private static readonly IReadOnlyDictionary<string, string> _skillLabels =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -162,7 +165,81 @@ public static class HeadlessSnapshotConverter
             StarLabel = label,
             Unit = unit,
             LnPercent = lnPercent,
-            Keys = keys
+            Keys = keys,
+            Timeline = BuildDifficultyTimeline(composed)
+        };
+    }
+
+    private static DifficultyTimelineSnapshot? BuildDifficultyTimeline(ComposedWidgetSnapshot composed)
+    {
+        if (!composed.Metrics.TryGetValue("difficulty.timeline", out var metric)
+            || metric.Metric.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        JsonElement value = metric.Metric.Value;
+        if (!value.TryGetProperty("times", out JsonElement times)
+            || !value.TryGetProperty("values", out JsonElement values)
+            || times.ValueKind != JsonValueKind.Array
+            || values.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        int count = Math.Min(times.GetArrayLength(), values.GetArrayLength());
+        if (count < 2)
+        {
+            return null;
+        }
+
+        var points = new List<DifficultyTimelinePoint>(count);
+        double previousTime = double.NegativeInfinity;
+        for (int index = 0; index < count; index++)
+        {
+            JsonElement timeElement = times[index];
+            JsonElement valueElement = values[index];
+            if (!timeElement.TryGetDouble(out double timeMs)
+                || !valueElement.TryGetDouble(out double difficultyValue)
+                || !double.IsFinite(timeMs)
+                || !double.IsFinite(difficultyValue)
+                || timeMs < 0
+                || timeMs <= previousTime)
+            {
+                continue;
+            }
+
+            points.Add(new DifficultyTimelinePoint
+            {
+                TimeMs = timeMs,
+                Value = difficultyValue
+            });
+            previousTime = timeMs;
+        }
+
+        if (points.Count < 2)
+        {
+            return null;
+        }
+
+        if (points.Count > MaxDifficultyTimelinePoints)
+        {
+            var sampled = new List<DifficultyTimelinePoint>(MaxDifficultyTimelinePoints);
+            for (int index = 0; index < MaxDifficultyTimelinePoints; index++)
+            {
+                int sourceIndex = (int)Math.Round(
+                    index * (points.Count - 1d) / (MaxDifficultyTimelinePoints - 1),
+                    MidpointRounding.AwayFromZero);
+                sampled.Add(points[sourceIndex]);
+            }
+
+            points = sampled;
+        }
+
+        return new DifficultyTimelineSnapshot
+        {
+            Points = points,
+            DurationMs = points[^1].TimeMs
         };
     }
 

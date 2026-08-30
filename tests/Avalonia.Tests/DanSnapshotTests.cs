@@ -16,6 +16,7 @@ public sealed class DanSnapshotTests
         EffectiveWidgetSpec widget = Assert.Single(configuration.Widgets);
 
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.label");
+        Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.timeline");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.label");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.numeric");
         EffectiveWidgetBinding lnPercent = Assert.Single(
@@ -60,6 +61,7 @@ public sealed class DanSnapshotTests
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.label");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.rc.numeric");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.lnPercent");
+        Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "difficulty.timeline");
         Assert.Contains(widget.Bindings, binding => binding.TargetMetricId == "dan.ln.label");
 
         EffectiveAnalysisConfiguration previouslyMigrated = legacy with
@@ -144,6 +146,38 @@ public sealed class DanSnapshotTests
         RankEstimate ln = Assert.Single(snapshot.Ranks, rank => rank.SystemId == "ln-dan");
         Assert.Equal("3.77 SR", rc.Value);
         Assert.Equal("LN 5", ln.Value);
+    }
+
+    [Fact]
+    public void DifficultyTimelineMetricIsConvertedToOrderedSnapshot()
+    {
+        TosuBeatmapSnapshot beatmap = new(
+            new BeatmapIdentity("map", "hash"),
+            "[HitObjects]\n",
+            new TosuBeatmapMetadata { Title = "Timeline" },
+            rate: 1,
+            mods: [],
+            capturedAt: DateTimeOffset.UtcNow);
+        var result = new ComposedWidgetSnapshot(
+            "headless-overlay",
+            AnalysisOutcome.Success,
+            [Metric(
+                "difficulty.timeline",
+                new
+                {
+                    times = new[] { 0, 1000, 2500, 4000 },
+                    values = new[] { 2.1, 3.4, 2.8, 4.2 }
+                })],
+            []);
+
+        AnalysisSnapshot snapshot = HeadlessSnapshotConverter.FromComposed(beatmap, null, result);
+
+        Assert.NotNull(snapshot.Difficulty.Timeline);
+        DifficultyTimelineSnapshot timeline = snapshot.Difficulty.Timeline!;
+        Assert.Equal(4, timeline.Points.Count);
+        Assert.Equal(0, timeline.Points[0].TimeMs);
+        Assert.Equal(3.4, timeline.Points[1].Value);
+        Assert.Equal(4000, timeline.DurationMs);
     }
 
     [Fact]

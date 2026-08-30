@@ -521,6 +521,11 @@ function preparePipelineOptions(requestedAlgorithm, options, speedRate) {
     // contracts here; merely passing rate beside options is ignored by the
     // upstream estimators and would silently analyse every map at 1.0x.
     preserved.speedRate = speedRate;
+    // The overlay always exposes a time-synchronised difficulty timeline.
+    // Keep this engine option independent from the source document's optional
+    // graph panel: the headless contract needs the series even when the
+    // upstream UI is configured to show another content bar.
+    preserved.withGraph = true;
     if (requestedAlgorithm === "Companella" || requestedAlgorithm === "Mixed") {
         // These stages provide the ten features required by the Companella
         // classifier. MMA's UI enables them implicitly for the same profiles.

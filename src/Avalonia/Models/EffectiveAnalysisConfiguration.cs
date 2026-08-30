@@ -98,6 +98,9 @@ public sealed record EffectiveAnalysisConfiguration
         var binding = new EffectiveWidgetBinding(
             "difficulty.star",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.star")));
+        var difficultyTimelineBinding = new EffectiveWidgetBinding(
+            "difficulty.timeline",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.timeline")));
         var difficultyLabelBinding = new EffectiveWidgetBinding(
             "difficulty.label",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.label")));
@@ -118,6 +121,7 @@ public sealed record EffectiveAnalysisConfiguration
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.ln.label")));
         var bindings = ImmutableArray.CreateBuilder<EffectiveWidgetBinding>();
         bindings.Add(binding);
+        bindings.Add(difficultyTimelineBinding);
         bindings.Add(difficultyLabelBinding);
         bindings.Add(rcLabelBinding);
         bindings.Add(rcNumericBinding);
@@ -150,6 +154,11 @@ public sealed record EffectiveAnalysisConfiguration
 
         var sourceId = widget.Sources[0].SourceId;
         var bindings = widget.Bindings.ToBuilder();
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "difficulty.timeline",
+                [new SourceMetricCandidate(sourceId, "difficulty.timeline")]));
         AppendGeneratedBindingIfMissing(
             bindings,
             new EffectiveWidgetBinding(
@@ -199,7 +208,7 @@ public sealed record EffectiveAnalysisConfiguration
 
         return binding.TargetMetricId switch
         {
-            "difficulty.star" or "difficulty.label" or "dan.rc.label" or "dan.rc.numeric" or "dan.ln.label"
+            "difficulty.star" or "difficulty.timeline" or "difficulty.label" or "dan.rc.label" or "dan.rc.numeric" or "dan.ln.label"
                 => binding.Candidates.Length == 1
                     && string.Equals(binding.Candidates[0].MetricId, binding.TargetMetricId, StringComparison.OrdinalIgnoreCase),
             "difficulty.lnPercent" => binding.Candidates.All(candidate =>

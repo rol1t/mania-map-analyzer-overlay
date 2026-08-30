@@ -1,3 +1,22 @@
+<div id="overlay-difficulty-timeline" class="overlay-difficulty-timeline" data-overlay-preset-node hidden>
+  <div class="overlay-difficulty-timeline-header">
+    <span class="overlay-difficulty-timeline-title">Difficulty over time</span>
+    <span id="overlay-difficulty-timeline-current" class="overlay-difficulty-timeline-current">—</span>
+  </div>
+  <div class="overlay-difficulty-timeline-plot">
+    <svg viewBox="0 0 1000 180" preserveAspectRatio="none" role="img" aria-label="Difficulty over time">
+      <path id="overlay-difficulty-timeline-area" class="overlay-difficulty-timeline-area" d=""></path>
+      <path id="overlay-difficulty-timeline-line" class="overlay-difficulty-timeline-line" d=""></path>
+      <line id="overlay-difficulty-timeline-cursor" class="overlay-difficulty-timeline-cursor" x1="0" y1="0" x2="0" y2="180" hidden></line>
+    </svg>
+  </div>
+  <div class="overlay-difficulty-timeline-footer">
+    <span id="overlay-difficulty-timeline-start">0:00</span>
+    <span>difficulty</span>
+    <span id="overlay-difficulty-timeline-end">—</span>
+  </div>
+</div>
+
 <section class="overlay-template" data-overlay-template="horizontal">
   <div data-overlay-slot="source-card"></div>
 </section>
