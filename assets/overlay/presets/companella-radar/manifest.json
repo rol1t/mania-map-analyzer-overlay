@@ -1,0 +1,14 @@
+{
+  "id": "companella-radar",
+  "basePresetId": "companella",
+  "name": "Radar",
+  "nameRu": "Радар",
+  "description": "Analytical map-shape layout with a large skill radar and readable summary cards.",
+  "descriptionRu": "Аналитическая компоновка с крупным радаром профиля карты и читаемыми карточками метрик.",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".overlay-layout-companella-radar",
+  "supportsFullscreen": true,
+  "minWidth": 900,
+  "minHeight": 560
+}

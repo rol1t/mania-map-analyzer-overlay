@@ -10,11 +10,46 @@ using ManiaMapAnalyzerOverlay.Avalonia.Platform;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
-/// <summary>Starts and owns the bundled tosu process without platform-specific window APIs.</summary>
-public sealed class TosuService : IDisposable
+/// <summary>
+/// Minimal Tosu process lifecycle contract consumed by the native realtime
+/// host. Keeping the event boundary small lets the host reject callbacks from
+/// a detached service instance without depending on the concrete process
+/// implementation in lifecycle tests.
+/// </summary>
+public interface ITosuRealtimeLifecycle
 {
-    private const string ServerUrl = "http://127.0.0.1:24050/";
-    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };
+    event EventHandler<TosuStateChangedEventArgs>? StateChanged;
+
+    bool IsRunning
+    {
+        get;
+    }
+
+    TosuConnectionState ConnectionState
+    {
+        get;
+    }
+
+    long TransportGeneration
+    {
+        get;
+    }
+}
+
+public enum TosuInstanceOwnership
+{
+    None = 0,
+    External = 1,
+    Owned = 2
+}
+
+/// <summary>Connects to an existing Tosu server or starts and owns the bundled process.</summary>
+public sealed class TosuService : IDisposable, ITosuRealtimeLifecycle
+{
+    private static readonly Uri _serverUri = TosuEndpointProbe.DefaultBaseUri;
+    private readonly HttpClient _httpClient;
+    private readonly Func<string?> _findExecutable;
+    private readonly Func<ProcessStartInfo, Process?> _startProcess;
     private Process? _process;
     private WindowsProcessJob? _processJob;
     private long _transportGeneration;
@@ -22,8 +57,32 @@ public sealed class TosuService : IDisposable
 
     public event EventHandler<TosuStateChangedEventArgs>? StateChanged;
 
-    public string? ExecutablePath => FindExecutable();
-    public bool IsRunning => _process is { HasExited: false };
+    public TosuService()
+        : this(
+            new HttpClient { Timeout = TimeSpan.FromSeconds(1) },
+            null,
+            startInfo => Process.Start(startInfo))
+    {
+    }
+
+    internal TosuService(
+        HttpClient httpClient,
+        Func<string?>? findExecutable,
+        Func<ProcessStartInfo, Process?> startProcess)
+    {
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _findExecutable = findExecutable ?? FindExecutable;
+        _startProcess = startProcess ?? throw new ArgumentNullException(nameof(startProcess));
+    }
+
+    public string? ExecutablePath => _findExecutable();
+    public bool IsRunning => Ownership == TosuInstanceOwnership.External ||
+        (Ownership == TosuInstanceOwnership.Owned && _process is { HasExited: false });
+    public TosuInstanceOwnership Ownership
+    {
+        get;
+        private set;
+    }
     public TosuConnectionState ConnectionState
     {
         get;
@@ -51,7 +110,7 @@ public sealed class TosuService : IDisposable
         try
         {
             using var response = await _httpClient.GetAsync(
-                ServerUrl + "json/v2?overlay_realtime=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                new Uri(_serverUri, "json/v2?overlay_realtime=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -123,14 +182,31 @@ public sealed class TosuService : IDisposable
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (_process is { HasExited: false })
+        if (IsRunning)
         {
             Publish("status.tosu_already_running", TosuConnectionState.Running);
             return;
         }
 
         Interlocked.Increment(ref _transportGeneration);
-        var executable = FindExecutable();
+        TosuEndpointCompatibility compatibility = await TosuEndpointProbe.CheckAsync(
+            _httpClient,
+            _serverUri,
+            cancellationToken).ConfigureAwait(false);
+        if (compatibility == TosuEndpointCompatibility.ApplicationCompatible)
+        {
+            Ownership = TosuInstanceOwnership.External;
+            Publish("status.tosu_connected_existing", TosuConnectionState.Running);
+            return;
+        }
+
+        if (compatibility == TosuEndpointCompatibility.ApiOnly)
+        {
+            Publish("status.tosu_existing_incompatible", TosuConnectionState.Unavailable);
+            return;
+        }
+
+        var executable = _findExecutable();
         if (executable is null)
         {
             Publish("status.tosu_not_found", TosuConnectionState.Unavailable);
@@ -139,10 +215,9 @@ public sealed class TosuService : IDisposable
 
         try
         {
-            StopStaleBundledInstances(executable);
             _processJob?.Dispose();
             _processJob = new WindowsProcessJob();
-            _process = Process.Start(new ProcessStartInfo
+            _process = _startProcess(new ProcessStartInfo
             {
                 FileName = executable,
                 WorkingDirectory = Path.GetDirectoryName(executable)!,
@@ -155,6 +230,7 @@ public sealed class TosuService : IDisposable
                 throw new InvalidOperationException("The operating system did not start tosu.");
             }
 
+            Ownership = TosuInstanceOwnership.Owned;
             _processJob.Attach(_process);
 
             _process.EnableRaisingEvents = true;
@@ -189,12 +265,20 @@ public sealed class TosuService : IDisposable
 
     public void Stop()
     {
+        bool wasConnected = IsRunning || Ownership != TosuInstanceOwnership.None;
         var runningProcess = _process;
         _process = null;
+        var ownership = Ownership;
+        Ownership = TosuInstanceOwnership.None;
         _processJob?.Dispose();
         _processJob = null;
-        if (runningProcess is null)
+        if (runningProcess is null || ownership != TosuInstanceOwnership.Owned)
         {
+            if (wasConnected)
+            {
+                Publish("status.tosu_disconnected", TosuConnectionState.Stopped);
+            }
+
             return;
         }
 
@@ -230,8 +314,8 @@ public sealed class TosuService : IDisposable
 
             try
             {
-                using var response = await _httpClient.GetAsync(ServerUrl, cancellationToken);
-                if (response.IsSuccessStatusCode)
+                if (await TosuEndpointProbe.CheckAsync(_httpClient, _serverUri, cancellationToken)
+                    .ConfigureAwait(false) == TosuEndpointCompatibility.ApplicationCompatible)
                 {
                     return true;
                 }
@@ -276,36 +360,6 @@ public sealed class TosuService : IDisposable
         return null;
     }
 
-    private static void StopStaleBundledInstances(string expectedPath)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var expected = Path.GetFullPath(expectedPath);
-        foreach (var stale in Process.GetProcessesByName("tosu"))
-        {
-            try
-            {
-                var path = stale.MainModule?.FileName;
-                if (path is not null && string.Equals(Path.GetFullPath(path), expected, StringComparison.OrdinalIgnoreCase))
-                {
-                    stale.Kill(entireProcessTree: true);
-                    stale.WaitForExit(3000);
-                }
-            }
-            catch (Exception exception)
-            {
-                AppLogger.Warning("Stopping stale tosu process", "Could not inspect or stop an unrelated process.", exception);
-            }
-            finally
-            {
-                stale.Dispose();
-            }
-        }
-    }
-
     private void OnProcessExited(object? sender, EventArgs e)
     {
         // Process.Exited may be queued after Stop/Restart has already installed
@@ -315,6 +369,17 @@ public sealed class TosuService : IDisposable
         // generation and stop the new polling host.
         if (!_disposed && ReferenceEquals(sender, _process))
         {
+            var exitedProcess = _process;
+            _process = null;
+            Ownership = TosuInstanceOwnership.None;
+            _processJob?.Dispose();
+            _processJob = null;
+            if (exitedProcess is not null)
+            {
+                exitedProcess.Exited -= OnProcessExited;
+                exitedProcess.Dispose();
+            }
+
             Publish("status.tosu_stopped", TosuConnectionState.Stopped);
         }
     }

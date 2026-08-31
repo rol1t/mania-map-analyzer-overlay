@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiaMapAnalyzerOverlay.Application;
 using ManiaMapAnalyzerOverlay.Avalonia.Infrastructure.Tosu;
 using ManiaMapAnalyzerOverlay.Core.Analysis;
 using ManiaMapAnalyzerOverlay.ReplayAnalysis;
@@ -19,6 +20,7 @@ public sealed class ReplayAnalysisSession
     private const int MaximumReplayBytes = 64 * 1024 * 1024;
     private readonly InMemoryReplayArtifactStore _artifactStore = new();
     private readonly ReplayAnalysisEngine _engine;
+    private static long _nextRequestId;
     private ReplayArtifactHandle? _artifactHandle;
 
     public ReplayAnalysisSession()
@@ -57,17 +59,55 @@ public sealed class ReplayAnalysisSession
         SelectedFileName = fileName.Trim();
     }
 
-    public async Task<AnalysisResult> AnalyzeAsync(
+    /// <summary>
+    /// Captures the current replay artifact and beatmap identity for one
+    /// explicit execution. Capturing the artifact id prevents a later import
+    /// from changing an already-running request's input.
+    /// </summary>
+    public ReplayAnalysisRequest CreateRequest(
         TosuBeatmapSnapshot beatmap,
-        CancellationToken cancellationToken = default)
+        long beatmapGeneration = 0)
     {
         ArgumentNullException.ThrowIfNull(beatmap);
+
+        if (beatmapGeneration < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(beatmapGeneration));
+        }
+
+        return new ReplayAnalysisRequest(
+            new ReplayRequestId(Interlocked.Increment(ref _nextRequestId)),
+            beatmap,
+            beatmapGeneration,
+            _artifactHandle?.ArtifactId);
+    }
+
+    /// <summary>
+    /// Compatibility overload for callers that do not need to observe the
+    /// request identity. Production UI code should create a request first so
+    /// start/completion/failure events can carry the same id.
+    /// </summary>
+    public Task<AnalysisResult> AnalyzeAsync(
+        TosuBeatmapSnapshot beatmap,
+        CancellationToken cancellationToken = default) =>
+        AnalyzeAsync(CreateRequest(beatmap), cancellationToken);
+
+    public async Task<AnalysisResult> AnalyzeAsync(
+        ReplayAnalysisRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!request.RequestId.IsValid)
+        {
+            throw new ArgumentException("A valid replay request id is required.", nameof(request));
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (_artifactHandle is null)
+        if (string.IsNullOrWhiteSpace(request.ArtifactId))
         {
             return AnalysisResult.Failure(
-                CreateRequest(beatmap, artifactId: null),
+                CreateEngineRequest(request.Beatmap, artifactId: null),
                 _engine.Descriptor,
                 new AnalysisDiagnostic(
                     AnalysisDiagnosticSeverity.Error,
@@ -75,15 +115,15 @@ public sealed class ReplayAnalysisSession
                     "No replay file has been selected."));
         }
 
-        var request = CreateRequest(beatmap, _artifactHandle.ArtifactId);
+        var engineRequest = CreateEngineRequest(request.Beatmap, request.ArtifactId);
         // Parsing, decompression, judging, and metric calculation are CPU-bound;
         // keep the Avalonia UI thread free while the explicit replay is analyzed.
         return await Task.Run(
-            () => _engine.AnalyzeAsync(request, cancellationToken),
+            () => _engine.AnalyzeAsync(engineRequest, cancellationToken),
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static AnalysisRequest CreateRequest(TosuBeatmapSnapshot beatmap, string? artifactId)
+    private static AnalysisRequest CreateEngineRequest(TosuBeatmapSnapshot beatmap, string? artifactId)
     {
         var options = new Dictionary<string, JsonElement>();
         if (!string.IsNullOrWhiteSpace(artifactId))
@@ -100,4 +140,59 @@ public sealed class ReplayAnalysisSession
             beatmap.Rate,
             beatmap.Mods);
     }
+}
+
+/// <summary>
+/// Immutable request envelope used by the replay service boundary. It keeps
+/// the application request id and causal beatmap generation alongside the
+/// captured beatmap/artifact without exposing replay bytes.
+/// </summary>
+public sealed record ReplayAnalysisRequest
+{
+    public ReplayAnalysisRequest(
+        ReplayRequestId requestId,
+        TosuBeatmapSnapshot beatmap,
+        long beatmapGeneration,
+        string? artifactId)
+    {
+        if (!requestId.IsValid)
+        {
+            throw new ArgumentException("A valid replay request id is required.", nameof(requestId));
+        }
+
+        ArgumentNullException.ThrowIfNull(beatmap);
+        if (beatmapGeneration < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(beatmapGeneration));
+        }
+
+        RequestId = requestId;
+        Beatmap = beatmap;
+        BeatmapGeneration = beatmapGeneration;
+        ArtifactId = artifactId?.Trim();
+    }
+
+    public ReplayRequestId RequestId
+    {
+        get;
+    }
+
+    public TosuBeatmapSnapshot Beatmap
+    {
+        get;
+    }
+
+    public long BeatmapGeneration
+    {
+        get;
+    }
+
+    public string? ArtifactId
+    {
+        get;
+    }
+
+    public string BeatmapId => Beatmap.Identity.Id;
+
+    public string BeatmapHash => Beatmap.Identity.Hash;
 }

@@ -34,3 +34,238 @@ html.launcher-osu-minimized,
 html.launcher-osu-minimized body {
   background: transparent !important;
 }
+
+/* The current SR samples one colour from osu!'s non-linear difficulty
+   spectrum. The renderer owns the gamma-correct interpolation and exposes the
+   result through a custom property; no extra scale is rendered in the card. */
+html.launcher-overlay-host #rework-star,
+html.launcher-overlay-host #overlay-summary-star {
+  color: var(--overlay-star-rating-color, inherit) !important;
+  text-shadow:
+    0 0 10px var(--overlay-star-rating-glow, transparent),
+    0 1px 2px rgba(0, 0, 0, .82) !important;
+  transition: color 160ms ease, text-shadow 160ms ease !important;
+}
+
+/* osu!'s top difficulty colours deliberately approach navy and black. Keep
+   that palette intact, but add a pale edge when its luminance is too low for
+   the overlay's dark card surface. */
+html.launcher-overlay-host #rework-star[data-star-rating-contrast='light-outline'],
+html.launcher-overlay-host #overlay-summary-star[data-star-rating-contrast='light-outline'] {
+  -webkit-text-stroke: 1px rgba(220, 225, 255, .88) !important;
+  paint-order: stroke fill !important;
+  text-shadow:
+    0 0 2px rgba(238, 241, 255, .92),
+    0 0 12px var(--overlay-star-rating-glow, rgba(126, 137, 255, .72)),
+    0 2px 3px rgba(0, 0, 0, .92) !important;
+}
+
+/* Course badges are packaged with the desktop app and injected as data URIs,
+   so the same artwork works in the regular WebView and Tosu fullscreen host. */
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-value.has-dan-image {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+/* RC has a raw numeric estimate while the LN table does not. Reserve the same
+   three rows in both cards so their labels, badges and verdict baselines stay
+   aligned even when only the RC note contains text. */
+html.launcher-overlay-host .overlay-comp-summary-dan {
+  display: grid !important;
+  grid-template-rows: 18px minmax(38px, auto) 12px !important;
+  align-content: center !important;
+  row-gap: 2px !important;
+}
+
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-label,
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-value,
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-note {
+  align-self: center !important;
+  min-width: 0 !important;
+}
+
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-note {
+  min-height: 12px !important;
+}
+
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-value.has-dan-image::before {
+  display: block !important;
+  flex: 0 0 38px !important;
+  width: 38px !important;
+  height: 38px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  content: "" !important;
+  background-color: transparent !important;
+  background-image: var(--overlay-dan-image) !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: contain !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .5)) !important;
+  text-shadow: none !important;
+}
+
+html.launcher-overlay-host .overlay-comp-summary-dan .overlay-comp-summary-value[data-dan-tier]:not([data-dan-tier=''])::after {
+  align-self: center !important;
+  margin-left: -4px !important;
+  content: attr(data-dan-tier) !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .8) !important;
+}
+
+/* Application-owned difficulty series. The analyzer supplies the sampled
+   values; this block only paints them and tracks the current song position. */
+html.launcher-overlay-host .overlay-difficulty-timeline {
+  display: grid !important;
+  grid-column: 1 / -1 !important;
+  grid-row: auto !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  gap: 5px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 148px !important;
+  min-height: 148px !important;
+  max-height: 148px !important;
+  box-sizing: border-box !important;
+  padding: 10px 12px 8px !important;
+  border: 1px solid rgba(105, 206, 209, .3) !important;
+  border-radius: 7px !important;
+  background: linear-gradient(180deg, rgba(18, 35, 43, .78), rgba(9, 15, 22, .76)) !important;
+  color: #c9d8dc !important;
+  position: relative !important;
+  z-index: 2 !important;
+  overflow: hidden !important;
+  font-family: 'Segoe UI', sans-serif !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline[hidden] {
+  display: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-header,
+html.launcher-overlay-host .overlay-difficulty-timeline-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  font-size: 12px !important;
+  line-height: 1.1 !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-title {
+  flex: 0 1 auto !important;
+  overflow: hidden !important;
+  color: #dfecef !important;
+  font-weight: 650 !important;
+  letter-spacing: .05em !important;
+  text-overflow: ellipsis !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-legend {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  flex: 0 0 auto !important;
+  white-space: nowrap !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-legend-rice,
+html.launcher-overlay-host .overlay-difficulty-timeline-legend-ln {
+  font-weight: 650 !important;
+  letter-spacing: .04em !important;
+  text-transform: uppercase !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-legend-rice {
+  color: #ff526b !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-legend-ln {
+  color: #4da3ff !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-current {
+  margin-left: auto !important;
+  color: #8ce4df !important;
+  font-variant-numeric: tabular-nums !important;
+  white-space: nowrap !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-plot {
+  display: block !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: hidden !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-plot svg {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-area {
+  fill: rgba(255, 82, 107, .22) !important;
+  stroke: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-line {
+  fill: none !important;
+  stroke: #ff526b !important;
+  stroke-width: 2.5 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-ln-area {
+  fill: rgba(77, 163, 255, .18) !important;
+  stroke: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-ln-line {
+  fill: none !important;
+  stroke: #4da3ff !important;
+  stroke-width: 2.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-ln-area[hidden],
+html.launcher-overlay-host .overlay-difficulty-timeline-ln-line[hidden] {
+  display: none !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-cursor {
+  stroke: #f5f7ff !important;
+  stroke-dasharray: 3 3 !important;
+  stroke-width: 1.5 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-footer {
+  color: #8e9ba4 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+html.launcher-overlay-host .overlay-difficulty-timeline-footer span:nth-child(2) {
+  color: #6f858e !important;
+  letter-spacing: .04em !important;
+  text-transform: uppercase !important;
+}
+
+/* The built-in card layouts use an explicit grid; keep the series across the
+   complete card width rather than inside only one column. */
+html.overlay-layout-companella .main-card > .overlay-difficulty-timeline,
+html.overlay-layout-companella-replay .main-card > .overlay-difficulty-timeline {
+  grid-column: 1 / -1 !important;
+}

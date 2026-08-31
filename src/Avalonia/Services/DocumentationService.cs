@@ -54,8 +54,8 @@ public sealed class DocumentationService
         // Try file system first (docs/ and root).
         var candidates = new[]
         {
-            Path.Combine(AppPaths.BaseDirectory, "docs", entry.FileName),
-            Path.Combine(AppPaths.BaseDirectory, entry.FileName),
+            Path.Combine(AppPaths.ResourceDirectory, "docs", entry.FileName),
+            Path.Combine(AppPaths.ResourceDirectory, entry.FileName),
             Path.Combine(Directory.GetCurrentDirectory(), "docs", entry.FileName),
             Path.Combine(Directory.GetCurrentDirectory(), entry.FileName),
         };
@@ -112,7 +112,7 @@ public sealed class DocumentationService
     {
         var candidates = new[]
         {
-            Path.Combine(AppPaths.BaseDirectory, "docs", fileName),
+            Path.Combine(AppPaths.ResourceDirectory, "docs", fileName),
             Path.Combine(Directory.GetCurrentDirectory(), "docs", fileName),
         };
 
@@ -378,7 +378,7 @@ public sealed class DocumentationService
                 }
                 ```
 
-                `visibilityPolicy`: `always | outside-play | during-play | paused-only | never`
+                `visibilityPolicy`: `always | outside-play | outside-only | during-play | during-and-paused | outside-and-during-play | paused-only | never`
 
                 Шаблон: только элементы с `data-overlay-preset-node` вставляются в `.main-card`.
 
@@ -407,7 +407,7 @@ public sealed class DocumentationService
             }
             ```
 
-            `visibilityPolicy`: `always | outside-play | during-play | paused-only | never`
+            `visibilityPolicy`: `always | outside-play | outside-only | during-play | during-and-paused | outside-and-during-play | paused-only | never`
 
             Template: only elements with `data-overlay-preset-node` are inserted into `.main-card`.
 

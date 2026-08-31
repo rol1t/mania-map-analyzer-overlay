@@ -42,6 +42,8 @@ jobs:
         run: node tests/Runtime/adapter-pause-coach-integration.test.js
       - name: Run native renderer precedence tests
         run: node tests/Runtime/renderer-native-precedence.test.js
+      - name: Run difficulty timeline renderer tests
+        run: node tests/Runtime/difficulty-timeline-renderer.test.js
       - name: Run headless analyzer protocol fixtures
         run: node assets/analyzer-engines/mania-map-analyser/fixtures/test-harness.mjs
       - name: Build application payload (Windows)

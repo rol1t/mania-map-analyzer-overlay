@@ -9,7 +9,10 @@
 
 <div id="overlay-comp-summary" class="overlay-comp-summary" data-overlay-preset-node>
   <div class="overlay-comp-summary-item overlay-comp-summary-rating">
-    <span class="overlay-comp-summary-label">Star rating</span>
+    <span class="overlay-comp-summary-label">
+      <span>Est. star rating</span>
+      <span id="overlay-summary-star-method" class="overlay-comp-summary-method">—</span>
+    </span>
     <strong id="overlay-summary-star" class="overlay-comp-summary-value">—</strong>
     <small id="overlay-summary-star-meta" class="overlay-comp-summary-note">LN — · Keys —</small>
   </div>
@@ -17,27 +20,52 @@
     <span class="overlay-comp-summary-label">BPM</span>
     <strong id="overlay-summary-bpm" class="overlay-comp-summary-value">—</strong>
   </div>
-  <div class="overlay-comp-summary-item">
-    <span class="overlay-comp-summary-label">Set</span>
-    <strong id="overlay-summary-set" class="overlay-comp-summary-value">—</strong>
-  </div>
-  <div class="overlay-comp-summary-item">
-    <span class="overlay-comp-summary-label">Map</span>
-    <strong id="overlay-summary-map" class="overlay-comp-summary-value">—</strong>
-  </div>
-  <div class="overlay-comp-summary-item overlay-comp-summary-dan">
-    <span class="overlay-comp-summary-label">RC DAN</span>
+  <div id="overlay-summary-rc-dan-card" class="overlay-comp-summary-item overlay-comp-summary-dan overlay-comp-summary-rc-dan">
+    <span class="overlay-comp-summary-label">
+      <span class="overlay-comp-summary-dan-chip" aria-hidden="true">RC</span>
+      <span>DAN</span>
+    </span>
     <strong id="overlay-summary-rc-dan" class="overlay-comp-summary-value">—</strong>
     <small id="overlay-summary-rc-dan-value" class="overlay-comp-summary-note">—</small>
   </div>
-  <div class="overlay-comp-summary-item overlay-comp-summary-dan">
-    <span class="overlay-comp-summary-label">LN DAN</span>
+  <div id="overlay-summary-ln-dan-card" class="overlay-comp-summary-item overlay-comp-summary-dan overlay-comp-summary-ln-dan">
+    <span class="overlay-comp-summary-label">
+      <span class="overlay-comp-summary-dan-chip" aria-hidden="true">LN</span>
+      <span>DAN</span>
+    </span>
     <strong id="overlay-summary-ln-dan" class="overlay-comp-summary-value">—</strong>
+    <small id="overlay-summary-ln-dan-value" class="overlay-comp-summary-note" aria-hidden="true"></small>
   </div>
 </div>
 
 <div id="overlay-comp-chart" class="overlay-comp-chart" data-overlay-preset-node></div>
 
+<div id="overlay-difficulty-timeline" class="overlay-difficulty-timeline" data-overlay-preset-node hidden>
+  <div class="overlay-difficulty-timeline-header">
+    <span class="overlay-difficulty-timeline-title">Difficulty over time</span>
+    <span class="overlay-difficulty-timeline-legend">
+      <span id="overlay-difficulty-timeline-rice-legend" class="overlay-difficulty-timeline-legend-rice">Rice</span>
+      <span id="overlay-difficulty-timeline-ln-legend" class="overlay-difficulty-timeline-legend-ln">LN</span>
+    </span>
+    <span id="overlay-difficulty-timeline-current" class="overlay-difficulty-timeline-current">—</span>
+  </div>
+  <div class="overlay-difficulty-timeline-plot">
+    <svg viewBox="0 0 1000 180" preserveAspectRatio="none" role="img" aria-label="Difficulty over time">
+      <path id="overlay-difficulty-timeline-area" class="overlay-difficulty-timeline-area" d=""></path>
+      <path id="overlay-difficulty-timeline-line" class="overlay-difficulty-timeline-line" d=""></path>
+      <path id="overlay-difficulty-timeline-ln-area" class="overlay-difficulty-timeline-ln-area" d="" hidden></path>
+      <path id="overlay-difficulty-timeline-ln-line" class="overlay-difficulty-timeline-ln-line" d="" hidden></path>
+      <line id="overlay-difficulty-timeline-cursor" class="overlay-difficulty-timeline-cursor" x1="0" y1="0" x2="0" y2="180" hidden></line>
+    </svg>
+  </div>
+  <div class="overlay-difficulty-timeline-footer">
+    <span id="overlay-difficulty-timeline-start">0:00</span>
+    <span>difficulty</span>
+    <span id="overlay-difficulty-timeline-end">—</span>
+  </div>
+</div>
+
+<!-- TODO(replay-pause-coach-redesign): Re-enable these sections after their presentation is redesigned.
 <div id="overlay-replay" class="overlay-replay" data-overlay-preset-node>
   <div class="overlay-replay-header">
     <span class="overlay-replay-title">Replay analysis</span>
@@ -77,3 +105,4 @@
   <div id="overlay-pause-insights" class="overlay-replay-insights" hidden data-overlay-preset-node></div>
   <div id="overlay-pause-coach-diagnostics" class="overlay-pause-coach-diagnostics" hidden></div>
 </div>
+-->

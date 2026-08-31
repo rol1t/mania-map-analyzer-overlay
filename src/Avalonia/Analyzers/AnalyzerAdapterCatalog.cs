@@ -25,7 +25,7 @@ public sealed class AnalyzerAdapterCatalog
 
     public AnalyzerAdapterCatalog() => _packages = new Lazy<IReadOnlyList<AnalyzerAdapterPackage>>(LoadPackages);
 
-    public string RootDirectory => Path.Combine(AppPaths.BaseDirectory, "Assets", "analyzers");
+    public string RootDirectory => Path.Combine(AppPaths.ResourceDirectory, "Assets", "analyzers");
     public IReadOnlyList<AnalyzerAdapterPackage> List() => _packages.Value;
 
     public AnalyzerAdapterPackage Require(string? id)

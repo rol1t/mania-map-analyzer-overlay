@@ -1,0 +1,81 @@
+/* Companella Glass: roomy two-column hierarchy and soft translucent surfaces. */
+html.overlay-layout-companella-glass {
+  --overlay-host-width:920px;
+}
+
+html.overlay-layout-companella-glass .main-card {
+  gap:14px!important;
+  padding:22px 24px 40px!important;
+  border:1px solid rgba(218,244,255,.34)!important;
+  border-bottom:3px solid rgba(127,224,255,.86)!important;
+  border-radius:22px!important;
+  background:rgba(14,22,33,.30)!important;
+  box-shadow:0 24px 64px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.16)!important;
+  backdrop-filter:blur(18px) saturate(1.18)!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-cover-layer {
+  opacity:.30!important;
+  border-radius:22px!important;
+  filter:saturate(.78) brightness(.92)!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-summary {
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:12px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-summary-item {
+  min-height:108px!important;
+  padding:15px 18px!important;
+  border:1px solid rgba(224,246,255,.25)!important;
+  border-radius:16px!important;
+  background:linear-gradient(145deg,rgba(42,58,73,.60),rgba(13,25,39,.48))!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10)!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-summary-label,
+html.overlay-layout-companella-glass .overlay-comp-summary-note {
+  font-size:13px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-summary-value {
+  font-size:24px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-summary-rating .overlay-comp-summary-value {
+  font-size:42px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-chart {
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:12px!important;
+  min-height:330px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-column {
+  grid-template-rows:120px auto!important;
+  gap:8px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-barbox {
+  height:120px!important;
+  border:1px solid rgba(222,244,255,.16)!important;
+  border-radius:12px!important;
+  background:rgba(31,47,62,.50)!important;
+}
+
+html.overlay-layout-companella-glass .overlay-comp-label,
+html.overlay-layout-companella-glass .overlay-comp-number {
+  font-size:15px!important;
+}
+
+html.overlay-layout-companella-glass .overlay-difficulty-timeline {
+  height:168px!important;
+  min-height:168px!important;
+  max-height:168px!important;
+  padding:12px 15px 10px!important;
+  border-color:rgba(142,226,255,.34)!important;
+  border-radius:14px!important;
+  background:linear-gradient(180deg,rgba(30,53,67,.58),rgba(9,24,38,.48))!important;
+}

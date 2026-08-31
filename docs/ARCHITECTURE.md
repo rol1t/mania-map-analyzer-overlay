@@ -136,14 +136,14 @@ canonical attempt.
 | Fact | Current owners | Target owner | Migration gate |
 | --- | --- | --- | --- |
 | Gameplay state | C# normalizer, coordinator, MainWindow compatibility flags, browser adapter | `OverlayRuntimeCoordinator` | Remove compatibility flags after parity sequences pass |
-| Tosu connection | `TosuService` plus typed coordinator event | typed `TosuConnectionState` + transport generation | Move reconnect/backoff policy behind the host |
+| Tosu connection | `TosuService` plus typed coordinator event; explicit `External`/`Owned` process ownership | typed `TosuConnectionState` + transport generation | Move reconnect/backoff policy behind the host |
 | Native realtime collection | `TosuRealtimeRuntimeHost` and polling controller; `TosuRealtimePayloadResult` at HTTP boundary | Application-owned realtime port | Start from application lifecycle and keep transport/reconnect outcomes typed |
 | Tosu normalization | `Avalonia/Infrastructure/Tosu/TosuRealtimeCollector` for native path; browser adapter fallback | one infrastructure normalization boundary | Prove HTTP/WebSocket fixture parity before deleting fallback |
 | Beatmap identity | Tosu source, collector, browser adapter, snapshots, renderer | application beatmap state | Reject carousel/intermediate and identity-free stale updates |
 | Attempt/session ID | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Native view-state delivery on every surface |
 | Realtime metrics | C# desktop analyzer; JavaScript preview/fullscreen fallback | C# Pause Coach domain engine | Cross-runtime fixtures and manual surface acceptance |
 | Headless result | controller, window cache, renderer | versioned `DifficultyAnalysisState` | `AnalysisRequestId`/generation checks and complete Application composition |
-| Replay result | replay session and renderer | versioned `ReplayAnalysisState` | Keep exact replay independent from realtime slots |
+| Replay result | `ReplayAnalysisSession` feeds the versioned Application `ReplayAnalysisRequestSlot`; renderer consumes the composed replay block | versioned `ReplayAnalysisState` | Complete surface delivery and remove compatibility composition after parity |
 | Desired visibility | coordinator derivation plus MainWindow compatibility mirror | pure application derivation | Remove legacy visibility mirror after parity |
 | Browser readiness | MainWindow, delivery controller and publisher | `PresentationSurfaceState` | Give preview/fullscreen explicit generations |
 | Latest rendered state | native publisher and JavaScript globals | application presenter/coalescer | Remove browser snapshot arbitration after native cutover |
@@ -302,6 +302,12 @@ Renderer responsibilities are limited to rendering these blocks, honoring the
 version, and reporting presentation measurements or input gestures. It does
 not parse Tosu, create sessions, calculate insights, or merge producers.
 
+Application policy intent is exposed as `Presentation.DesiredVisibility`;
+`SurfaceReady` and `ActualVisibility` are feedback from the current physical
+surface. The coordinator assigns `OverlayViewState.Version` only when the
+serialized rendered contract changes, while `RuntimeVersion` remains available
+for diagnostics.
+
 WebView recreation changes only the presentation generation. The delivery
 controller owns desktop/fullscreen logical generation counters, while the
 desktop generation is reported back to the Application runtime. Runtime state
@@ -366,6 +372,25 @@ src/Updater
 
 A separate Infrastructure assembly is not required. Infrastructure folders
 inside Avalonia are sufficient until another host needs to reuse them.
+
+## Single-file deployment boundary
+
+Release payloads contain one self-contained launcher executable. Managed and
+native runtime dependencies, immutable overlay/analyzer/localization assets,
+documentation, licenses, and the updater helper are embedded during publish.
+`RuntimeAssetDeployment` materializes immutable resources into a directory
+identified by application version and assembly MVID under the per-user data
+root. It writes into a unique temporary directory, validates required files,
+then renames the directory atomically. `AppPaths.ResourceDirectory` is the
+only root used by runtime resource consumers; mutable settings, custom CSS,
+user presets and external components remain separate under `AppPaths.DataDirectory`.
+
+Folder-based developer builds deliberately continue to use loose `Assets`
+next to the executable. Single-file builds are detected through the empty
+`Assembly.Location` contract and never trust an adjacent `Assets` directory.
+The embedded updater is extracted to the per-user tools directory only when
+an application update is requested, so no helper binary appears beside the
+user-facing launcher.
 
 ## Existing components to preserve
 

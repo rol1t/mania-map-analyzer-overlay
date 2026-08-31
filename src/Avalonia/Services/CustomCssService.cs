@@ -24,7 +24,7 @@ public static class CustomCssService
             return;
         }
 
-        var bundledTemplate = System.IO.Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay-custom.css");
+        var bundledTemplate = System.IO.Path.Combine(AppPaths.ResourceDirectory, "Assets", "overlay-custom.css");
         var content = File.Exists(bundledTemplate)
             ? File.ReadAllText(bundledTemplate, Encoding.UTF8)
             : "/* Custom Mania Map Analyzer Overlay CSS */\n";

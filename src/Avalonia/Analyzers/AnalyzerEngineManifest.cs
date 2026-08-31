@@ -69,6 +69,18 @@ public sealed class AnalyzerEngineManifest
         get; set;
     }
 
+    [JsonPropertyName("defaultRiceAlgorithmPath")]
+    public string? DefaultRiceAlgorithmPath
+    {
+        get; set;
+    }
+
+    [JsonPropertyName("defaultLnAlgorithmPath")]
+    public string? DefaultLnAlgorithmPath
+    {
+        get; set;
+    }
+
     [JsonPropertyName("defaultCompanellaPath")]
     public string? DefaultCompanellaPath
     {
@@ -83,6 +95,18 @@ public sealed class AnalyzerEngineManifest
 
     [JsonPropertyName("pipelineExport")]
     public string? PipelineExport
+    {
+        get; set;
+    }
+
+    [JsonPropertyName("riceAlgorithmExport")]
+    public string? RiceAlgorithmExport
+    {
+        get; set;
+    }
+
+    [JsonPropertyName("lnAlgorithmExport")]
+    public string? LnAlgorithmExport
     {
         get; set;
     }

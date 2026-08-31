@@ -19,6 +19,8 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
     private readonly object _writeGate = new();
     private readonly Task _processingTask;
     private OverlayRuntimeState _current = OverlayRuntimeState.Empty;
+    private OverlayViewState? _lastPublishedViewState;
+    private long _nextPresentationVersion;
     private long _nextSequence;
     private int _stopped;
 
@@ -30,6 +32,20 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
     public OverlayRuntimeState Current => Volatile.Read(ref _current);
 
     /// <summary>
+    /// Returns the newest rendered contract known by the coordinator. A
+    /// presenter can use this when a surface is recreated without manufacturing
+    /// a second version from the runtime event counter.
+    /// </summary>
+    public OverlayViewState CurrentViewState
+    {
+        get
+        {
+            OverlayViewState? published = Volatile.Read(ref _lastPublishedViewState);
+            return published ?? OverlayViewStateComposer.Compose(Current);
+        }
+    }
+
+    /// <summary>
     /// Raised after the reducer has processed an event. Handlers run on the
     /// coordinator consumer and are isolated from the event loop: a diagnostic
     /// observer must never be able to break runtime processing.
@@ -37,9 +53,9 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
     public event EventHandler<OverlayRuntimeTransition>? TransitionApplied;
 
     /// <summary>
-    /// Raised after an accepted realtime or analysis transition has been
-    /// composed into the immutable presentation contract. Presenters may be
-    /// unavailable or hidden; they retain/deliver this state independently.
+    /// Raised after an accepted transition changes the rendered presentation
+    /// contract. Presenters may be unavailable or hidden; they retain/deliver
+    /// this state independently.
     /// </summary>
     public event EventHandler<OverlayViewStateChangedEventArgs>? ViewStateChanged;
 
@@ -207,9 +223,10 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
                         next,
                         accepted,
                         accepted ? null : OverlayRuntimeReducer.DescribeRejection(previous, pending.Event)));
-                    if (HasViewStateChange(previous, next))
+                    OverlayViewState? viewState = ComposeChangedViewState(previous, next);
+                    if (viewState is not null)
                     {
-                        PublishViewState(OverlayViewStateComposer.Compose(next));
+                        PublishViewState(viewState);
                     }
                     pending.Completion?.TrySetResult(next);
                 }
@@ -281,15 +298,28 @@ public sealed class OverlayRuntimeCoordinator : IAsyncDisposable
         }
     }
 
-    private static bool HasViewStateChange(OverlayRuntimeState previous, OverlayRuntimeState next) =>
-        !ReferenceEquals(previous.LatestRealtime, next.LatestRealtime)
-        || !ReferenceEquals(previous.LatestAnalysis, next.LatestAnalysis)
-        || previous.OverlayMode != next.OverlayMode
-        || !string.Equals(previous.VisibilityPolicy, next.VisibilityPolicy, StringComparison.Ordinal)
-        || previous.OsuWindowMinimized != next.OsuWindowMinimized
-        || previous.PresentationReady != next.PresentationReady
-        || previous.PresentationVisible != next.PresentationVisible
-        || previous.PresentationSurfaceGeneration != next.PresentationSurfaceGeneration;
+    private OverlayViewState? ComposeChangedViewState(
+        OverlayRuntimeState previousRuntime,
+        OverlayRuntimeState runtime)
+    {
+        OverlayViewState candidate = OverlayViewStateComposer.Compose(
+            runtime,
+            presentationVersion: _nextPresentationVersion + 1);
+        OverlayViewState baseline = _lastPublishedViewState
+            ?? OverlayViewStateComposer.Compose(previousRuntime);
+        if (OverlayViewStateComparer.ContentEquals(baseline, candidate))
+        {
+            return null;
+        }
+
+        _nextPresentationVersion++;
+        candidate = candidate with
+        {
+            Version = _nextPresentationVersion
+        };
+        _lastPublishedViewState = candidate;
+        return candidate;
+    }
 
     private sealed class PendingEvent
     {

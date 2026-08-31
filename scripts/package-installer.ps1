@@ -31,6 +31,10 @@ $launcherName = if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Or
 if (-not (Test-Path -LiteralPath (Join-Path $payloadPath $launcherName))) {
     throw 'Build the launcher payload before packaging the application package.'
 }
+$payloadEntries = @(Get-ChildItem -LiteralPath $payloadPath -Force)
+if ($payloadEntries.Count -ne 1 -or $payloadEntries[0].Name -ne $launcherName) {
+    throw "Payload must contain only '$launcherName'. Found: $($payloadEntries.Name -join ', ')"
+}
 
 New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
 

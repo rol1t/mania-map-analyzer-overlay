@@ -519,7 +519,11 @@ public partial class MainWindow : Window
         if (_model.Tosu.IsRunning)
         {
             SetComponentPreparationState(false);
-            _model.SetStatus(L("status.tosu_running"), true);
+            _model.SetStatus(
+                L(_model.Tosu.Ownership == TosuInstanceOwnership.External
+                    ? "status.tosu_connected_existing"
+                    : "status.tosu_running"),
+                true);
             SetControlsEnabled(true);
             Navigate(AnalysisUrl);
         }
@@ -1020,6 +1024,7 @@ public partial class MainWindow : Window
         HelpButton.Content = L("button.help");
         OverlayButton.Content = L("button.overlay");
         DashboardButton.Content = L("button.tosu_panel");
+        LanguageMenuLabel.Text = L("button.language");
         SetComponentPreparationState(_componentPreparationFailed);
         ExitButton.Content = L("button.exit");
         RefreshLanguageSelector();
@@ -1810,7 +1815,7 @@ public partial class MainWindow : Window
                 // serialized desktop publisher instead of invoking a second,
                 // competing appearance script on the WebView.
                 _presentationDelivery.SubmitDesktop(
-                    OverlayViewStateComposer.Compose(_runtimeCoordinator.Current));
+                    _runtimeCoordinator.CurrentViewState);
             }
             applied = true;
         }
@@ -2055,6 +2060,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        ReplayAnalysisRequest? replayRequest = null;
+        bool replayTerminalEventPublished = false;
         try
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2088,23 +2095,76 @@ public partial class MainWindow : Window
             }
 
             var beatmap = await _headlessAnalysisController.BeatmapSource.GetCurrentAsync();
-            var result = await _replayAnalysisSession.AnalyzeAsync(beatmap);
-            var baseSnapshot = _headlessAnalysisController.LastSnapshot;
-            if (baseSnapshot is null)
+            OverlayRuntimeState runtime = _runtimeCoordinator.Current;
+            long beatmapGeneration = string.Equals(
+                    runtime.BeatmapId,
+                    beatmap.Identity.Id,
+                    StringComparison.Ordinal)
+                ? runtime.BeatmapGeneration
+                : 0;
+            replayRequest = _replayAnalysisSession.CreateRequest(beatmap, beatmapGeneration);
+            await _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestStarted(
+                sequence,
+                replayRequest.RequestId,
+                replayRequest.BeatmapGeneration,
+                replayRequest.BeatmapId,
+                replayRequest.BeatmapHash));
+
+            AnalysisResult result;
+            try
             {
-                baseSnapshot = HeadlessSnapshotConverter.FromComposed(
-                    beatmap,
-                    null,
-                    new ComposedWidgetSnapshot("replay-base", AnalysisOutcome.Success, [], []));
+                result = await _replayAnalysisSession.AnalyzeAsync(replayRequest);
+            }
+            catch (OperationCanceledException)
+            {
+                await PublishReplayCancellationAsync(replayRequest, "Replay analysis was cancelled.");
+                replayTerminalEventPublished = true;
+                throw;
+            }
+            catch (ReplayAnalysisException exception)
+            {
+                await PublishReplayFailureAsync(replayRequest, exception.Code, exception.Message);
+                replayTerminalEventPublished = true;
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await PublishReplayFailureAsync(replayRequest, "replay.unexpected", exception.Message);
+                replayTerminalEventPublished = true;
+                throw;
             }
 
-            var replaySnapshot = HeadlessSnapshotConverter.WithReplayAnalysis(baseSnapshot, result);
-            await _headlessAnalysisController.PushEnrichedSnapshotAsync(replaySnapshot, CancellationToken.None);
+            ReplayOverlaySnapshot? replaySnapshot = HeadlessSnapshotConverter.ToReplaySnapshot(result);
+            if (result.Outcome == AnalysisOutcome.Cancelled)
+            {
+                await PublishReplayCancellationAsync(
+                    replayRequest,
+                    result.Diagnostics.FirstOrDefault()?.Message);
+            }
+            else if (result.Outcome == AnalysisOutcome.Failed || replaySnapshot is null)
+            {
+                await PublishReplayFailureAsync(
+                    replayRequest,
+                    result.Diagnostics.FirstOrDefault()?.Code ?? "replay.analysis_failed",
+                    result.Diagnostics.FirstOrDefault()?.Message ?? "Replay analysis did not produce a result.");
+            }
+            else
+            {
+                await _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisCompleted(
+                    sequence,
+                    replayRequest.RequestId,
+                    replayRequest.BeatmapGeneration,
+                    replayRequest.BeatmapId,
+                    replayRequest.BeatmapHash,
+                    replaySnapshot));
+            }
+
+            replayTerminalEventPublished = true;
             AppLogger.Info(
                 "Replay import",
                 $"file={file.Name}; outcome={result.Outcome}; metrics={result.Metrics.Count}; " +
-                $"replayData={replaySnapshot.Replay?.HasData.ToString() ?? "false"}; " +
-                $"columns={replaySnapshot.Replay?.Columns.Count.ToString() ?? "0"}");
+                $"replayData={replaySnapshot?.HasData.ToString() ?? "false"}; " +
+                $"columns={replaySnapshot?.Columns.Count.ToString() ?? "0"}");
             var diagnostic = result.Diagnostics.FirstOrDefault();
             if (result.Outcome == AnalysisOutcome.Success)
             {
@@ -2120,17 +2180,59 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayCancellationAsync(replayRequest, "Replay analysis was cancelled.");
+            }
         }
         catch (ReplayAnalysisException exception)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayFailureAsync(replayRequest, exception.Code, exception.Message);
+            }
+
             AppLogger.Warning("Importing replay", exception.Message, exception);
             _model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
         }
         catch (Exception exception)
         {
+            if (replayRequest is not null && !replayTerminalEventPublished)
+            {
+                await PublishReplayFailureAsync(replayRequest, "replay.unexpected", exception.Message);
+            }
+
             AppLogger.Error("Importing replay", exception);
             _model.SetStatus(UiText.Format("replay.import.failed", exception.Message));
         }
+    }
+
+    private Task PublishReplayFailureAsync(
+        ReplayAnalysisRequest request,
+        string failureCode,
+        string? failureMessage)
+    {
+        return _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestFailed(
+            sequence,
+            request.RequestId,
+            failureCode,
+            failureMessage,
+            request.BeatmapGeneration,
+            request.BeatmapId,
+            request.BeatmapHash));
+    }
+
+    private Task PublishReplayCancellationAsync(
+        ReplayAnalysisRequest request,
+        string? cancellationMessage)
+    {
+        return _runtimeCoordinator.DispatchAsync(sequence => new ReplayAnalysisRequestCancelled(
+            sequence,
+            request.RequestId,
+            cancellationMessage,
+            request.BeatmapGeneration,
+            request.BeatmapId,
+            request.BeatmapHash));
     }
 
     private void Dashboard_Click(object? sender, RoutedEventArgs e) => Navigate(BaseUrl + "/");
@@ -2190,6 +2292,7 @@ public partial class MainWindow : Window
         _model.Settings.OverlayPresetId = dialog.PresetId;
         _model.Settings.OverlayScalePercent = dialog.ScalePercent;
         _model.Settings.OverlayOpacityPercent = dialog.OpacityPercent;
+        _model.Settings.OverlayVisibilityPolicyOverride = dialog.VisibilityPolicy;
         UpdatePreviewScaleText();
         var restartForFullscreen = false;
         if (_model.Settings.FullscreenOverlayEnabled && !ActiveAnalyzer.Descriptor.SupportsFullscreen)
@@ -2436,17 +2539,21 @@ public partial class MainWindow : Window
         var scale = Math.Clamp(_model.Settings.OverlayScalePercent, 50, 180) / 100d;
         var baseWidth = layout switch
         {
-            "horizontal" => 920d,
-            "companella" or "companella-replay" => 760d,
-            "pause-coach-card" => 620d,
-            _ => 475d
+            "companella" => 900d,
+            "companella-replay" => 900d,
+            "companella-glass" => 920d,
+            "companella-radar" => 1080d,
+            _ => 900d
         };
         var baseHeight = layout switch
         {
-            "horizontal" => 360d,
-            "companella" or "companella-replay" => 340d,
-            "pause-coach-card" => 300d,
-            _ => 540d
+            // Companella reserves room for the difficulty timeline before
+            // the first settled WebView measurement arrives.
+            "companella" => 560d,
+            "companella-replay" => 760d,
+            "companella-glass" => 720d,
+            "companella-radar" => 720d,
+            _ => 700d
         };
         var width = baseWidth * scale;
         var height = baseHeight * scale;
@@ -2653,10 +2760,10 @@ public partial class MainWindow : Window
         var layout = OverlayPresentationService.NormalizeLayout(requestedPreset);
         var baseWidth = layout switch
         {
-            "horizontal" => 920d,
-            "companella" or "companella-replay" => 760d,
-            "pause-coach-card" => 620d,
-            "default" => 475d,
+            "companella" => 900d,
+            "companella-replay" => 900d,
+            "companella-glass" => 920d,
+            "companella-radar" => 1080d,
             _ => ClientSize.Width / currentScale
         };
         var baseHeight = _overlayRenderedBaseHeight ?? ClientSize.Height / currentScale;
@@ -3236,7 +3343,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _presentationDelivery.SubmitFullscreen(OverlayViewStateComposer.Compose(runtime));
+        _presentationDelivery.SubmitFullscreen(_runtimeCoordinator.CurrentViewState);
     }
 
     private async Task PublishNativePauseCoachSnapshotToBrowserCoreAsync(OverlayViewState viewState)
@@ -3365,6 +3472,11 @@ public partial class MainWindow : Window
         if (_model is null)
         {
             return OverlayVisibilityPolicy.Always;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_model.Settings.OverlayVisibilityPolicyOverride))
+        {
+            return OverlayVisibilityPolicy.Normalize(_model.Settings.OverlayVisibilityPolicyOverride);
         }
 
         var requestedPreset = string.IsNullOrWhiteSpace(_model.Settings.OverlayPresetId) ||

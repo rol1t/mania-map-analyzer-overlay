@@ -98,6 +98,18 @@ public sealed record EffectiveAnalysisConfiguration
         var binding = new EffectiveWidgetBinding(
             "difficulty.star",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.star")));
+        var difficultyTimelineBinding = new EffectiveWidgetBinding(
+            "difficulty.timeline",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.timeline")),
+            allowsNull: true);
+        var riceDifficultyTimelineBinding = new EffectiveWidgetBinding(
+            "difficulty.rice.timeline",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.rice.timeline")),
+            allowsNull: true);
+        var lnDifficultyTimelineBinding = new EffectiveWidgetBinding(
+            "difficulty.ln.timeline",
+            ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.ln.timeline")),
+            allowsNull: true);
         var difficultyLabelBinding = new EffectiveWidgetBinding(
             "difficulty.label",
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "difficulty.label")));
@@ -118,6 +130,9 @@ public sealed record EffectiveAnalysisConfiguration
             ImmutableArray.Create(new SourceMetricCandidate("headless-primary", "dan.ln.label")));
         var bindings = ImmutableArray.CreateBuilder<EffectiveWidgetBinding>();
         bindings.Add(binding);
+        bindings.Add(difficultyTimelineBinding);
+        bindings.Add(riceDifficultyTimelineBinding);
+        bindings.Add(lnDifficultyTimelineBinding);
         bindings.Add(difficultyLabelBinding);
         bindings.Add(rcLabelBinding);
         bindings.Add(rcNumericBinding);
@@ -150,6 +165,24 @@ public sealed record EffectiveAnalysisConfiguration
 
         var sourceId = widget.Sources[0].SourceId;
         var bindings = widget.Bindings.ToBuilder();
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "difficulty.timeline",
+                [new SourceMetricCandidate(sourceId, "difficulty.timeline")],
+                allowsNull: true));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "difficulty.rice.timeline",
+                [new SourceMetricCandidate(sourceId, "difficulty.rice.timeline")],
+                allowsNull: true));
+        AppendGeneratedBindingIfMissing(
+            bindings,
+            new EffectiveWidgetBinding(
+                "difficulty.ln.timeline",
+                [new SourceMetricCandidate(sourceId, "difficulty.ln.timeline")],
+                allowsNull: true));
         AppendGeneratedBindingIfMissing(
             bindings,
             new EffectiveWidgetBinding(
@@ -191,15 +224,23 @@ public sealed record EffectiveAnalysisConfiguration
 
     private static bool IsGeneratedDefaultBinding(EffectiveWidgetBinding binding, string sourceId)
     {
-        if (binding.AllowsNull || binding.Candidates.Any(candidate =>
+        if (binding.Candidates.Any(candidate =>
                 !string.Equals(candidate.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        if (binding.AllowsNull
+            && binding.TargetMetricId is not ("difficulty.timeline"
+                or "difficulty.rice.timeline"
+                or "difficulty.ln.timeline"))
         {
             return false;
         }
 
         return binding.TargetMetricId switch
         {
-            "difficulty.star" or "difficulty.label" or "dan.rc.label" or "dan.rc.numeric" or "dan.ln.label"
+            "difficulty.star" or "difficulty.timeline" or "difficulty.rice.timeline" or "difficulty.ln.timeline" or "difficulty.label" or "dan.rc.label" or "dan.rc.numeric" or "dan.ln.label"
                 => binding.Candidates.Length == 1
                     && string.Equals(binding.Candidates[0].MetricId, binding.TargetMetricId, StringComparison.OrdinalIgnoreCase),
             "difficulty.lnPercent" => binding.Candidates.All(candidate =>

@@ -5,6 +5,7 @@
 artifacts/
 packages/
 .packages/
+node_modules/
 *.user
 *.suo
 *.pdb

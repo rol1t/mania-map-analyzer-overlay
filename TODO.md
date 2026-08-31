@@ -118,7 +118,7 @@ node tests/Runtime/renderer-native-precedence.test.js
   - **Done when:** `AnalysisRequestSlot` is the only production analysis
     completion slot and all analysis causality tests pass.
 
-- [ ] **LUNA-03 — independent versioned replay request slot**
+- [x] **LUNA-03 — independent versioned replay request slot**
   - **Depends on:** LUNA-02.
   - **Goal:** represent exact replay execution separately from headless map
     analysis and realtime Pause Coach.
@@ -136,10 +136,20 @@ node tests/Runtime/renderer-native-precedence.test.js
     state intact; view-state exposes only the accepted replay result.
   - **Do not:** infer realtime per-column metrics from replay data or reset the
     live attempt when replay import starts/completes.
+  - **Completed:** `ReplayRequestId` is allocated before replay work starts and
+    is carried through start, completion, failure and cancellation events. The
+    Application reducer owns an independent `ReplayAnalysisRequestSlot` with
+    beatmap identity/generation and terminal result diagnostics. The UI no
+    longer injects exact replay metrics into the headless analysis snapshot;
+    the composer projects only the accepted replay slot for the current map.
+    Replay and headless requests can run concurrently, while stale map,
+    generation and out-of-order replay completions are rejected. Replay
+    artifacts are captured by id when a request is created, so a later import
+    cannot change an in-flight execution's input.
   - **Done when:** replay causality is explicit in Application and has no shared
     pending/completion slot with headless analysis.
 
-- [ ] **LUNA-04 — explicit visibility state and view-state versioning**
+- [x] **LUNA-04 — explicit visibility state and view-state versioning**
   - **Depends on:** LUNA-02; may be completed before LUNA-03 only if replay
     contracts are untouched.
   - **Goal:** separate policy intent from platform feedback and publish only
@@ -158,6 +168,13 @@ node tests/Runtime/renderer-native-precedence.test.js
     WebView recreation preserves semantic runtime state while allowing the new
     surface to receive the current view.
   - **Do not:** put HWND/WebView types or drag/resize pixels in Application.
+  - **Completed:** Application exposes policy intent through
+    `DesiredVisibility`, while `SurfaceReady` and `ActualVisibility` remain
+    platform feedback. The coordinator allocates an independent monotonic
+    presentation-contract version and compares normalized serialized content
+    (not object references or runtime event numbers) before publishing. This
+    suppresses no-op telemetry churn while preserving policy, readiness,
+    generation and data changes.
   - **Done when:** desired/ready/actual are independently observable and tests
     prove monotonic, content-based view-state publication.
 
@@ -182,6 +199,9 @@ node tests/Runtime/renderer-native-precedence.test.js
     typed failures; collection remains independent from presentation state.
   - **Do not:** redesign state normalization, add another polling source, or
     silently swallow transport errors.
+  - [x] Host lifecycle callbacks are bound to the attached Tosu instance, so a
+    queued event from a detached/replaced service cannot stop the current
+    polling generation; the boundary is covered by a fake-lifecycle test.
   - **Done when:** `MainWindow` and `TosuService` contain no realtime reconnect
     policy and host lifecycle tests are deterministic.
 
@@ -449,23 +469,23 @@ node tests/Runtime/renderer-native-precedence.test.js
   - [ ] Add connection, process, replay and surface lifecycle state/events.
   - [x] Add typed Tosu connection state and transport-generation events;
     stale older-generation callbacks are rejected by the reducer.
-  - [ ] Separate desired visibility, surface readiness and actual visibility.
-  - [x] Publish view-state for every presentation-contract change (first
-    regression fix landed on this branch; policy/visibility scenario coverage
-    remains part of WP2).
+  - [x] Separate desired visibility, surface readiness and actual visibility;
+    the reducer-derived policy intent is now distinct from surface feedback.
+  - [x] Publish view-state for every presentation-contract change using
+    content equality and an independent monotonic presentation version.
   - [x] Preserve confirmed beatmap/attempt identity across partial realtime
     frames at the reducer boundary.
   - [x] Add an explicit version-1 `OverlayViewState` wire schema and reject
     unsupported future versions before they can replace the last valid render.
   - [x] Reject older native presentation-surface feedback (initial generation
     boundary landed; cross-surface causal identity remains part of WP4).
-  - [ ] Reject stale async completions by request/generation, not queue order
-    alone.
+  - [x] Reject stale async completions by request/generation, not queue order
+    alone, for headless and exact replay requests.
   - [x] Rejected runtime events expose typed stale-sequence, transport,
     presentation-surface and analysis-generation diagnostics with causal IDs.
   - [x] Analysis snapshot events now carry the observed beatmap generation;
     reducer rejects a causally older completion after a map transition.
-  - [ ] Extend the same identity through explicit headless request and replay
+  - [x] Extend the same identity through explicit headless request and replay
     completion contracts.
 
 ### P0 — complete data and presentation cutover

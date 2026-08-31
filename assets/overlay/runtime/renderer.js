@@ -72,6 +72,161 @@
     return value !== "" && value !== "—" && value !== "-";
   }
 
+  const DAN_TIER_SUFFIXES = Object.freeze({
+    low: "--",
+    "mid/low": "-",
+    mid: "",
+    "mid/high": "+",
+    high: "++",
+  });
+
+  const REFORM_BADGE_GLYPHS = Object.freeze({
+    alpha: "α",
+    beta: "β",
+    gamma: "γ",
+    delta: "δ",
+    epsilon: "ε",
+    zeta: "ζ",
+    eta: "η",
+    theta: "θ",
+    iota: "ι",
+    kappa: "κ",
+  });
+
+  function primaryDanSystemId(snapshot, rc, ln) {
+    if (rc && rc.isPrimary === true) return "rc-dan";
+    if (ln && ln.isPrimary === true) return "ln-dan";
+
+    const rcHas = rankHasValue(rc);
+    const lnHas = rankHasValue(ln);
+    if (!rcHas) return lnHas ? "ln-dan" : "";
+    if (!lnHas) return "rc-dan";
+
+    // Compatibility snapshots predate RankEstimate.isPrimary. Derive the
+    // same chart identity line used by the Application converter so an old
+    // browser producer cannot make both ladders look authoritative.
+    const difficulty = snapshot && snapshot.difficulty || {};
+    const lnPercent = Number(difficulty.lnPercent);
+    const keyCount = Number(difficulty.keys);
+    const threshold = keyCount === 7 ? 37.5 : 45;
+    return Number.isFinite(lnPercent) && lnPercent >= threshold
+      ? "ln-dan"
+      : "rc-dan";
+  }
+
+  function danBadgeDescriptor(entry, family, keyCount) {
+    const raw = String(entry && entry.value || "").trim();
+    if (!rankHasValue(entry)) return null;
+
+    const boundary = raw.match(/^([<>])\s*/);
+    const tierMatch = raw.match(/\s+(mid\/high|mid\/low|low|mid|high)$/i);
+    let tier = boundary
+      ? (boundary[1] === ">" ? "++" : "--")
+      : (tierMatch ? DAN_TIER_SUFFIXES[tierMatch[1].toLowerCase()] : "");
+    if (!tier) tier = raw.match(/([+-]{1,2})$/)?.[1] || "";
+
+    const body = raw
+      .replace(/^[<>]\s*/, "")
+      .replace(/\s+(?:mid\/high|mid\/low|low|mid|high)$/i, "")
+      .replace(/[+-]{1,2}$/, "")
+      .trim();
+    let label = "";
+
+    if (family === "ln") {
+      const lnMatch = body.match(/\bLN\s+([A-Za-z]+|\d+)/i);
+      label = lnMatch ? lnMatch[1] : body.replace(/^LN\s*/i, "").trim();
+    } else {
+      const regularMatch = body.match(/^(?:Reform|Regular)\s+([A-Za-z]+|\d+)/i);
+      label = regularMatch ? regularMatch[1] : body.split(/\s+/)[0];
+    }
+
+    const normalized = label.toLowerCase();
+    let glyph = keyCount === 4 && family === "rc" && REFORM_BADGE_GLYPHS[normalized]
+      ? REFORM_BADGE_GLYPHS[normalized]
+      : label;
+    if (!/^\d{1,2}$/.test(glyph) && glyph.length > 2) {
+      glyph = glyph.slice(0, 2).toUpperCase();
+    }
+
+    return {
+      glyph: glyph || (family === "ln" ? "LN" : "RC"),
+      assetLabel: normalized,
+      displayLabel: body,
+      tier,
+      title: raw,
+    };
+  }
+
+  function danAssetKeys(label, family, keyCount) {
+    if (!label) return [];
+    const prefix = family === "ln" ? "ln-" : "";
+    if (keyCount === 7) return [`7k/${prefix}${label}.svg`];
+    if (keyCount === 6) return [`6k/${prefix}${label}.svg`];
+    if (keyCount !== 4) return [];
+    if (family === "ln") return [`ln/${label}.svg`];
+    return [`reform/${label}.svg`, `reform/${label}.webp`];
+  }
+
+  function resolveDanAsset(label, family, keyCount) {
+    const assets = window.__overlayDanAssets || {};
+    for (const key of danAssetKeys(label, family, keyCount)) {
+      const dataUri = assets[key];
+      if (typeof dataUri === "string" && dataUri.startsWith("data:image/")) {
+        return { key, dataUri };
+      }
+    }
+    return null;
+  }
+
+  function applyDanAsset(value, asset) {
+    if (!value) return;
+    if (value.classList && typeof value.classList.toggle === "function") {
+      value.classList.toggle("has-dan-image", Boolean(asset));
+    }
+    if (value.style && typeof value.style.setProperty === "function") {
+      if (asset) value.style.setProperty("--overlay-dan-image", `url("${asset.dataUri}")`);
+      else if (typeof value.style.removeProperty === "function") value.style.removeProperty("--overlay-dan-image");
+    }
+    if (asset && typeof value.setAttribute === "function") {
+      value.setAttribute("data-dan-image", asset.key);
+    } else if (typeof value.removeAttribute === "function") {
+      value.removeAttribute("data-dan-image");
+    }
+  }
+
+  function renderDanSummaryVisual(snapshot, family, entry, isPrimary) {
+    const card = byId(`overlay-summary-${family}-dan-card`);
+    const value = byId(`overlay-summary-${family}-dan`);
+    const difficulty = snapshot && snapshot.difficulty || {};
+    const descriptor = danBadgeDescriptor(entry, family, Number(difficulty.keys));
+
+    if (card) {
+      card.classList.toggle("is-dan-primary", Boolean(descriptor && isPrimary));
+      card.classList.toggle("is-dan-reference", Boolean(descriptor && !isPrimary));
+      card.setAttribute("data-dan-role", descriptor ? (isPrimary ? "primary" : "reference") : "unavailable");
+    }
+    if (!value) return;
+    if (!descriptor) {
+      applyDanAsset(value, null);
+      value.removeAttribute("data-dan-badge");
+      value.removeAttribute("data-dan-tier");
+      value.removeAttribute("data-dan-family");
+      value.removeAttribute("title");
+      value.removeAttribute("aria-label");
+      return;
+    }
+
+    const asset = resolveDanAsset(descriptor.assetLabel, family, Number(difficulty.keys));
+    applyDanAsset(value, asset);
+
+    if (value.textContent !== descriptor.displayLabel) value.textContent = descriptor.displayLabel;
+    value.setAttribute("data-dan-badge", descriptor.glyph);
+    value.setAttribute("data-dan-tier", descriptor.tier);
+    value.setAttribute("data-dan-family", family);
+    value.setAttribute("title", `${descriptor.title} · ${isPrimary ? "primary chart ladder" : "reference estimate"}`);
+    value.setAttribute("aria-label", descriptor.title);
+  }
+
   function hasText(value) {
     return value != null && String(value).trim() !== "";
   }
@@ -122,13 +277,29 @@
       merged.starRating = previous.starRating;
       if (!hasText(current.starLabel) && hasText(previous.starLabel)) merged.starLabel = previous.starLabel;
     }
-    ["starLabel", "unit", "lnPercent", "keys"].forEach(function (key) {
+    ["starLabel", "unit", "starRatingProvider", "starRatingAlgorithm", "lnPercent", "keys"].forEach(function (key) {
       const value = current[key];
       if ((value == null || (typeof value === "string" && value.trim() === "")) && previous[key] != null) {
         merged[key] = previous[key];
       }
     });
+    // Realtime/browser frames do not carry headless analysis series. Keep the
+    // latest analyzer-owned timelines for the same map instead of making the
+    // graph disappear while the gameplay snapshot is refreshed.
+    ["timeline", "riceTimeline", "lnTimeline"].forEach(function (key) {
+      if (!hasDifficultyTimeline(current[key]) && hasDifficultyTimeline(previous[key])) {
+        merged[key] = previous[key];
+      }
+    });
     return merged;
+  }
+
+  function hasDifficultyTimeline(timeline) {
+    if (!timeline || typeof timeline !== "object") return false;
+    if (Array.isArray(timeline.points)) return timeline.points.length >= 2;
+    return Array.isArray(timeline.times)
+      && Array.isArray(timeline.values)
+      && Math.min(timeline.times.length, timeline.values.length) >= 2;
   }
 
   function beatmapStatus(beatmap) {
@@ -489,6 +660,20 @@
     const starWithUnit = star === "—" ? star : (star.trim().toLowerCase().endsWith(unit.toLowerCase()) ? star : `${star} ${unit}`);
     text("overlay-summary-star", starWithUnit, "—");
 
+    const provider = formatStarRatingProvider(difficulty.starRatingProvider || snapshot.sourceId);
+    const algorithm = hasText(difficulty.starRatingAlgorithm)
+      ? String(difficulty.starRatingAlgorithm).trim()
+      : "—";
+    const methodElement = byId("overlay-summary-star-method");
+    text("overlay-summary-star-method", algorithm, "—");
+    if (methodElement && typeof methodElement.setAttribute === "function") {
+      methodElement.setAttribute(
+        "title",
+        algorithm === "—"
+          ? `Unofficial estimate from ${provider || "a third-party analyzer"}. The analyzer did not report its algorithm. This is not osu!'s official star rating.`
+          : `Unofficial estimate. ${provider || "Third-party analyzer"} algorithm: ${algorithm}. This is not osu!'s official star rating.`);
+    }
+
     const lnValue = difficulty.lnPercent == null ? Number.NaN : Number(difficulty.lnPercent);
     const lnLabel = Number.isFinite(lnValue) ? `${formatNumber(lnValue, 1)}%` : "—";
     const keyCount = difficulty.keys == null ? Number.NaN : Number(difficulty.keys);
@@ -501,8 +686,12 @@
     text("overlay-summary-ln-dan", ln.value, "—");
     const rcNumericValue = rc.numericValue == null ? Number.NaN : Number(rc.numericValue);
     text("overlay-summary-rc-dan-value",
-      Number.isFinite(rcNumericValue) ? `≈ ${rcNumericValue.toFixed(2)}` : "—",
-      "—");
+      Number.isFinite(rcNumericValue) ? `≈ ${rcNumericValue.toFixed(2)}` : "",
+      "");
+    text("overlay-summary-ln-dan-value", "", "");
+    const primaryDan = primaryDanSystemId(snapshot, rc, ln);
+    renderDanSummaryVisual(snapshot, "rc", rc, primaryDan === "rc-dan");
+    renderDanSummaryVisual(snapshot, "ln", ln, primaryDan === "ln-dan");
 
     text("overlay-comp-mapper", beatmap.mapper ? `Mapped by ${beatmap.mapper}` : "Mapper —", "Mapper —");
     text("overlay-comp-version", beatmap.version ? ` · [${beatmap.version}]` : "", "");
@@ -516,6 +705,272 @@
     }
   }
 
+  function formatStarRatingProvider(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) return "";
+    if (normalized.includes("mania-map-analyser") || normalized.includes("mania-map-analyzer")) return "MMA";
+    if (normalized === "headless" || normalized === "headless-single") return "Analyzer";
+    return String(value).trim();
+  }
+
+  function readStarRating(difficulty) {
+    const direct = Number(difficulty && difficulty.starRating);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    // A few compatibility snapshots only carry the formatted label. Keep the
+    // value colour useful for those snapshots without changing the numeric
+    // application contract.
+    const label = String(difficulty && difficulty.starLabel || "");
+    const match = label.match(/-?\d+(?:[.,]\d+)?/);
+    const parsed = match ? Number(match[0].replace(",", ".")) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  const STAR_RATING_COLOR_STOPS = Object.freeze([
+    { rating: 0.1, color: [66, 144, 251] },
+    { rating: 1.25, color: [79, 192, 255] },
+    { rating: 2, color: [79, 255, 213] },
+    { rating: 2.5, color: [124, 255, 79] },
+    { rating: 3.3, color: [246, 240, 92] },
+    { rating: 4.2, color: [255, 128, 104] },
+    { rating: 4.9, color: [255, 78, 111] },
+    { rating: 5.8, color: [198, 69, 184] },
+    { rating: 6.7, color: [101, 99, 222] },
+    { rating: 7.7, color: [24, 21, 142] },
+    { rating: 9, color: [0, 0, 0] },
+  ]);
+
+  function interpolateStarRatingChannel(start, end, progress) {
+    const gamma = 2.2;
+    return Math.round(Math.pow(
+      ((1 - progress) * Math.pow(start, gamma)) + (progress * Math.pow(end, gamma)),
+      1 / gamma));
+  }
+
+  function starRatingRelativeLuminance(channels) {
+    const linear = channels.map(function (channel) {
+      const value = channel / 255;
+      return value <= 0.04045
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4);
+    });
+    return (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+  }
+
+  function sampleStarRatingColor(starRating) {
+    if (!Number.isFinite(starRating) || starRating <= 0) return null;
+    if (starRating < STAR_RATING_COLOR_STOPS[0].rating) {
+      return { color: "rgb(170, 170, 170)", glow: "rgba(170, 170, 170, .42)" };
+    }
+    let right = STAR_RATING_COLOR_STOPS[STAR_RATING_COLOR_STOPS.length - 1];
+    for (let index = 1; index < STAR_RATING_COLOR_STOPS.length; index += 1) {
+      if (starRating <= STAR_RATING_COLOR_STOPS[index].rating) {
+        right = STAR_RATING_COLOR_STOPS[index];
+        break;
+      }
+    }
+    const rightIndex = STAR_RATING_COLOR_STOPS.indexOf(right);
+    const left = STAR_RATING_COLOR_STOPS[Math.max(0, rightIndex - 1)];
+    const span = Math.max(0.01, right.rating - left.rating);
+    const progress = Math.max(0, Math.min(1, (starRating - left.rating) / span));
+    const channels = left.color.map(function (channel, index) {
+      return interpolateStarRatingChannel(channel, right.color[index], progress);
+    });
+    const needsLightOutline = starRatingRelativeLuminance(channels) < 0.12;
+    return {
+      color: `rgb(${channels[0]}, ${channels[1]}, ${channels[2]})`,
+      glow: needsLightOutline
+        ? "rgba(126, 137, 255, .72)"
+        : `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, .42)`,
+      needsLightOutline,
+    };
+  }
+
+  function updateStarRatingColor(element, starRating) {
+    if (!element) return;
+    const sample = sampleStarRatingColor(starRating);
+    if (element.style && typeof element.style.setProperty === "function") {
+      if (sample) {
+        element.style.setProperty("--overlay-star-rating-color", sample.color);
+        element.style.setProperty("--overlay-star-rating-glow", sample.glow);
+      } else if (typeof element.style.removeProperty === "function") {
+        element.style.removeProperty("--overlay-star-rating-color");
+        element.style.removeProperty("--overlay-star-rating-glow");
+      }
+    }
+    if (typeof element.setAttribute !== "function") return;
+    if (sample) {
+      element.setAttribute("data-star-rating-color", sample.color);
+      if (sample.needsLightOutline) {
+        element.setAttribute("data-star-rating-contrast", "light-outline");
+      } else if (typeof element.removeAttribute === "function") {
+        element.removeAttribute("data-star-rating-contrast");
+      }
+    } else if (typeof element.removeAttribute === "function") {
+      element.removeAttribute("data-star-rating-color");
+      element.removeAttribute("data-star-rating-contrast");
+    }
+  }
+
+  function renderStarRatingColor(snapshot) {
+    const difficulty = snapshot && snapshot.difficulty || {};
+    const starRating = readStarRating(difficulty);
+    updateStarRatingColor(byId("overlay-summary-star"), starRating);
+    updateStarRatingColor(byId("rework-star"), starRating);
+  }
+
+  function isOverallSkill(skill) {
+    const id = String(skill && skill.id || "").trim().toLowerCase();
+    const label = String(skill && skill.label || "").trim().toLowerCase();
+    return id === "skills.overall" || id === "overall" || label === "overall";
+  }
+
+  function radarSkillValueLabel(skill, normalized) {
+    const value = skill && skill.value == null ? Number.NaN : Number(skill.value);
+    if (Number.isFinite(value)) return formatNumber(value, 2);
+    if (hasText(skill && skill.valueLabel)) return String(skill.valueLabel).trim();
+    return `${Math.round(normalized)}%`;
+  }
+
+  function renderRadarOverall(chart, skill) {
+    if (!skill) return;
+    const value = skill.value == null ? Number.NaN : Number(skill.value);
+    const displayValue = Number.isFinite(value)
+      ? formatNumber(value, 2)
+      : (hasText(skill.valueLabel) ? String(skill.valueLabel).trim() : "—");
+    const card = document.createElement("div");
+    card.className = "overlay-comp-radar-overall";
+    card.setAttribute("aria-label", `Overall ${displayValue} MSD`);
+
+    const label = document.createElement("span");
+    label.className = "overlay-comp-radar-overall-label";
+    label.textContent = "Overall";
+    const valueNode = document.createElement("strong");
+    valueNode.className = "overlay-comp-radar-overall-value";
+    valueNode.textContent = displayValue;
+    const unit = document.createElement("small");
+    unit.className = "overlay-comp-radar-overall-unit";
+    unit.textContent = "MSD";
+
+    card.appendChild(label);
+    card.appendChild(valueNode);
+    card.appendChild(unit);
+    chart.appendChild(card);
+  }
+
+  function renderSkillRadar(chart, skills, overallSkill, rootStyle) {
+    const namespace = "http://www.w3.org/2000/svg";
+    const width = 500;
+    const height = 390;
+    const centerX = width / 2;
+    const centerY = 195;
+    const radius = 137;
+    const count = skills.length;
+    const normalizedValues = skills.map(function (skill) {
+      return Math.max(0, Math.min(100, Number(skill.normalizedValue) || 0));
+    });
+    const peakValue = Math.max(0, ...normalizedValues);
+    const displayRatio = function (index) {
+      const value = normalizedValues[index];
+      if (value <= 0 || peakValue <= 0) return 0.04;
+      // The skill contract carries absolute analyzer values. On low-star maps
+      // those values occupy only a few percent of the radius, making the
+      // profile unreadable. Scale geometry to the strongest skill while
+      // keeping the original values in labels. A small non-zero floor keeps
+      // weak axes visible without turning missing/zero data into a strength.
+      return Math.min(1, 0.22 + 0.78 * value / peakValue);
+    };
+    const pointAt = function (index, distance) {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
+      return {
+        x: centerX + Math.cos(angle) * distance,
+        y: centerY + Math.sin(angle) * distance,
+      };
+    };
+    const points = function (distanceForIndex) {
+      return skills.map(function (_, index) {
+        const point = pointAt(index, distanceForIndex(index));
+        return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+      }).join(" ");
+    };
+    const svgNode = function (name, className) {
+      const node = document.createElementNS(namespace, name);
+      if (className) node.setAttribute("class", className);
+      return node;
+    };
+
+    const svg = svgNode("svg", "overlay-comp-radar");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Map skill profile");
+    svg.setAttribute("data-radar-scale", "relative-peak");
+    svg.setAttribute("data-radar-peak", peakValue.toFixed(2));
+
+    [0.25, 0.5, 0.75, 1].forEach(function (ring) {
+      const polygon = svgNode("polygon", "overlay-comp-radar-grid");
+      polygon.setAttribute("points", points(function () { return radius * ring; }));
+      svg.appendChild(polygon);
+    });
+
+    skills.forEach(function (_, index) {
+      const edge = pointAt(index, radius);
+      const spoke = svgNode("line", "overlay-comp-radar-spoke");
+      spoke.setAttribute("x1", String(centerX));
+      spoke.setAttribute("y1", String(centerY));
+      spoke.setAttribute("x2", edge.x.toFixed(1));
+      spoke.setAttribute("y2", edge.y.toFixed(1));
+      svg.appendChild(spoke);
+    });
+
+    const area = svgNode("polygon", "overlay-comp-radar-area");
+    area.setAttribute("points", points(function (index) {
+      return radius * displayRatio(index);
+    }));
+    svg.appendChild(area);
+
+    skills.forEach(function (skill, index) {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
+      const normalized = normalizedValues[index];
+      const dataPoint = pointAt(index, radius * displayRatio(index));
+      const dot = svgNode("circle", "overlay-comp-radar-point");
+      dot.setAttribute("cx", dataPoint.x.toFixed(1));
+      dot.setAttribute("cy", dataPoint.y.toFixed(1));
+      dot.setAttribute("r", "4.5");
+      dot.style.setProperty("--overlay-color", rootStyle.getPropertyValue(`--overlay-comp-color-${index + 1}`).trim() || "#9b6cff");
+      svg.appendChild(dot);
+
+      const labelPoint = pointAt(index, radius + 24);
+      const label = svgNode("text", "overlay-comp-radar-label");
+      label.setAttribute("x", labelPoint.x.toFixed(1));
+      label.setAttribute("y", labelPoint.y.toFixed(1));
+      label.setAttribute("text-anchor", Math.abs(labelPoint.x - centerX) < 8 ? "middle" : labelPoint.x < centerX ? "end" : "start");
+      label.setAttribute("dominant-baseline", "middle");
+      label.setAttribute("data-radar-skill", String(skill.id || skill.label || index));
+      label.textContent = skill.label || "—";
+      svg.appendChild(label);
+
+      const value = svgNode("text", "overlay-comp-radar-value");
+      // A radial offset barely changes Y for the near-horizontal Handstream
+      // and Chordjack axes, so their name and number occupied the same line.
+      // Stack lateral values below their labels; retain radial placement for
+      // the top/bottom axes where it gives the clearest separation.
+      const lateralAxis = Math.abs(Math.sin(angle)) < 0.45;
+      const valuePoint = lateralAxis
+        ? { x: labelPoint.x, y: labelPoint.y + 21 }
+        : pointAt(index, radius + 44);
+      value.setAttribute("x", valuePoint.x.toFixed(1));
+      value.setAttribute("y", valuePoint.y.toFixed(1));
+      value.setAttribute("text-anchor", Math.abs(valuePoint.x - centerX) < 8 ? "middle" : valuePoint.x < centerX ? "end" : "start");
+      value.setAttribute("dominant-baseline", "middle");
+      value.setAttribute("data-radar-skill", String(skill.id || skill.label || index));
+      value.textContent = radarSkillValueLabel(skill, normalized);
+      svg.appendChild(value);
+    });
+
+    renderRadarOverall(chart, overallSkill);
+    chart.appendChild(svg);
+  }
+
   function renderSkills(snapshot) {
     const chart = byId("overlay-comp-chart");
     if (!chart) return;
@@ -523,8 +978,17 @@
     const skills = Array.isArray(snapshot.skills) ? snapshot.skills.slice(0, 8) : [];
     chart.textContent = "";
     chart.hidden = skills.length === 0;
-    chart.style.setProperty("--overlay-comp-count", String(Math.max(1, skills.length)));
     const rootStyle = getComputedStyle(document.documentElement);
+
+    if (document.documentElement.classList.contains("overlay-layout-companella-radar")) {
+      const overallSkill = skills.find(isOverallSkill) || null;
+      const radarSkills = skills.filter(function (skill) { return !isOverallSkill(skill); });
+      chart.style.setProperty("--overlay-comp-count", String(Math.max(1, radarSkills.length)));
+      renderSkillRadar(chart, radarSkills, overallSkill, rootStyle);
+      return;
+    }
+
+    chart.style.setProperty("--overlay-comp-count", String(Math.max(1, skills.length)));
 
     skills.forEach(function (skill, index) {
       const normalized = Math.max(0, Math.min(100, Number(skill.normalizedValue) || 0));
@@ -563,6 +1027,244 @@
     });
   }
 
+  function readDifficultyTimeline(snapshot, series) {
+    const difficulty = snapshot && snapshot.difficulty;
+    if (!difficulty) return [];
+    const timeline = series === "ln"
+      ? (difficulty.lnTimeline || difficulty.lnDifficultyTimeline)
+      : (difficulty.riceTimeline || difficulty.timeline);
+    if (!timeline || typeof timeline !== "object") return [];
+
+    const points = [];
+    if (Array.isArray(timeline.points)) {
+      timeline.points.forEach(function (point) {
+        const timeMs = Number(point && (point.timeMs ?? point.time));
+        const value = Number(point && point.value);
+        if (Number.isFinite(timeMs) && Number.isFinite(value) && timeMs >= 0) {
+          points.push({ timeMs: timeMs, value: value });
+        }
+      });
+    } else if (Array.isArray(timeline.times) && Array.isArray(timeline.values)) {
+      const count = Math.min(timeline.times.length, timeline.values.length);
+      for (let index = 0; index < count; index++) {
+        const timeMs = Number(timeline.times[index]);
+        const value = Number(timeline.values[index]);
+        if (Number.isFinite(timeMs) && Number.isFinite(value) && timeMs >= 0) {
+          points.push({ timeMs: timeMs, value: value });
+        }
+      }
+    }
+
+    points.sort(function (left, right) { return left.timeMs - right.timeMs; });
+    const ordered = [];
+    points.forEach(function (point) {
+      if (!ordered.length || point.timeMs > ordered[ordered.length - 1].timeMs) {
+        ordered.push(point);
+      }
+    });
+    return ordered.length >= 2 ? ordered : [];
+  }
+
+  function timelineSeriesSignature(points) {
+    if (!points.length) return "";
+    let checksum = 0;
+    const stride = Math.max(1, Math.floor(points.length / 32));
+    points.forEach(function (point, index) {
+      if (index % stride === 0 || index === points.length - 1) {
+        checksum += (point.timeMs * 0.000001 + point.value) * (index + 1);
+      }
+    });
+    const first = points[0];
+    const last = points[points.length - 1];
+    return [points.length, first.timeMs, first.value, last.timeMs, last.value, checksum].join(":");
+  }
+
+  function timelineCursorMs(snapshot) {
+    const coachTime = Number(snapshot && snapshot.pauseCoach && snapshot.pauseCoach.mapProgressMs);
+    if (Number.isFinite(coachTime) && coachTime >= 0) return coachTime;
+    const replayTime = Number(snapshot && snapshot.replay && snapshot.replay.mapProgressMs);
+    return Number.isFinite(replayTime) && replayTime >= 0 ? replayTime : null;
+  }
+
+  function interpolateTimelineValue(points, timeMs) {
+    if (!points.length || !Number.isFinite(timeMs)) return null;
+    if (timeMs <= points[0].timeMs) return points[0].value;
+    const last = points[points.length - 1];
+    if (timeMs >= last.timeMs) return last.value;
+    for (let index = 1; index < points.length; index++) {
+      const right = points[index];
+      if (timeMs <= right.timeMs) {
+        const left = points[index - 1];
+        const span = right.timeMs - left.timeMs;
+        const ratio = span > 0 ? (timeMs - left.timeMs) / span : 0;
+        return left.value + (right.value - left.value) * ratio;
+      }
+    }
+    return last.value;
+  }
+
+  function formatTimelineTime(timeMs) {
+    const seconds = Math.max(0, Math.round(Number(timeMs) / 1000));
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function replayMapDurationMs(snapshot, replay) {
+    const directCandidates = [
+      replay && replay.mapDurationMs,
+      replay && replay.totalDurationMs,
+      replay && replay.durationMs,
+    ].map(Number).filter(function (value) {
+      return Number.isFinite(value) && value > 0;
+    });
+
+    const timelineCandidates = [
+      readDifficultyTimeline(snapshot, "rice"),
+      readDifficultyTimeline(snapshot, "ln"),
+    ].filter(function (points) {
+      return points.length > 0;
+    }).map(function (points) {
+      return points[points.length - 1].timeMs;
+    });
+
+    const candidates = directCandidates.concat(timelineCandidates);
+    return candidates.length ? Math.max.apply(Math, candidates) : null;
+  }
+
+  function formatReplayMapTime(snapshot, replay) {
+    const elapsedMs = Number(replay && replay.mapProgressMs);
+    const durationMs = replayMapDurationMs(snapshot, replay);
+    if (!Number.isFinite(elapsedMs) && durationMs == null) return "—";
+    const elapsed = Number.isFinite(elapsedMs) && elapsedMs >= 0
+      ? formatTimelineTime(elapsedMs)
+      : "—";
+    const duration = durationMs == null ? "—" : formatTimelineTime(durationMs);
+    return `${elapsed} / ${duration}`;
+  }
+
+  function renderDifficultyTimeline(snapshot) {
+    const container = byId("overlay-difficulty-timeline");
+    if (!container) return;
+
+    const ricePoints = readDifficultyTimeline(snapshot, "rice");
+    const lnPoints = readDifficultyTimeline(snapshot, "ln");
+    const series = [];
+    if (ricePoints.length >= 2) series.push({ key: "rice", points: ricePoints });
+    if (lnPoints.length >= 2) series.push({ key: "ln", points: lnPoints });
+    const area = byId("overlay-difficulty-timeline-area");
+    const line = byId("overlay-difficulty-timeline-line");
+    const lnArea = byId("overlay-difficulty-timeline-ln-area");
+    const lnLine = byId("overlay-difficulty-timeline-ln-line");
+    const setPathVisibility = function (element, path, visible) {
+      if (!element) return;
+      // SVGPathElement does not consistently reflect the HTMLElement.hidden
+      // property. The LN paths start with a literal `hidden` attribute in the
+      // preset markup, so clear/set the attribute explicitly or the browser
+      // keeps them display:none even after a valid LN graph arrives.
+      if (typeof element.setAttribute === "function") {
+        element.setAttribute("d", visible ? path : "");
+        if (visible) {
+          if (typeof element.removeAttribute === "function") element.removeAttribute("hidden");
+        } else {
+          element.setAttribute("hidden", "");
+        }
+      }
+      element.hidden = !visible;
+    };
+    if (!series.length) {
+      container.hidden = true;
+      container.__overlayTimelineSeriesSignature = null;
+      setPathVisibility(area, "", false);
+      setPathVisibility(line, "", false);
+      setPathVisibility(lnArea, "", false);
+      setPathVisibility(lnLine, "", false);
+      text("overlay-difficulty-timeline-rice-legend", "", "");
+      text("overlay-difficulty-timeline-ln-legend", "", "");
+      return;
+    }
+
+    container.hidden = false;
+    let startTime = Number.POSITIVE_INFINITY;
+    let endTime = 0;
+    let minValue = Number.POSITIVE_INFINITY;
+    let maxValue = Number.NEGATIVE_INFINITY;
+    series.forEach(function (entry) {
+      startTime = Math.min(startTime, entry.points[0].timeMs);
+      endTime = Math.max(endTime, entry.points[entry.points.length - 1].timeMs);
+      entry.points.forEach(function (point) {
+        minValue = Math.min(minValue, point.value);
+        maxValue = Math.max(maxValue, point.value);
+      });
+    });
+    const valueSpan = Math.max(0.000001, maxValue - minValue);
+    const timeSpan = Math.max(1, endTime - startTime);
+    const width = 1000;
+    const height = 180;
+    const paddingTop = 8;
+    const paddingBottom = 8;
+    const plotHeight = height - paddingTop - paddingBottom;
+    const x = function (timeMs) { return ((timeMs - startTime) / timeSpan) * width; };
+    const y = function (value) { return paddingTop + (1 - (value - minValue) / valueSpan) * plotHeight; };
+    const pathFor = function (points) {
+      return points.map(function (point, index) {
+        return (index === 0 ? "M" : "L")
+          + " " + x(point.timeMs).toFixed(2)
+          + " " + y(point.value).toFixed(2);
+      }).join(" ");
+    };
+    const riceLinePath = pathFor(ricePoints);
+    const lnLinePath = pathFor(lnPoints);
+    const riceAreaPath = riceLinePath
+      ? riceLinePath + " L " + width.toFixed(2) + " " + height.toFixed(2)
+        + " L 0 " + height.toFixed(2) + " Z"
+      : "";
+    const lnAreaPath = lnLinePath
+      ? lnLinePath + " L " + width.toFixed(2) + " " + height.toFixed(2)
+        + " L 0 " + height.toFixed(2) + " Z"
+      : "";
+    const seriesSignature = timelineSeriesSignature(ricePoints)
+      + "|" + timelineSeriesSignature(lnPoints);
+    if (container.__overlayTimelineSeriesSignature !== seriesSignature) {
+      container.__overlayTimelineSeriesSignature = seriesSignature;
+      setPathVisibility(area, riceAreaPath, ricePoints.length >= 2);
+      setPathVisibility(line, riceLinePath, ricePoints.length >= 2);
+      setPathVisibility(lnArea, lnAreaPath, lnPoints.length >= 2);
+      setPathVisibility(lnLine, lnLinePath, lnPoints.length >= 2);
+      text("overlay-difficulty-timeline-start", formatTimelineTime(startTime), "0:00");
+      text("overlay-difficulty-timeline-end", formatTimelineTime(endTime), "—");
+      text("overlay-difficulty-timeline-rice-legend", ricePoints.length >= 2 ? "Rice" : "", "");
+      text("overlay-difficulty-timeline-ln-legend", lnPoints.length >= 2 ? "LN" : "", "");
+    }
+
+    const cursor = byId("overlay-difficulty-timeline-cursor");
+    const cursorTime = timelineCursorMs(snapshot);
+    if (cursor && typeof cursor.setAttribute === "function" && Number.isFinite(cursorTime)) {
+      const boundedTime = Math.max(startTime, Math.min(endTime, cursorTime));
+      const cursorX = x(boundedTime).toFixed(2);
+      cursor.setAttribute("x1", cursorX);
+      cursor.setAttribute("x2", cursorX);
+      cursor.setAttribute("y1", "0");
+      cursor.setAttribute("y2", String(height));
+      cursor.hidden = false;
+      const riceValue = interpolateTimelineValue(ricePoints, boundedTime);
+      const lnValue = interpolateTimelineValue(lnPoints, boundedTime);
+      let current = formatTimelineTime(boundedTime);
+      if (riceValue !== null && lnValue !== null) {
+        current += " · Rice " + formatNumber(riceValue, 2) + " · LN " + formatNumber(lnValue, 2);
+      } else if (riceValue !== null) {
+        // Preserve the compact legacy label when only the aggregate/Rice
+        // series is available.
+        current += " · " + formatNumber(riceValue, 2);
+      } else if (lnValue !== null) {
+        current += " · LN " + formatNumber(lnValue, 2);
+      }
+      text("overlay-difficulty-timeline-current", current, "—");
+    } else {
+      if (cursor) cursor.hidden = true;
+      text("overlay-difficulty-timeline-current", "—", "—");
+    }
+  }
+
   function renderReplay(snapshot) {
     const replay = snapshot.replay;
     const hasReplayNodes = byId("overlay-replay") || byId("overlay-replay-ur") || byId("overlay-replay-insights");
@@ -585,7 +1287,7 @@
 
     text("overlay-replay-ur", r.ur == null ? "—" : fmt(r.ur, 1), "—");
     text("overlay-replay-score", r.score == null ? "—" : String(r.score), "—");
-    text("overlay-replay-map-time", r.mapProgressMs == null ? "—" : fmt(r.mapProgressMs, 0) + " ms", "—");
+    text("overlay-replay-map-time", formatReplayMapTime(snapshot, r), "—");
     text("overlay-replay-accuracy", r.accuracy == null ? "—" : formatAccuracyPercentage(r.accuracy), "—");
     text("overlay-replay-mean", r.meanMs == null ? "—" : fmt(r.meanMs, 1) + " ms", "—");
     text("overlay-replay-median", r.medianMs == null ? "—" : fmt(r.medianMs, 1) + " ms", "—");
@@ -857,7 +1559,7 @@
     const beatmap = snapshot.beatmap || {};
     const difficulty = snapshot.difficulty || {};
     const ranks = (Array.isArray(snapshot.ranks) ? snapshot.ranks : []).map(function (entry) {
-      return [entry.systemId, entry.value, entry.numericValue];
+      return [entry.systemId, entry.value, entry.numericValue, entry.isPrimary];
     });
     const skills = (Array.isArray(snapshot.skills) ? snapshot.skills : []).slice(0, 8).map(function (skill) {
       return [skill.label, skill.value, skill.valueLabel, skill.normalizedValue, skill.detail];
@@ -883,10 +1585,15 @@
       beatmap: [beatmap.id, beatmap.setId, beatmap.artist, beatmap.title, beatmap.version,
         beatmap.mapper, beatmap.bpmLabel, backgroundUrlFor(beatmap)],
       gameplay: [gameplay.state, gameplay.isPlaying, gameplay.isPaused, gameplay.isFocused],
-      difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit, difficulty.lnPercent, difficulty.keys],
+      difficulty: [difficulty.starRating, difficulty.starLabel, difficulty.unit,
+        difficulty.starRatingProvider, difficulty.starRatingAlgorithm, difficulty.lnPercent, difficulty.keys,
+        timelineSeriesSignature(readDifficultyTimeline(snapshot, "rice")),
+        timelineSeriesSignature(readDifficultyTimeline(snapshot, "ln")),
+        timelineCursorMs(snapshot)],
       ranks,
       skills,
-      replay: [replay.hasData, replay.ur, replay.score, replay.mapProgressMs, replay.accuracy,
+      replay: [replay.hasData, replay.ur, replay.score, replay.mapProgressMs,
+        replay.mapDurationMs, replay.totalDurationMs, replay.durationMs, replay.accuracy,
         replay.meanMs, replay.medianMs, replay.sampleCount, replay.earlyCount, replay.lateCount,
         replay.fidelity, replay.reason, replayColumns, replayInsights],
       pauseCoach: [coach.state, coach.hasData, coach.reason, coach.fidelity, coach.sessionId,
@@ -913,9 +1620,11 @@
     tracePauseCoachRender(effectiveSnapshot);
     renderSummary(effectiveSnapshot);
     renderSkills(effectiveSnapshot);
+    renderDifficultyTimeline(effectiveSnapshot);
     renderReplay(effectiveSnapshot);
     renderPauseCoach(effectiveSnapshot);
     renderMainCard(effectiveSnapshot);
+    renderStarRatingColor(effectiveSnapshot);
     if (typeof window.__overlayHostQueueSizeReport === "function") {
       window.__overlayHostQueueSizeReport();
     }

@@ -103,6 +103,40 @@ public sealed class UpdateService : IDisposable
                 return result;
             }
 
+            // A compatible server which predates this application session is
+            // externally owned. Do not replace its executable or addon files:
+            // the user may be running it for another overlay. TosuService will
+            // attach to it after component preparation completes.
+            var existingTosuCompatibility = TosuEndpointCompatibility.Unavailable;
+            using (var probeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                probeCancellation.CancelAfter(TimeSpan.FromSeconds(2));
+                try
+                {
+                    existingTosuCompatibility = await TosuEndpointProbe.CheckAsync(
+                        _httpClient,
+                        TosuEndpointProbe.DefaultBaseUri,
+                        probeCancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // A slow or half-started listener is not considered usable.
+                }
+            }
+
+            if (existingTosuCompatibility != TosuEndpointCompatibility.Unavailable)
+            {
+                result.Success = true;
+                result.InstalledTosu = state.TosuVersion;
+                result.InstalledAddon = state.AddonVersion;
+                var externalState = state.Clone();
+                externalState.LauncherVersion = GetCurrentLauncherVersion().ToString();
+                externalState.LastCheckUtc = DateTime.UtcNow;
+                await _stateStore.SaveAsync(externalState, cancellationToken).ConfigureAwait(false);
+                progress?.Report(new UpdateProgress("status.update_external_tosu", 100));
+                return result;
+            }
+
             GitHubRelease tosuRelease;
             GitHubRelease addonRelease;
             try
@@ -243,7 +277,8 @@ public sealed class UpdateService : IDisposable
             return false;
         }
 
-        if (!File.Exists(AppPaths.UpdaterExecutablePath))
+        var updaterExecutable = RuntimeAssetDeployment.EnsureUpdaterExecutable();
+        if (string.IsNullOrWhiteSpace(updaterExecutable) || !File.Exists(updaterExecutable))
         {
             return false;
         }
@@ -252,9 +287,9 @@ public sealed class UpdateService : IDisposable
         {
             var process = Process.Start(new ProcessStartInfo
             {
-                FileName = AppPaths.UpdaterExecutablePath,
+                FileName = updaterExecutable,
                 Arguments = "--pid " + Environment.ProcessId + " --install-dir " + Quote(AppPaths.BaseDirectory),
-                WorkingDirectory = AppPaths.BaseDirectory,
+                WorkingDirectory = Path.GetDirectoryName(updaterExecutable),
                 UseShellExecute = false,
                 CreateNoWindow = true
             });

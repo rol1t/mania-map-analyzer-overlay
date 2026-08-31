@@ -17,6 +17,14 @@ public sealed class OverlayVisibilityPolicyTests
     [InlineData("paused-only", true, true, true)]
     [InlineData("paused-only", true, false, false)]
     [InlineData("paused-only", false, true, false)]
+    [InlineData("outside-only", false, false, true)]
+    [InlineData("outside-only", true, false, false)]
+    [InlineData("outside-and-during-play", false, false, true)]
+    [InlineData("outside-and-during-play", true, false, true)]
+    [InlineData("outside-and-during-play", true, true, false)]
+    [InlineData("during-and-paused", false, false, false)]
+    [InlineData("during-and-paused", true, false, true)]
+    [InlineData("during-and-paused", true, true, true)]
     [InlineData("never", false, false, false)]
     public void EvaluatesConfiguredVisibility(
         string policy,
@@ -52,5 +60,28 @@ public sealed class OverlayVisibilityPolicyTests
     public void KeepsOverlayVisibleUntilGameplayStateIsKnown(string policy, bool expected)
     {
         Assert.Equal(expected, OverlayVisibilityPolicy.ShouldShowBeforeGameplayStateIsKnown(policy));
+    }
+
+    [Theory]
+    [InlineData(true, true, true, "always")]
+    [InlineData(true, true, false, "outside-and-during-play")]
+    [InlineData(true, false, true, "outside-play")]
+    [InlineData(true, false, false, "outside-only")]
+    [InlineData(false, true, true, "during-and-paused")]
+    [InlineData(false, true, false, "during-play")]
+    [InlineData(false, false, true, "paused-only")]
+    [InlineData(false, false, false, "never")]
+    public void ComposesEveryIndependentVisibilityCombination(
+        bool outsidePlay,
+        bool duringPlay,
+        bool paused,
+        string expected)
+    {
+        string policy = OverlayVisibilityPolicy.FromVisibleStates(outsidePlay, duringPlay, paused);
+
+        Assert.Equal(expected, policy);
+        Assert.Equal(outsidePlay, OverlayVisibilityPolicy.ShouldShow(policy, false, false));
+        Assert.Equal(duringPlay, OverlayVisibilityPolicy.ShouldShow(policy, true, false));
+        Assert.Equal(paused, OverlayVisibilityPolicy.ShouldShow(policy, true, true));
     }
 }

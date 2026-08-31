@@ -9,9 +9,13 @@
   "runtime": "runtime.mjs",
   "worker": "worker.mjs",
   "defaultPipelinePath": "js/pipeline/runAnalysisPipeline.js",
+  "defaultRiceAlgorithmPath": "js/rework/sunnyAlgorithm.js",
+  "defaultLnAlgorithmPath": "js/rework/sunnyWindowAlgorithm.js",
   "defaultCompanellaPath": "js/estimator/companellaEstimator.js",
   "defaultMixedEstimatorPath": "js/estimator/mixedEstimator.js",
   "pipelineExport": "runAnalysisPipeline",
+  "riceAlgorithmExport": "calculate",
+  "lnAlgorithmExport": "calculateLN",
   "companellaExport": "classifyCompanellaDifficulty",
   "mixedCompanellaExport": "applyCompanellaToMixedResult",
   "upstream": {
@@ -48,6 +52,9 @@
       "difficulty.label",
       "difficulty.lnPercent",
       "difficulty.keys",
+      "difficulty.timeline",
+      "difficulty.rice.timeline",
+      "difficulty.ln.timeline",
       "difficulty.sixKConst",
       "dan.rc.label",
       "dan.rc.numeric",
@@ -73,6 +80,7 @@
   "notes": [
     "The official MMA source files are resolved from the configured baseUrl; no MMA source code is bundled in this package.",
     "Companella ONNX post-processing is loaded separately when its classifier export is available.",
+    "On LN maps the adapter calculates Rice through Sunny with Hold Off and LN through Sunny Window calculateLN; the selected estimator's mixed graph is never relabelled as Rice.",
     "Mixed results routed to Companella are finalized through the upstream applyCompanellaToMixedResult export.",
     "Requests with different correlation IDs run concurrently unless the host explicitly cancels them or supplies a newer generation for the same scope.",
     "A result may be partial when an optional post-processing stage is unavailable. Inspect diagnostics before rendering dependent metrics."

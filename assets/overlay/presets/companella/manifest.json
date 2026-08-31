@@ -1,14 +1,14 @@
 {
   "id": "companella",
-  "name": "Companella",
-  "nameRu": "Companella",
-  "description": "Compact card with beatmap artwork, summary data and wide charts.",
-  "descriptionRu": "Компактная карточка с фоном карты, сводкой и широкими графиками.",
+  "name": "Default",
+  "nameRu": "По умолчанию",
+  "description": "Balanced translucent card with large map metrics, DAN badges and difficulty charts.",
+  "descriptionRu": "Сбалансированная полупрозрачная карточка с крупными метриками, DAN-бейджами и графиками сложности.",
   "template": "template.html",
   "stylesheet": "style.css",
   "visibilityPolicy": "outside-play",
   "requiredCssMarker": ".overlay-comp-cover-layer",
   "supportsFullscreen": true,
-  "minWidth": 520,
-  "minHeight": 180
+  "minWidth": 720,
+  "minHeight": 420
 }

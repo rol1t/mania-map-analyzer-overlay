@@ -1,0 +1,205 @@
+/* Companella Radar: an analytical map-shape composition inspired by tracker dashboards. */
+html.overlay-layout-companella-radar {
+  --overlay-host-width:1080px;
+}
+
+html.overlay-layout-companella-radar .main-card {
+  grid-template-columns:minmax(460px,1.05fr) minmax(0,1.45fr)!important;
+  gap:12px 16px!important;
+  padding:18px 22px 36px!important;
+  border:1px solid rgba(181,149,255,.34)!important;
+  border-bottom:3px solid #9b6cff!important;
+  border-radius:10px!important;
+  background:rgba(22,19,30,.48)!important;
+  box-shadow:0 22px 58px rgba(0,0,0,.30),inset 0 1px 0 rgba(255,255,255,.08)!important;
+  backdrop-filter:blur(13px) saturate(1.05)!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-cover-layer {
+  opacity:.22!important;
+  filter:saturate(.62) brightness(.72)!important;
+}
+
+html.overlay-layout-companella-radar .status-row,
+html.overlay-layout-companella-radar .overlay-comp-meta {
+  grid-column:1 / -1!important;
+}
+
+html.overlay-layout-companella-radar .status-row {
+  grid-row:1!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-meta {
+  grid-row:2!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-chart {
+  grid-column:1!important;
+  grid-row:3!important;
+  display:block!important;
+  min-height:390px!important;
+  height:390px!important;
+  padding:4px 8px!important;
+  border:1px solid rgba(168,128,255,.20)!important;
+  border-radius:8px!important;
+  background:rgba(34,29,43,.68)!important;
+  overflow:hidden!important;
+  position:relative!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-chart[hidden] {
+  display:block!important;
+  visibility:hidden!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar {
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  overflow:visible!important;
+  position:relative!important;
+  z-index:1!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-grid {
+  fill:rgba(154,108,255,.055)!important;
+  stroke:rgba(218,207,255,.28)!important;
+  stroke-width:1.25!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-spoke {
+  stroke:rgba(218,207,255,.22)!important;
+  stroke-width:1.15!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-area {
+  fill:rgba(148,91,255,.42)!important;
+  stroke:#b38cff!important;
+  stroke-width:3.5!important;
+  stroke-linejoin:round!important;
+  filter:drop-shadow(0 0 9px rgba(156,108,255,.58))!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-point {
+  fill:var(--overlay-color,#b799ff)!important;
+  stroke:#f5efff!important;
+  stroke-width:1.8!important;
+  filter:drop-shadow(0 0 4px rgba(190,155,255,.72))!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-label {
+  fill:#fff!important;
+  font-family:'Segoe UI',sans-serif!important;
+  font-size:15px!important;
+  font-weight:800!important;
+  letter-spacing:.01em!important;
+  paint-order:stroke!important;
+  stroke:rgba(8,6,13,.98)!important;
+  stroke-width:4.5px!important;
+  stroke-linejoin:round!important;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,.9))!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-value {
+  fill:#e5d9ff!important;
+  font-family:'Segoe UI',sans-serif!important;
+  font-size:13px!important;
+  font-weight:800!important;
+  paint-order:stroke!important;
+  stroke:rgba(8,6,13,.98)!important;
+  stroke-width:4px!important;
+  stroke-linejoin:round!important;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,.9))!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-overall {
+  position:absolute!important;
+  z-index:3!important;
+  left:50%!important;
+  top:50%!important;
+  width:104px!important;
+  min-height:82px!important;
+  transform:translate(-50%,-50%)!important;
+  display:grid!important;
+  place-content:center!important;
+  justify-items:center!important;
+  gap:1px!important;
+  padding:9px 12px!important;
+  box-sizing:border-box!important;
+  border:1px solid rgba(206,188,255,.62)!important;
+  border-radius:8px!important;
+  background:rgba(19,15,27,.92)!important;
+  box-shadow:0 8px 24px rgba(0,0,0,.48),0 0 16px rgba(156,108,255,.24),inset 0 1px 0 rgba(255,255,255,.12)!important;
+  color:#fff!important;
+  pointer-events:none!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-overall-label {
+  color:#c9b7f3!important;
+  font-family:'Segoe UI',sans-serif!important;
+  font-size:12px!important;
+  font-weight:800!important;
+  letter-spacing:.08em!important;
+  line-height:1.1!important;
+  text-transform:uppercase!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-overall-value {
+  color:#fff!important;
+  font-family:'Segoe UI',sans-serif!important;
+  font-size:27px!important;
+  font-weight:800!important;
+  font-variant-numeric:tabular-nums!important;
+  line-height:1!important;
+  text-shadow:0 0 10px rgba(177,137,255,.48)!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-radar-overall-unit {
+  color:#9c7fe0!important;
+  font-family:'Segoe UI',sans-serif!important;
+  font-size:11px!important;
+  font-weight:800!important;
+  letter-spacing:.12em!important;
+  line-height:1.1!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-summary {
+  grid-column:2!important;
+  grid-row:3!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  grid-template-rows:repeat(2,minmax(0,1fr))!important;
+  gap:12px!important;
+  min-height:390px!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-summary-item {
+  min-height:0!important;
+  padding:18px 20px!important;
+  border:1px solid rgba(196,176,241,.14)!important;
+  border-radius:7px!important;
+  background:rgba(42,37,51,.72)!important;
+  box-shadow:inset 3px 0 0 rgba(156,108,255,.58)!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-summary-label,
+html.overlay-layout-companella-radar .overlay-comp-summary-note {
+  font-size:13px!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-summary-value {
+  font-size:27px!important;
+}
+
+html.overlay-layout-companella-radar .overlay-comp-summary-rating .overlay-comp-summary-value {
+  font-size:43px!important;
+}
+
+html.overlay-layout-companella-radar .overlay-difficulty-timeline {
+  grid-column:1 / -1!important;
+  grid-row:4!important;
+  height:150px!important;
+  min-height:150px!important;
+  max-height:150px!important;
+  border-color:rgba(166,125,255,.28)!important;
+  background:rgba(31,27,39,.66)!important;
+}

@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ManiaMapAnalyzerOverlay.Avalonia.Tests" />
     <ProjectReference Include="..\Core\ManiaMapAnalyzerOverlay.Core.csproj" />
     <ProjectReference Include="..\RealtimeAnalysis\ManiaMapAnalyzerOverlay.RealtimeAnalysis.csproj" />
     <ProjectReference Include="..\ReplayAnalysis\ManiaMapAnalyzerOverlay.ReplayAnalysis.csproj" />
@@ -15,11 +16,33 @@
     <AvaloniaResource Include="Assets\**" />
     <Compile Include="..\Services\OverlayStyleBuilder.cs" Link="Shared\OverlayStyleBuilder.cs" />
     <Compile Include="..\Services\UiText.cs" Link="Shared\UiText.cs" />
-    <None Include="..\..\assets\overlay-custom.css" Link="Assets\overlay-custom.css" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\assets\overlay\**" LinkBase="Assets\overlay" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="..\..\assets\analyzers\**" LinkBase="Assets\analyzers" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="..\..\assets\analyzer-engines\**" LinkBase="Assets\analyzer-engines" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="..\..\assets\localization\**" LinkBase="Assets\localization" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\assets\overlay-custom.css" Link="Assets\overlay-custom.css" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <None Include="..\..\assets\overlay\**" LinkBase="Assets\overlay" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <None Include="..\..\assets\analyzers\**" LinkBase="Assets\analyzers" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <None Include="..\..\assets\analyzer-engines\**" LinkBase="Assets\analyzer-engines" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <None Include="..\..\assets\localization\**" LinkBase="Assets\localization" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+
+    <EmbeddedResource Include="..\..\assets\overlay-custom.css"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/Assets/overlay-custom.css" />
+    <EmbeddedResource Include="..\..\assets\overlay\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/Assets/overlay/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\assets\analyzers\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/Assets/analyzers/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\assets\analyzer-engines\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/Assets/analyzer-engines/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\assets\localization\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/Assets/localization/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\README.md"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/README.md" />
+    <EmbeddedResource Include="..\..\LICENSE"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/LICENSE" />
+    <EmbeddedResource Include="..\..\LICENSES\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/LICENSES/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\docs\**"
+                      LogicalName="ManiaMapAnalyzerOverlay.RuntimeAssets/docs/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(EmbeddedUpdaterPath)"
+                      Condition="'$(EmbeddedUpdaterPath)' != '' and Exists('$(EmbeddedUpdaterPath)')"
+                      LogicalName="ManiaMapAnalyzerOverlay.Tools/Updater" />
   </ItemGroup>
 
   <ItemGroup>

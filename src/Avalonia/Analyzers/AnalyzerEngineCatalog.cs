@@ -27,7 +27,7 @@ public sealed class AnalyzerEngineCatalog
     private readonly IAnalyzerEngineDiagnosticSink _diagnosticSink;
 
     public AnalyzerEngineCatalog()
-        : this(Path.Combine(AppPaths.BaseDirectory, "Assets", "analyzer-engines"), null)
+        : this(Path.Combine(AppPaths.ResourceDirectory, "Assets", "analyzer-engines"), null)
     {
     }
 

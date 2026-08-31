@@ -11,6 +11,11 @@ const SKILL_FIELDS = Object.freeze({
     Technical: "skills.technical",
 });
 
+// The upstream Sunny graph is sampled at every difficulty corner. Keep the
+// public contract bounded so a long map cannot create an unbounded snapshot
+// or make the renderer rebuild thousands of DOM/SVG points.
+const MAX_DIFFICULTY_TIMELINE_POINTS = 2048;
+
 /**
  * Convert the official pipeline result into analyzer-neutral semantic data.
  * The keys in `metrics` are the public contract consumed by widgets; they do
@@ -39,6 +44,24 @@ export function normalizePipelineResult(result, {
     setMetric(metrics, "difficulty.lnPercent", toPercent(firstFinite(rework.lnRatio, parsedSummary.lnRatio)), "%");
     setMetric(metrics, "difficulty.keys", firstFinite(rework.columnCount, parsedSummary.columnCount), "keys");
     setMetric(metrics, "difficulty.sixKConst", result.sixKConst, "LV");
+    // The worker publishes explicit series. Do not fall back to rework.graph:
+    // Sunny's ordinary graph contains LN body/release strain and is therefore
+    // a mixed graph on LN charts, not a Rice graph.
+    const riceTimeline = normalizeDifficultyTimeline(result.riceGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.riceGraph);
+    const lnTimeline = normalizeDifficultyTimeline(result.lnGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.lnGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.graphLn);
+    // Both graph series are optional: some estimator paths do not expose a
+    // graph at all. Keep a typed null in the semantic contract so the default
+    // widget can resolve the optional bindings without downgrading an
+    // otherwise valid analysis to `metric_missing`.
+    setOptionalMetric(metrics, "difficulty.timeline", riceTimeline, "difficulty/ms");
+    setOptionalMetric(metrics, "difficulty.rice.timeline", riceTimeline, "difficulty/ms");
+    // LN is a supported but legitimately absent series on maps without long
+    // notes. Emit a typed null so the default widget can resolve the optional
+    // binding without turning an otherwise successful analysis into partial.
+    setOptionalMetric(metrics, "difficulty.ln.timeline", lnTimeline, "difficulty/ms");
 
     const danLabels = splitDifficultyLabel(rework.estDiff);
     setMetric(metrics, "dan.rc.label", companella?.estDiff || danLabels.rc, "label");
@@ -172,6 +195,56 @@ function normalizeMetricValue(value) {
     }
 
     return null;
+}
+
+function normalizeDifficultyTimeline(graph) {
+    if (!isRecord(graph) || !Array.isArray(graph.times) || !Array.isArray(graph.values)) {
+        return null;
+    }
+
+    const count = Math.min(graph.times.length, graph.values.length);
+    if (count < 2) {
+        return null;
+    }
+
+    const points = [];
+    let previousTime = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < count; index++) {
+        const time = Number(graph.times[index]);
+        const value = Number(graph.values[index]);
+        if (!Number.isFinite(time) || !Number.isFinite(value) || time < 0 || time <= previousTime) {
+            continue;
+        }
+
+        points.push({ time, value });
+        previousTime = time;
+    }
+
+    if (points.length < 2) {
+        return null;
+    }
+
+    const sampled = points.length <= MAX_DIFFICULTY_TIMELINE_POINTS
+        ? points
+        : Array.from({ length: MAX_DIFFICULTY_TIMELINE_POINTS }, (_, index) => {
+            const sourceIndex = Math.round(
+                index * (points.length - 1) / (MAX_DIFFICULTY_TIMELINE_POINTS - 1));
+            return points[sourceIndex];
+        });
+
+    return {
+        times: sampled.map((point) => point.time),
+        values: sampled.map((point) => point.value),
+    };
+}
+
+function setOptionalMetric(target, id, value, unit) {
+    const normalized = normalizeMetricValue(value);
+    target[id] = {
+        id,
+        value: normalized,
+        ...(unit ? { unit } : {}),
+    };
 }
 
 function firstFinite(...values) {

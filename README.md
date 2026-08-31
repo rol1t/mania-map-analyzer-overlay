@@ -11,9 +11,9 @@
 
 - Automatic tosu and [ManiaMapAnalyser](https://github.com/LeoBlackMT/osumania_map_analyser) setup, compatibility checks, hash verification, and lifecycle management.
 - Works with osu!stable and osu!lazer; lazer compatibility offsets are checked during setup.
-- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Companella Replay / Pause Coach cards.
+- Live SR, BPM, Set/Map IDs, DAN/Reform estimate, numeric difficulty, LN%, key count, pattern bars, Etterna skills, difficulty graphs, and the optional Replay / Pause Coach cards.
 - Lightweight transparent overlay for windowed or borderless osu!, with automatic hiding while a map is being played.
-- Default, Horizontal, Companella, Companella Replay, the standalone Pause Coach Card, and Custom CSS layouts with live preview in the launcher.
+- Four readability-first translucent layouts with live preview: Default, Glass, Radar, and Replay, plus Custom CSS for user variants.
 - Resizable overlay with DPI-aware rendering; resize by dragging an edge/corner or with `Ctrl` + mouse wheel.
 - Optional tosu In-Game Overlay integration for osu!stable exclusive fullscreen on Windows.
 - Startup update checks for the launcher and bundled analysis components; settings and custom CSS are preserved.
@@ -21,21 +21,21 @@
 
 ## Installation and first launch
 
-Download the application package for your platform from [GitHub Releases](https://github.com/rol1t/mania-map-analyzer-overlay/releases), then extract it to a folder.
+Download the application package for your platform from [GitHub Releases](https://github.com/rol1t/mania-map-analyzer-overlay/releases). Each archive contains one self-contained launcher executable; runtime libraries and shipped resources are embedded in it.
 
 Windows:
 
-1. Open the extracted folder.
-2. Run **`Mania Map Analyzer Overlay.exe`**.
+1. Extract **`Mania Map Analyzer Overlay.exe`** anywhere convenient.
+2. Run it directly; no adjacent DLL or resource folders are required.
 
 Linux (experimental):
 
-1. Extract the `.tar.gz` package.
-2. Run **`./Mania Map Analyzer Overlay`** from the extracted folder.
+1. Extract the single **`Mania Map Analyzer Overlay`** binary from the `.tar.gz` package.
+2. Mark it executable if necessary and run it.
 
-The application is the only user-facing entry point. Do not start `tosu` separately. On first launch, the GUI downloads the compatible tosu and ManiaMapAnalyser components, verifies their SHA-256 hashes, and starts tosu automatically. A network connection is required for this preparation step.
+The application is the only required entry point. On first launch, immutable UI/analyzer resources are deployed atomically to the per-user data directory. If a compatible tosu API with the ManiaMapAnalyser addon is already available at `127.0.0.1:24050`, the application attaches to it without modifying or taking ownership of that process. Otherwise, when the port is free, the GUI downloads the compatible tosu and ManiaMapAnalyser components, verifies their SHA-256 hashes, and starts its own instance automatically. A plain external tosu which occupies port 24050 but lacks the addon is reported as incompatible and is never terminated. Nothing is created beside the launcher executable. A network connection is required for initial managed-component preparation.
 
-The launcher owns the tosu process and stops it when the launcher exits. If preparation fails, use **Restart** to retry it from the GUI.
+The launcher stops only a tosu process that it started itself. An instance which was already running remains alive when the application exits or reconnects. If preparation fails, use **Restart** to retry it from the GUI.
 
 On later launches, the launcher checks for newer application and component releases and offers the update from the GUI.
 
@@ -60,13 +60,14 @@ For osu!stable exclusive fullscreen, enable **Stable FS**, confirm the tosu rest
 
 ## Appearance and CSS
 
-Open **Appearance** to choose `Default`, `Horizontal`, `Companella`, `Companella Replay`, `Pause Coach Card`, or `Custom CSS`, then adjust the scale. The launcher previews the selected style immediately and applies it to the desktop overlay. `Companella Replay` includes replay metrics and a realtime Pause Coach block; `Pause Coach Card` is the only standalone Pause Coach layout. See [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md) for telemetry provenance and limitations.
+Open **Appearance** to choose `Default`, `Glass`, `Radar`, `Replay`, or `Custom CSS`, then adjust the scale and opacity. Default is the balanced base layout, Glass uses a spacious two-column hierarchy, Radar presents the shared skill metrics as a map-shape chart beside large summary cards, and Replay adds large replay metrics plus a realtime Pause Coach block. The visual variants inherit one shared template and runtime, so they do not duplicate analysis logic. Settings saved with retired Horizontal, Focus, Neon, or standalone Pause Coach presets are migrated automatically. See [`docs/PAUSE_COACH.md`](docs/PAUSE_COACH.md) for telemetry provenance and limitations.
 
-Overlay visibility is configured per preset in `manifest.json`. Set
-`visibilityPolicy` to `always`, `outside-play`, `during-play`, `paused-only`,
-or `never`. The shipped presets use `always` for Default and Horizontal and
-`outside-play` for Companella and Companella Replay. User presets can override this value without
-changing application code.
+The same window has independent **Hide widget** checkboxes for menus/outside a map, active gameplay, and pause. Every combination is supported. Once applied, this user choice takes precedence over the selected preset's manifest policy; installations without an explicit choice continue to use `manifest.json`.
+
+Overlay visibility is configured per preset in `manifest.json`. Supported values are
+`always`, `outside-play`, `outside-only`, `during-play`, `during-and-paused`,
+`outside-and-during-play`, `paused-only`, and `never`. All shipped built-in presets use
+`outside-play`. User presets can override this value without changing application code. A preset may also declare `basePresetId` to inherit its template and prepend its base stylesheet before local overrides; inheritance cycles and missing bases are rejected.
 
 To add or edit a language, add its JSON file and manifest entry under `Assets/localization`. UI code uses only localization keys, so changing a translation does not require recompiling the application.
 
@@ -79,7 +80,7 @@ CSS can restyle and rearrange existing analyser elements; it cannot add a new li
 
 ## Creating user presets
 
-Presets are ordinary resource folders. A preset is not compiled into the application: the launcher discovers its `manifest.json`, reads the referenced HTML and CSS files, and uses the same package for the Appearance preview and the in-game overlay. This makes a preset portable, reviewable, and editable with any text editor.
+User presets are ordinary resource folders. Shipped presets are embedded in the single-file launcher and materialized in its versioned per-user runtime store; user presets remain separate and editable. The launcher discovers each `manifest.json`, reads the referenced HTML and CSS files, and uses the same package for the Appearance preview and the in-game overlay.
 
 The **Custom CSS** option is a separate convenience path: it edits the global per-user `overlay-custom.css` file. A manifest-backed user preset is a self-contained package with its own name, template, stylesheet, and visibility policy. Use a user preset when you want to share a complete layout rather than only restyle the currently selected layout.
 
@@ -180,9 +181,10 @@ The complete stylesheet is loaded as an external resource. It is never generated
 | `html.launcher-overlay-host` | The overlay document root. Use this as the safest scope for preset rules. |
 | `html.launcher-transparent-overlay` | Present while the transparent in-game overlay host is active. |
 | `html.overlay-osu-focused` | Present while osu! is the active window. |
-| `html.overlay-layout-default` | Exact built-in `default` layout only. |
-| `html.overlay-layout-horizontal` | Exact built-in `horizontal` layout only. |
-| `html.overlay-layout-companella` | Exact built-in `companella` layout only. |
+| `html.overlay-layout-companella` | The Default, Glass, or Radar built-in layout. |
+| `html.overlay-layout-companella-glass` | The Glass built-in layout. |
+| `html.overlay-layout-companella-radar` | The Radar built-in layout. |
+| `html.overlay-layout-companella-replay` | The Replay built-in layout. |
 | `html.overlay-layout-custom` | Any user preset id, or the `Custom CSS` layout. |
 
 The launcher also exposes `--overlay-host-scale` and `--overlay-preset-width`. Use responsive CSS instead of assuming one monitor size:
@@ -229,21 +231,24 @@ Set `visibilityPolicy` in the manifest to choose when a preset is displayed:
 |---|---|
 | `always` | The launcher/overlay host is available. |
 | `outside-play` | No map is actively playing, including the song-selection/menu state and the paused state. |
+| `outside-only` | Only the menu/song-selection state; hidden during play and pause. |
 | `during-play` | A map is actively playing and is not paused. |
+| `during-and-paused` | Any active attempt, including pause; hidden in menus. |
+| `outside-and-during-play` | Menus and active gameplay; hidden only on pause. |
 | `paused-only` | A map is playing and paused. |
 | `never` | Never shown. Useful for disabling a preset without deleting its files. |
 
-Visibility is evaluated from the analyser-neutral gameplay snapshot (`isPlaying` and `isPaused`). A minimized osu! window is treated as an editing state, so the overlay remains visible regardless of the selected policy. Focus state controls interaction and click-through behavior, not this policy decision. The shipped Default and Horizontal presets use `always`; Companella uses `outside-play`. A user preset can choose a different policy without changing application code. Unknown values are normalized to `always`; inspect `application.log` when diagnosing an unexpected visibility result.
+Visibility is evaluated from the analyser-neutral gameplay snapshot (`isPlaying` and `isPaused`). A minimized osu! window is treated as an editing state, so the overlay remains visible regardless of the selected policy. Focus state controls interaction and click-through behavior, not this policy decision. All shipped built-in presets use `outside-play`. The Appearance checkboxes store a user override; without one, a user preset can choose a different policy without changing application code. Unknown values are normalized to `always`; inspect `application.log` when diagnosing an unexpected visibility result.
 
 Until the first gameplay snapshot arrives, the desktop overlay stays visible for every policy except `never`. This keeps the edit surface available while tosu is starting or temporarily unavailable; the configured policy is applied as soon as a valid gameplay state is received.
 
-### 6. Live data and the Companella exception
+### 6. Live data and the built-in preset renderer
 
 The application keeps analyser integration behind a versioned, domain-level snapshot. The snapshot can contain beatmap metadata, gameplay state, star rating, LN percentage, key count, rank estimates, skill metrics, an optional `replay` block, and an optional realtime `pauseCoach` block. A preset should not read the tosu WebSocket or ManiaMapAnalyser DOM directly.
 
-For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (star rating, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below), and `pauseCoach` (session state, data quality, bounded recent/overall metrics, reconstructed recent section, evidence-backed insights and diagnostics; per-column and canonical live pattern data remain explicitly unavailable unless Tosu supplies reliable correlation). These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
+For reference, the normalized domain fields are grouped as follows: `beatmap` (`id`, `setId`, artist, title, version, mapper, BPM, OD, HP, and background URL), `gameplay` (`state`, `isPlaying`, `isPaused`, `isFocused`), `difficulty` (third-party star estimate, estimator provider and actual algorithm, unit, LN percentage, and keys), `ranks` (system id, label, display value, and numeric value), `skills` (id, label, display value, normalized value, and detail), `replay` (UR, mean/median/SD, early/late, per-column bias/UR, sections, and pattern insights; see below), and `pauseCoach` (session state, data quality, bounded recent/overall metrics, reconstructed recent section, evidence-backed insights and diagnostics; per-column and canonical live pattern data remain explicitly unavailable unless Tosu supplies reliable correlation). Star estimates are not produced by osu!'s official difficulty calculator; the built-in cards show the actual selected analyzer algorithm beside the value. These fields describe the application contract; arbitrary user templates cannot bind to them directly until a renderer exposes a specific element or API.
 
-There is one current renderer limitation: the built-in Companella renderer updates a fixed set of IDs only when the selected layout id is exactly `companella`. Those IDs are:
+The built-in preset family updates a fixed set of IDs. Those IDs are:
 
 ```text
 overlay-summary-star
@@ -262,7 +267,7 @@ overlay-comp-chart
 The shipped `companella-replay` preset is a first-party duplicate of `companella` that adds replay integration as a reference implementation. Its additional live IDs are:
 
 ```text
-overlay-replay              (container, visible in Companella Replay; shows provisional placeholders before data)
+overlay-replay              (container, visible in Replay; shows provisional placeholders before data)
 overlay-replay-ur           (replay.timing.ur)
 overlay-replay-score        (live play.score)
 overlay-replay-map-time     (live beatmap.time.live)
@@ -328,7 +333,7 @@ Before sharing a preset, test it in the launcher preview, in windowed osu!, in b
 
 ## Screenshots
 
-![Launcher with Companella preview](docs/images/launcher.png)
+![Launcher with Default preset preview](docs/images/launcher.png)
 
 ![Overlay running over osu!](docs/images/overlay-in-osu.png)
 
@@ -342,11 +347,12 @@ Before sharing a preset, test it in the launcher preview, in windowed osu!, in b
 
 ## Development
 
-Requirements: the .NET 8 SDK version pinned in [`global.json`](global.json). Released packages are self-contained and do not require a separate .NET runtime.
+Requirements: the .NET 8 SDK version pinned in [`global.json`](global.json). Released packages are compressed, self-contained single-file applications and do not require a separate .NET runtime.
 
 Open [`ManiaMapAnalyzerOverlay.sln`](ManiaMapAnalyzerOverlay.sln) in Visual Studio or JetBrains Rider. Select **`ManiaMapAnalyzerOverlay.Avalonia`** as the startup project; the updater project is a helper and should not be started directly.
 
 Analyzer integrations use a versioned, source-neutral contract; see [`docs/ANALYZER_ADAPTERS.md`](docs/ANALYZER_ADAPTERS.md).
+The DAN calculation source, Mania Tracker reference comparison, ladder semantics, and badge provenance are documented in [`docs/DAN_ESTIMATES.md`](docs/DAN_ESTIMATES.md).
 The observed tosu state contract, full `GameState` enum, visibility policy, and diagnostics are documented in [`docs/TOSU_GAME_STATES.md`](docs/TOSU_GAME_STATES.md).
 
 From a terminal:
@@ -377,7 +383,9 @@ Runtime setup and updates are implemented in C#. The PowerShell and Bash files u
 
 ## Credits and licensing
 
-This project integrates [tosu](https://github.com/tosuapp/tosu), [ManiaMapAnalyser](https://github.com/LeoBlackMT/osumania_map_analyser), [Avalonia](https://avaloniaui.net/), and [Avalonia.Controls.WebView](https://github.com/AvaloniaUI/Avalonia.Controls.WebView). Their license texts are included in [`LICENSES/`](LICENSES/). The Companella layout is an original adaptation based on a visual reference supplied by the project owner; it does not include Companella source code or assets.
+This project integrates [tosu](https://github.com/tosuapp/tosu), [ManiaMapAnalyser](https://github.com/LeoBlackMT/osumania_map_analyser), [Avalonia](https://avaloniaui.net/), and [Avalonia.Controls.WebView](https://github.com/AvaloniaUI/Avalonia.Controls.WebView). Their license texts are included in [`LICENSES/`](LICENSES/). The Companella layout is an original adaptation based on a visual reference supplied by the project owner; it does not include Companella source code.
+
+The packaged DAN badge catalog was copied from the public [`aleju03/mania-hub`](https://github.com/aleju03/mania-hub) repository at the commit recorded in its [asset attribution](assets/overlay/runtime/dan-images/ATTRIBUTION.md). The source repository did not provide a root software or artwork license at copy time, so those images are **not** relicensed by this project's MIT license and carry an unresolved redistribution risk.
 
 Launcher source, repository-authored scripts, and documentation are available under the [MIT License](LICENSE).
 

@@ -1,0 +1,14 @@
+{
+  "id": "companella-glass",
+  "basePresetId": "companella",
+  "name": "Glass",
+  "nameRu": "Стекло",
+  "description": "Spacious frosted-glass layout with large two-column metric cards and generous chart labels.",
+  "descriptionRu": "Просторная стеклянная компоновка с крупными карточками метрик в две колонки и читаемыми подписями графиков.",
+  "stylesheet": "style.css",
+  "visibilityPolicy": "outside-play",
+  "requiredCssMarker": ".overlay-layout-companella-glass",
+  "supportsFullscreen": true,
+  "minWidth": 760,
+  "minHeight": 640
+}

@@ -78,10 +78,27 @@ public sealed record OverlayRuntimeState
         get; init;
     }
 
+    /// <summary>
+    /// Actual visibility feedback from the current presentation surface. It
+    /// is not the policy decision; compare it with <see cref="DesiredVisibility"/>
+    /// when diagnosing a platform effect that has not applied yet.
+    /// </summary>
     public bool PresentationVisible
     {
         get; init;
     }
+
+    /// <summary>
+    /// Policy intent for the native overlay. This is deliberately computed
+    /// from application state and is independent from platform feedback.
+    /// </summary>
+    public bool DesiredVisibility => OverlayVisibilityDerivation.ComputeDesiredVisibility(this);
+
+    /// <summary>Whether the current presentation surface is ready to receive state.</summary>
+    public bool SurfaceReady => PresentationReady;
+
+    /// <summary>Actual visibility reported by the current presentation surface.</summary>
+    public bool ActualVisibility => PresentationVisible;
 
     /// <summary>
     /// Identifies the logical presentation document/window that reported
@@ -110,6 +127,16 @@ public sealed record OverlayRuntimeState
     /// waiting for realtime confirmation, complete, or failed.
     /// </summary>
     public AnalysisRequestSlot? AnalysisRequest
+    {
+        get; init;
+    }
+
+    /// <summary>
+    /// Causal slot for the latest exact replay execution. Replay analysis is
+    /// intentionally independent from headless map analysis and realtime
+    /// Pause Coach state.
+    /// </summary>
+    public ReplayAnalysisRequestSlot? ReplayRequest
     {
         get; init;
     }

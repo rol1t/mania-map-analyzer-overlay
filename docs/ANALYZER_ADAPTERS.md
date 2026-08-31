@@ -18,8 +18,9 @@ native message: analysis:<adapter-id>:<snapshot-json>
 
 Preset visibility is configured independently in the preset's `manifest.json`
 with `visibilityPolicy`. Supported values are `always`, `outside-play`,
-`during-play`, `paused-only`, and `never`. The application evaluates this
-policy against `Gameplay.IsPlaying` and `Gameplay.IsPaused`; an analyzer
+`outside-only`, `during-play`, `during-and-paused`, `outside-and-during-play`,
+`paused-only`, and `never`. The application evaluates this policy against
+`Gameplay.IsPlaying` and `Gameplay.IsPaused`; an analyzer
 adapter only supplies those normalized values and never decides which preset
 should be visible.
 

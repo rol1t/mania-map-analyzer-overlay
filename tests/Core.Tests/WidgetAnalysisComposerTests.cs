@@ -188,6 +188,44 @@ public sealed class WidgetAnalysisComposerTests
     }
 
     [Fact]
+    public void OptionalNullTimelineDoesNotMakeSuccessfulAnalysisPartial()
+    {
+        var source = CreateSource("mma", "mma-engine");
+        var spec = new WidgetAnalysisSpec(
+            "timeline-widget",
+            [source],
+            [
+                Binding("difficulty.star", ("mma", "difficulty.star")),
+                NullableBinding("difficulty.timeline", ("mma", "difficulty.timeline")),
+                NullableBinding("difficulty.rice.timeline", ("mma", "difficulty.rice.timeline")),
+                NullableBinding("difficulty.ln.timeline", ("mma", "difficulty.ln.timeline"))
+            ]);
+        var result = Success(
+            source,
+            "Sunny",
+            SemanticMetric.FromValue("difficulty.star", 5.0),
+            SemanticMetric.FromValue<object?>("difficulty.timeline", null),
+            SemanticMetric.FromValue<object?>("difficulty.rice.timeline", null),
+            SemanticMetric.FromValue<object?>("difficulty.ln.timeline", null));
+
+        var snapshot = new WidgetAnalysisComposer().Compose(
+            spec,
+            [new AnalysisSourceResult("mma", result)]);
+
+        Assert.Equal(AnalysisOutcome.Success, snapshot.Outcome);
+        Assert.Equal(
+            JsonValueKind.Null,
+            snapshot.Metrics["difficulty.ln.timeline"].Metric.Value.ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            snapshot.Metrics["difficulty.timeline"].Metric.Value.ValueKind);
+        Assert.Equal(
+            JsonValueKind.Null,
+            snapshot.Metrics["difficulty.rice.timeline"].Metric.Value.ValueKind);
+        Assert.DoesNotContain(snapshot.Diagnostics, diagnostic => diagnostic.Code == "composition.metric_missing");
+    }
+
+    [Fact]
     public void RejectsDuplicateTargetBindings()
     {
         var source = CreateSource("mma", "mma-engine");
