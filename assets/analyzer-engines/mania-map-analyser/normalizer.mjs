@@ -44,14 +44,24 @@ export function normalizePipelineResult(result, {
     setMetric(metrics, "difficulty.lnPercent", toPercent(firstFinite(rework.lnRatio, parsedSummary.lnRatio)), "%");
     setMetric(metrics, "difficulty.keys", firstFinite(rework.columnCount, parsedSummary.columnCount), "keys");
     setMetric(metrics, "difficulty.sixKConst", result.sixKConst, "LV");
-    // Estimators normally expose the selected graph under `rework.graph`.
-    // Keep the top-level result as a compatibility fallback, but validate the
-    // first candidate before deciding that no timeline is available.
-    const timeline = normalizeDifficultyTimeline(rework.graph)
-        || normalizeDifficultyTimeline(result.graph);
-    if (timeline) {
-        setMetric(metrics, "difficulty.timeline", timeline, "difficulty/ms");
-    }
+    // The worker publishes explicit series. Do not fall back to rework.graph:
+    // Sunny's ordinary graph contains LN body/release strain and is therefore
+    // a mixed graph on LN charts, not a Rice graph.
+    const riceTimeline = normalizeDifficultyTimeline(result.riceGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.riceGraph);
+    const lnTimeline = normalizeDifficultyTimeline(result.lnGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.lnGraph)
+        || normalizeDifficultyTimeline(result.sunnyWindow?.graphLn);
+    // Both graph series are optional: some estimator paths do not expose a
+    // graph at all. Keep a typed null in the semantic contract so the default
+    // widget can resolve the optional bindings without downgrading an
+    // otherwise valid analysis to `metric_missing`.
+    setOptionalMetric(metrics, "difficulty.timeline", riceTimeline, "difficulty/ms");
+    setOptionalMetric(metrics, "difficulty.rice.timeline", riceTimeline, "difficulty/ms");
+    // LN is a supported but legitimately absent series on maps without long
+    // notes. Emit a typed null so the default widget can resolve the optional
+    // binding without turning an otherwise successful analysis into partial.
+    setOptionalMetric(metrics, "difficulty.ln.timeline", lnTimeline, "difficulty/ms");
 
     const danLabels = splitDifficultyLabel(rework.estDiff);
     setMetric(metrics, "dan.rc.label", companella?.estDiff || danLabels.rc, "label");
@@ -225,6 +235,15 @@ function normalizeDifficultyTimeline(graph) {
     return {
         times: sampled.map((point) => point.time),
         values: sampled.map((point) => point.value),
+    };
+}
+
+function setOptionalMetric(target, id, value, unit) {
+    const normalized = normalizeMetricValue(value);
+    target[id] = {
+        id,
+        value: normalized,
+        ...(unit ? { unit } : {}),
     };
 }
 

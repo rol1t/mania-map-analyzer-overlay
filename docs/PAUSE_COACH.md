@@ -59,10 +59,9 @@ The first implementation emits at most four deduplicated findings, ranked by sev
 
 Every finding carries a title, description, evidence, confidence and data quality. No per-column or pattern claim is generated when Tosu cannot support it.
 
-## Visual variant
+## Visual presentation
 
-The standalone Pause Coach presentation is:
-
-- `pause-coach-card` — evidence card with a primary finding, secondary findings and metric cards.
-
-The existing `companella-replay` preset also renders the Pause Coach block below replay information.
+`companella-replay` is the shipped Pause Coach presentation. It renders the
+primary finding, secondary findings and large metric cards below replay
+information. Settings that reference the retired standalone Pause Coach
+presets are migrated to `companella-replay`.

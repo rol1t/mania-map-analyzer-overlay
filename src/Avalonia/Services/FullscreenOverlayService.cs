@@ -171,13 +171,16 @@ public sealed class FullscreenOverlayService
     private static (int Width, int Height) GetOverlaySize(LauncherSettings settings)
     {
         var scale = Math.Clamp(settings.OverlayScalePercent, 50, 180) / 100d;
-        var size = settings.OverlayLayoutMode?.ToLowerInvariant() switch
+        var size = OverlayPresentationService.NormalizeLayout(settings.OverlayLayoutMode) switch
         {
-            "horizontal" => (960, 650),
-            "companella" => (760, 470),
-            "companella-replay" => (760, 470),
-            "custom" => (620, 700),
-            _ => (520, 640)
+            // The Companella card now includes the timeline block. Keep a
+            // little vertical headroom in the static Tosu iframe so its
+            // footer and lower chart edge are not clipped before the card is
+            // laid out by the browser.
+            "companella" => (900, 560),
+            "companella-replay" => (900, 760),
+            "custom" => (900, 700),
+            _ => (900, 560)
         };
         return (Math.Max(240, (int)Math.Ceiling(size.Item1 * scale)),
             Math.Max(180, (int)Math.Ceiling(size.Item2 * scale)));
@@ -191,7 +194,7 @@ public sealed class FullscreenOverlayService
             "Notes: Applies the launcher-selected preset to " + analyzer.Name + " in tosu's In-Game Overlay.\r\n";
         File.WriteAllText(Path.Combine(CounterDirectory, "metadata.txt"), metadata, new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(CounterDirectory, "index.html"), BuildIndexHtml(analyzer), new UTF8Encoding(false));
-        var fullscreenCss = Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay", "runtime", "fullscreen.css");
+        var fullscreenCss = Path.Combine(AppPaths.ResourceDirectory, "Assets", "overlay", "runtime", "fullscreen.css");
         if (File.Exists(fullscreenCss))
         {
             File.Copy(fullscreenCss, Path.Combine(CounterDirectory, "fullscreen.css"), overwrite: true);

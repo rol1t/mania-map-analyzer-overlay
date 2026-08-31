@@ -128,7 +128,7 @@ internal static class UiText
 
             try
             {
-                var root = Path.Combine(AppPaths.BaseDirectory, "Assets", "localization");
+                var root = Path.Combine(AppPaths.ResourceDirectory, "Assets", "localization");
                 var manifestPath = Path.Combine(root, "manifest.json");
                 if (!File.Exists(manifestPath))
                 {

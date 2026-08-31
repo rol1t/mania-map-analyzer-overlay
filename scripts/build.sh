@@ -76,15 +76,6 @@ if [[ -e "$output_path" ]]; then
 fi
 mkdir -p -- "$output_path"
 
-"$dotnet_command" publish "$project_path" \
-    --configuration Release \
-    --runtime "$runtime_identifier" \
-    --self-contained true \
-    --output "$output_path" \
-    -p:PublishSingleFile=false \
-    -p:PublishTrimmed=false \
-    --nologo
-
 updater_output="$output_path/.updater-build"
 mkdir -p -- "$updater_output"
 "$dotnet_command" publish "$updater_project_path" \
@@ -98,53 +89,32 @@ mkdir -p -- "$updater_output"
 
 updater_binary="$updater_output/Mania Map Analyzer Overlay.Updater"
 [[ -f "$updater_binary" ]] || die "Published updater was not found: $updater_binary"
-cp -- "$updater_binary" "$output_path/"
-rm -rf -- "$updater_output"
 
-cp -- "$repo_root/assets/overlay-custom.css" "$output_path/"
-mkdir -p -- "$output_path/Assets/overlay"
-cp -R -- "$repo_root/assets/overlay/." "$output_path/Assets/overlay/"
-mkdir -p -- "$output_path/Assets/analyzers"
-cp -R -- "$repo_root/assets/analyzers/." "$output_path/Assets/analyzers/"
-mkdir -p -- "$output_path/Assets/analyzer-engines"
-cp -R -- "$repo_root/assets/analyzer-engines/." "$output_path/Assets/analyzer-engines/"
-mkdir -p -- "$output_path/Assets/localization"
-cp -R -- "$repo_root/assets/localization/." "$output_path/Assets/localization/"
-for asset in \
-    "Assets/overlay/presets/default/manifest.json" \
-    "Assets/overlay/presets/horizontal/manifest.json" \
-    "Assets/overlay/presets/companella/manifest.json"; do
-    [[ -f "$output_path/$asset" ]] || die "Published package is missing overlay resource: $asset"
-done
-for asset in \
-    "Assets/localization/manifest.json" \
-    "Assets/localization/en.json" \
-    "Assets/localization/ru.json"; do
-    [[ -f "$output_path/$asset" ]] || die "Published package is missing localization resource: $asset"
-done
-for asset in \
-    "Assets/analyzers/mania-map-analyser/manifest.json" \
-    "Assets/analyzers/mania-map-analyser/adapter.js"; do
-    [[ -f "$output_path/$asset" ]] || die "Published package is missing analyzer adapter resource: $asset"
-done
-for asset in \
-    "Assets/analyzer-engines/mania-map-analyser/manifest.json" \
-    "Assets/analyzer-engines/mania-map-analyser/runtime.mjs" \
-    "Assets/analyzer-engines/mania-map-analyser/worker.mjs"; do
-    [[ -f "$output_path/$asset" ]] || die "Published package is missing analyzer engine resource: $asset"
-done
-cp -- "$repo_root/README.md" "$output_path/"
-cp -- "$repo_root/LICENSE" "$output_path/"
-cp -R -- "$repo_root/LICENSES" "$output_path/"
-cp -R -- "$repo_root/docs" "$output_path/"
+"$dotnet_command" publish "$project_path" \
+    --configuration Release \
+    --runtime "$runtime_identifier" \
+    --self-contained true \
+    --output "$output_path" \
+    -p:PublishSingleFile=true \
+    -p:IncludeNativeLibrariesForSelfExtract=true \
+    -p:EnableCompressionInSingleFile=true \
+    -p:PublishTrimmed=false \
+    -p:DebugSymbols=false \
+    -p:DebugType=None \
+    -p:EmbeddedUpdaterPath="$updater_binary" \
+    --nologo
+rm -rf -- "$updater_output"
 
 launcher_binary="$output_path/Mania Map Analyzer Overlay"
 [[ -f "$launcher_binary" ]] || die "Published launcher was not found: $launcher_binary"
-chmod +x -- "$launcher_binary" "$output_path/Mania Map Analyzer Overlay.Updater"
-
-if find "$output_path" -type f \( -name '*.cmd' -o -name '*.ps1' \) -print -quit | grep -q .; then
-    die "Runtime package must not contain .cmd or .ps1 files."
-fi
+chmod +x -- "$launcher_binary"
+payload_count="$(find "$output_path" -mindepth 1 -maxdepth 1 -print | wc -l)"
+[[ "$payload_count" -eq 1 ]] || die "Single-file payload must contain only the launcher executable."
+verification_root="$(mktemp -d)"
+trap 'rm -rf -- "$verification_root"' EXIT
+"$launcher_binary" --verify-runtime-package "$verification_root"
+rm -rf -- "$verification_root"
+trap - EXIT
 
 printf 'Mania Map Analyzer Overlay %s built at: %s\n' "$version" "$output_path"
 printf 'Launch the application executable; component setup runs inside the GUI.\n'

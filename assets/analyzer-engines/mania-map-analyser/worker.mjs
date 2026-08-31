@@ -12,14 +12,20 @@ import {
 import { normalizePipelineResult } from "./normalizer.mjs";
 
 const DEFAULT_PIPELINE_PATH = "js/pipeline/runAnalysisPipeline.js";
+const DEFAULT_RICE_ALGORITHM_PATH = "js/rework/sunnyAlgorithm.js";
+const DEFAULT_LN_ALGORITHM_PATH = "js/rework/sunnyWindowAlgorithm.js";
 const DEFAULT_COMPANELLA_PATH = "js/estimator/companellaEstimator.js";
 const DEFAULT_MIXED_ESTIMATOR_PATH = "js/estimator/mixedEstimator.js";
 const DEFAULT_PIPELINE_EXPORT = "runAnalysisPipeline";
+const DEFAULT_RICE_ALGORITHM_EXPORT = "calculate";
+const DEFAULT_LN_ALGORITHM_EXPORT = "calculateLN";
 const DEFAULT_COMPANELLA_EXPORT = "classifyCompanellaDifficulty";
 const DEFAULT_MIXED_COMPANELLA_EXPORT = "applyCompanellaToMixedResult";
 
 let configuration = null;
 let pipelinePromise = null;
+let riceAlgorithmPromise = null;
+let lnAlgorithmPromise = null;
 let companellaPromise = null;
 let mixedCompanellaPromise = null;
 const jobs = new Map();
@@ -83,6 +89,8 @@ async function handleConfigure(config) {
     if (!configuration || JSON.stringify(configuration) !== JSON.stringify(next)) {
         cancelAllJobs("runtime reconfigured");
         pipelinePromise = null;
+        riceAlgorithmPromise = null;
+        lnAlgorithmPromise = null;
         companellaPromise = null;
         mixedCompanellaPromise = null;
     }
@@ -272,8 +280,16 @@ async function handleAnalyze(message) {
         });
         throwIfStale(correlationId, job);
 
+        const timelineEnrichment = await enrichDifficultyTimelineGraphs(
+            pipelineResult,
+            request,
+            pipelineOptions,
+        );
+        throwIfStale(correlationId, job);
+        pipelineResult = timelineEnrichment.pipelineResult;
+
         let companella = null;
-        const diagnostics = [];
+        const diagnostics = [...timelineEnrichment.diagnostics];
         const actualAlgorithm = String(
             pipelineResult?.actualEstimatorAlgorithm
                 || pipelineResult?.actualAlgorithm
@@ -366,6 +382,204 @@ async function loadPipeline() {
     }
 
     return pipelinePromise;
+}
+
+/**
+ * Build two semantically different timelines from the installed Sunny
+ * algorithms. The selected pipeline graph is a mixed chart: Sunny includes
+ * LN bodies, release strain and active holds, so it must not be labelled
+ * Rice on a map containing long notes.
+ *
+ * Rice is calculated through Sunny with Hold Off applied. This preserves
+ * every note head and column transition while removing hold duration and
+ * release strain. LN uses Sunny Window's calculateLN on the effective map,
+ * which keeps LN-dominant windows and models heads, bodies and releases.
+ * Neither timeline changes the pipeline's final SR or DAN result.
+ */
+async function enrichDifficultyTimelineGraphs(pipelineResult, request, options) {
+    if (!isRecord(pipelineResult)) {
+        return { pipelineResult, diagnostics: [] };
+    }
+
+    const hasLongNoteContent = [
+        pipelineResult?.parsedSummary?.lnRatio,
+        pipelineResult?.rework?.lnRatio,
+        pipelineResult?.sunnyWindow?.lnRatio,
+        pipelineResult?.sunnyWindow?.lnStar,
+    ].some((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    // A graph produced from a chart without long notes is already a valid
+    // Rice graph. Avoid a second Sunny pass for ordinary Rice maps.
+    if (!hasLongNoteContent) {
+        const existingRiceGraph = firstGraph(
+            pipelineResult?.riceGraph,
+            pipelineResult?.sunnyWindow?.riceGraph,
+            pipelineResult?.sunnyWindow?.graph,
+            pipelineResult?.rework?.graph,
+            pipelineResult?.graph,
+        );
+        return {
+            pipelineResult: existingRiceGraph && !hasGraph(pipelineResult.riceGraph)
+                ? { ...pipelineResult, riceGraph: existingRiceGraph }
+                : pipelineResult,
+            diagnostics: [],
+        };
+    }
+
+    const diagnostics = [];
+    const speedRateValue = Number(options?.speedRate ?? request.speedRate ?? request.rate ?? 1);
+    const speedRate = Number.isFinite(speedRateValue) && speedRateValue > 0 ? speedRateValue : 1;
+    let enriched = pipelineResult;
+
+    if (!hasGraph(firstGraph(
+        pipelineResult?.riceGraph,
+        pipelineResult?.sunnyWindow?.riceGraph,
+    ))) {
+        try {
+            const calculateRice = await loadRiceAlgorithm();
+            const rawRiceResult = calculateRice(
+                request.rawText,
+                speedRate,
+                options?.odFlag ?? null,
+                withHoldOff(options?.cvtFlag),
+                { withGraph: true },
+                null,
+            );
+            if (hasGraph(rawRiceResult?.graph)) {
+                enriched = { ...enriched, riceGraph: rawRiceResult.graph };
+            }
+        } catch (exception) {
+            reportException("Calculating Rice difficulty timeline", exception);
+            diagnostics.push(createTimelineDiagnostic({
+                exception,
+                code: "RICE_TIMELINE_UNAVAILABLE",
+                message: "The installed MMA release did not expose the Hold Off Rice graph.",
+                stage: "rice-timeline",
+                algorithmPath: configuration?.riceAlgorithmPath || DEFAULT_RICE_ALGORITHM_PATH,
+                algorithmExport: configuration?.riceAlgorithmExport || DEFAULT_RICE_ALGORITHM_EXPORT,
+            }));
+        }
+    }
+
+    if (!hasGraph(firstGraph(
+        pipelineResult?.lnGraph,
+        pipelineResult?.sunnyWindow?.lnGraph,
+        pipelineResult?.sunnyWindow?.graphLn,
+    ))) {
+        try {
+            const calculateLN = await loadLnAlgorithm();
+            const rawLnResult = calculateLN(
+                request.rawText,
+                speedRate,
+                options?.odFlag ?? null,
+                options?.cvtFlag ?? null,
+                { withGraph: true, enableAnalyzeLN: true },
+                null,
+            );
+            if (hasGraph(rawLnResult?.graph)) {
+                enriched = { ...enriched, lnGraph: rawLnResult.graph };
+            }
+        } catch (exception) {
+            reportException("Calculating LN difficulty timeline", exception);
+            diagnostics.push(createTimelineDiagnostic({
+                exception,
+                code: "LN_TIMELINE_UNAVAILABLE",
+                message: "The installed MMA release did not expose the LN difficulty graph.",
+                stage: "ln-timeline",
+                algorithmPath: configuration?.lnAlgorithmPath || DEFAULT_LN_ALGORITHM_PATH,
+                algorithmExport: configuration?.lnAlgorithmExport || DEFAULT_LN_ALGORITHM_EXPORT,
+            }));
+        }
+    }
+
+    return { pipelineResult: enriched, diagnostics };
+}
+
+function hasGraph(graph) {
+    return isRecord(graph)
+        && Array.isArray(graph.times)
+        && Array.isArray(graph.values)
+        && graph.times.length >= 2
+        && graph.values.length >= 2;
+}
+
+function firstGraph(...graphs) {
+    return graphs.find((graph) => hasGraph(graph)) || null;
+}
+
+function withHoldOff(cvtFlag) {
+    const current = String(cvtFlag ?? "").trim();
+    return current.includes("HO") ? current : [current, "HO"].filter(Boolean).join(",");
+}
+
+function createTimelineDiagnostic({
+    exception,
+    code,
+    message,
+    stage,
+    algorithmPath,
+    algorithmExport,
+}) {
+    return createDiagnostic({
+        code: exception?.code || code,
+        message: exception?.message || message,
+        stage,
+        severity: "warning",
+        details: { algorithmPath, algorithmExport },
+    });
+}
+
+async function loadRiceAlgorithm() {
+    if (!configuration) {
+        throw createRuntimeError("RUNTIME_NOT_CONFIGURED", "Runtime is not configured.", "runtime");
+    }
+
+    if (!riceAlgorithmPromise) {
+        const url = resolveModuleUrl(configuration.baseUrl, configuration.riceAlgorithmPath);
+        riceAlgorithmPromise = import(url.toString())
+            .then((module) => resolveFunction(
+                module,
+                configuration.riceAlgorithmExport,
+                DEFAULT_RICE_ALGORITHM_EXPORT,
+            ))
+            .catch((exception) => {
+                riceAlgorithmPromise = null;
+                throw createRuntimeError(
+                    "RICE_ALGORITHM_API_UNAVAILABLE",
+                    `Installed MMA version does not expose ${configuration.riceAlgorithmExport} at ${url.toString()}.`,
+                    "rice-timeline-import",
+                    exception,
+                );
+            });
+    }
+
+    return riceAlgorithmPromise;
+}
+
+async function loadLnAlgorithm() {
+    if (!configuration) {
+        throw createRuntimeError("RUNTIME_NOT_CONFIGURED", "Runtime is not configured.", "runtime");
+    }
+
+    if (!lnAlgorithmPromise) {
+        const url = resolveModuleUrl(configuration.baseUrl, configuration.lnAlgorithmPath);
+        lnAlgorithmPromise = import(url.toString())
+            .then((module) => resolveFunction(
+                module,
+                configuration.lnAlgorithmExport,
+                DEFAULT_LN_ALGORITHM_EXPORT,
+            ))
+            .catch((exception) => {
+                lnAlgorithmPromise = null;
+                throw createRuntimeError(
+                    "LN_ALGORITHM_API_UNAVAILABLE",
+                    `Installed MMA version does not expose ${configuration.lnAlgorithmExport} at ${url.toString()}.`,
+                    "ln-timeline-import",
+                    exception,
+                );
+            });
+    }
+
+    return lnAlgorithmPromise;
 }
 
 async function runCompanellaPostProcessing(pipelineResult, requestedAlgorithm) {
@@ -560,6 +774,10 @@ function normalizeConfiguration(config) {
         baseUrl,
         pipelinePath: String(config.pipelinePath || DEFAULT_PIPELINE_PATH),
         pipelineExport: String(config.pipelineExport || DEFAULT_PIPELINE_EXPORT),
+        riceAlgorithmPath: String(config.riceAlgorithmPath || DEFAULT_RICE_ALGORITHM_PATH),
+        riceAlgorithmExport: String(config.riceAlgorithmExport || DEFAULT_RICE_ALGORITHM_EXPORT),
+        lnAlgorithmPath: String(config.lnAlgorithmPath || DEFAULT_LN_ALGORITHM_PATH),
+        lnAlgorithmExport: String(config.lnAlgorithmExport || DEFAULT_LN_ALGORITHM_EXPORT),
         companellaPath: String(config.companellaPath || DEFAULT_COMPANELLA_PATH),
         companellaExport: String(config.companellaExport || DEFAULT_COMPANELLA_EXPORT),
         mixedEstimatorPath: String(config.mixedEstimatorPath || DEFAULT_MIXED_ESTIMATOR_PATH),

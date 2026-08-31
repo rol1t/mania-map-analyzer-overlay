@@ -5,10 +5,11 @@ export async function runAnalysisPipeline({ rawText, estimatorAlgorithm, options
 
     const actualEstimatorAlgorithm = String(options.actualAlgorithm || estimatorAlgorithm);
     const isMixedCompanella = estimatorAlgorithm === "Mixed" && actualEstimatorAlgorithm === "Companella";
+    const isRiceOnlyFixture = rawText === "rice-only map";
     return {
         rework: {
             star: 5.17,
-            lnRatio: 0.514,
+            lnRatio: isRiceOnlyFixture ? 0 : 0.514,
             columnCount: 4,
             estDiff: isMixedCompanella ? "Sunny base || LN 6 mid/high" : "Sunny base",
             numericDifficulty: null,
@@ -16,12 +17,18 @@ export async function runAnalysisPipeline({ rawText, estimatorAlgorithm, options
             mixedCompanellaPlan: isMixedCompanella
                 ? { lnRatio: 0.514, lnDifficulty: "LN 6 mid/high" }
                 : null,
+            graph: isRiceOnlyFixture
+                ? {
+                    times: [0, 1000, 2000],
+                    values: [2.2, 3.3, 2.8],
+                }
+                : null,
         },
         actualEstimatorAlgorithm,
         sunnyStar: 5.17,
         parsedSummary: {
             metadata: { title: rawText },
-            lnRatio: 0.514,
+            lnRatio: isRiceOnlyFixture ? 0 : 0.514,
             columnCount: 4,
         },
         ettResult: {
@@ -38,7 +45,7 @@ export async function runAnalysisPipeline({ rawText, estimatorAlgorithm, options
         },
         interludeStar: 7.5,
         patternReport: {
-            LNPercent: 0.514,
+            LNPercent: isRiceOnlyFixture ? 0 : 0.514,
         },
         receivedOptions: options,
         errors: [],

@@ -83,18 +83,39 @@ DOM classes. A value is an object with `id`, `value`, and an optional `unit`:
     "id": "difficulty.timeline",
     "value": { "times": [0, 1000], "values": [2.1, 3.4] },
     "unit": "difficulty/ms"
+  },
+  "difficulty.rice.timeline": {
+    "id": "difficulty.rice.timeline",
+    "value": { "times": [0, 1000], "values": [2.1, 3.4] },
+    "unit": "difficulty/ms"
+  },
+  "difficulty.ln.timeline": {
+    "id": "difficulty.ln.timeline",
+    "value": { "times": [0, 1000], "values": [1.2, 2.4] },
+    "unit": "difficulty/ms"
   }
 }
 ```
 
-`difficulty.timeline` is an optional analyzer-provided series sampled along
-the map. `times` are milliseconds from the first object/map timeline and
-`values` are difficulty values on the selected estimator's native scale. The
-headless worker requests this series independently of the upstream Graph
-panel, and the adapter normalizes it to a bounded, strictly increasing pair
-of arrays. Hosts may render the series as a filled chart and place a playback
-cursor using realtime `mapProgressMs`; they must not infer difficulty values
-from gameplay telemetry when the metric is absent.
+`difficulty.rice.timeline` and `difficulty.ln.timeline` are optional
+analyzer-provided series sampled along the map. `times` are speed-adjusted map
+milliseconds and `values` are difficulty values on Sunny's native scale. The
+legacy `difficulty.timeline` metric is retained as an alias for the explicit
+Rice series.
+
+On a chart containing long notes, the normal Sunny graph is a mixed result: it
+includes note heads, LN bodies, active holds and release strain. The adapter
+therefore does not relabel that graph as Rice. It calculates Rice with Sunny's
+Hold Off conversion (all note heads remain, hold duration/release effects are
+removed) and calculates LN with Sunny Window's `calculateLN` over the effective
+LN sections. On a chart without long notes, the selected estimator graph is
+already a valid Rice graph and is reused. These timeline-only passes do not
+replace the selected estimator's final SR or DAN output.
+
+The adapter normalizes each series to a bounded, strictly increasing pair of
+arrays. Hosts may render both curves in one chart and place a playback cursor
+using realtime `mapProgressMs`; they must not infer difficulty values from
+gameplay telemetry when either metric is absent.
 
 Widgets should use `availableMetricIds` and handle missing metrics explicitly.
 The initial IDs are listed in `manifest.json`. Additional upstream output is

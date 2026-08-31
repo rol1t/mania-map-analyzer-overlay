@@ -11,6 +11,8 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 public static class HeadlessSnapshotConverter
 {
     private const int MaxDifficultyTimelinePoints = 2048;
+    private const double DefaultLnPrimaryPercent = 45;
+    private const double SevenKeyLnPrimaryPercent = 37.5;
 
     private static readonly IReadOnlyDictionary<string, string> _skillLabels =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -100,7 +102,7 @@ public static class HeadlessSnapshotConverter
         ArgumentNullException.ThrowIfNull(composed);
 
         var difficulty = BuildDifficulty(beatmap, composed);
-        var ranks = BuildRanks(composed);
+        var ranks = BuildRanks(composed, difficulty);
         var skills = BuildSkills(composed);
         var gameplaySnapshot = BuildGameplay(gameplay);
 
@@ -153,26 +155,43 @@ public static class HeadlessSnapshotConverter
         // to BuildRanks, but never render a category inside Star Rating.
         var label = IsNumericStarLabel(rawLabel) ? rawLabel : string.Empty;
         var unit = TryGetString(composed, "difficulty.unit") ?? "SR";
+        composed.Metrics.TryGetValue("difficulty.star", out var starMetric);
+        string starRatingProvider = starMetric?.Provenance.EngineId ?? string.Empty;
+        string starRatingAlgorithm = starMetric?.Provenance.ActualAlgorithm
+            ?? TryGetString(composed, "algorithm.actual")
+            ?? starMetric?.Provenance.RequestedAlgorithm
+            ?? TryGetString(composed, "algorithm.requested")
+            ?? string.Empty;
 
         if (star is null && composed.Metrics.TryGetValue("difficulty.star", out var metric))
         {
             star = metric.Metric.Value.ValueKind is System.Text.Json.JsonValueKind.Number ? metric.Metric.Value.GetDouble() : null;
         }
 
+        var riceTimeline = BuildDifficultyTimeline(composed, "difficulty.rice.timeline")
+            ?? BuildDifficultyTimeline(composed, "difficulty.timeline");
+        var lnTimeline = BuildDifficultyTimeline(composed, "difficulty.ln.timeline");
+
         return new DifficultySnapshot
         {
             StarRating = star,
             StarLabel = label,
             Unit = unit,
+            StarRatingProvider = starRatingProvider,
+            StarRatingAlgorithm = starRatingAlgorithm,
             LnPercent = lnPercent,
             Keys = keys,
-            Timeline = BuildDifficultyTimeline(composed)
+            Timeline = riceTimeline,
+            RiceTimeline = riceTimeline,
+            LnTimeline = lnTimeline
         };
     }
 
-    private static DifficultyTimelineSnapshot? BuildDifficultyTimeline(ComposedWidgetSnapshot composed)
+    private static DifficultyTimelineSnapshot? BuildDifficultyTimeline(
+        ComposedWidgetSnapshot composed,
+        string metricId)
     {
-        if (!composed.Metrics.TryGetValue("difficulty.timeline", out var metric)
+        if (!composed.Metrics.TryGetValue(metricId, out var metric)
             || metric.Metric.Value.ValueKind != JsonValueKind.Object)
         {
             return null;
@@ -305,7 +324,9 @@ public static class HeadlessSnapshotConverter
             : null;
     }
 
-    private static IReadOnlyList<RankEstimate> BuildRanks(ComposedWidgetSnapshot composed)
+    private static IReadOnlyList<RankEstimate> BuildRanks(
+        ComposedWidgetSnapshot composed,
+        DifficultySnapshot difficulty)
     {
         var ranks = new List<RankEstimate>();
         var rcLabel = TryGetString(composed, "dan.rc.label");
@@ -320,27 +341,38 @@ public static class HeadlessSnapshotConverter
             lnLabel ??= labels?.Length > 1 ? string.Join(" || ", labels.Skip(1)) : null;
         }
 
-        if (!string.IsNullOrWhiteSpace(rcLabel) || rcNumeric.HasValue)
+        var hasRc = !string.IsNullOrWhiteSpace(rcLabel) || rcNumeric.HasValue;
+        var lnPercent = difficulty.LnPercent;
+        var hasLn = !string.IsNullOrWhiteSpace(lnLabel)
+            && lnPercent.HasValue
+            && lnPercent.Value > 0;
+        var lnPrimaryThreshold = difficulty.Keys == 7
+            ? SevenKeyLnPrimaryPercent
+            : DefaultLnPrimaryPercent;
+        var primarySystemId = hasLn && (!hasRc || lnPercent >= lnPrimaryThreshold)
+            ? "ln-dan"
+            : "rc-dan";
+
+        if (hasRc)
         {
             ranks.Add(new RankEstimate
             {
                 SystemId = "rc-dan",
                 Label = "RC DAN",
                 Value = rcLabel ?? string.Empty,
+                IsPrimary = primarySystemId == "rc-dan",
                 NumericValue = rcNumeric
             });
         }
 
-        var lnPercent = TryGetDouble(composed, "difficulty.lnPercent") ?? TryGetDouble(composed, "pattern.lnPercent");
-        var hasLn = lnPercent.HasValue && lnPercent.Value > 0;
-
-        if (!string.IsNullOrWhiteSpace(lnLabel) && hasLn)
+        if (hasLn)
         {
             ranks.Add(new RankEstimate
             {
                 SystemId = "ln-dan",
                 Label = "LN DAN",
-                Value = lnLabel,
+                Value = lnLabel!,
+                IsPrimary = primarySystemId == "ln-dan",
                 NumericValue = null
             });
         }
@@ -351,7 +383,14 @@ public static class HeadlessSnapshotConverter
             var diffLabel = TryGetString(composed, "difficulty.label");
             if (!string.IsNullOrWhiteSpace(diffLabel))
             {
-                ranks.Add(new RankEstimate { SystemId = "rc-dan", Label = "RC DAN", Value = diffLabel, NumericValue = rcNumeric });
+                ranks.Add(new RankEstimate
+                {
+                    SystemId = "rc-dan",
+                    Label = "RC DAN",
+                    Value = diffLabel,
+                    IsPrimary = true,
+                    NumericValue = rcNumeric
+                });
             }
         }
 

@@ -5,7 +5,10 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 
 public static class AppPaths
 {
+    private static string? _resourceDirectory;
+
     public static string BaseDirectory => AppContext.BaseDirectory;
+    public static string ResourceDirectory => _resourceDirectory ?? BaseDirectory;
     /// <summary>
     /// Mutable application data is deliberately kept outside the installation folder.
     /// This lets a normal (non-administrator) user update tosu and edit CSS even when the
@@ -24,8 +27,14 @@ public static class AppPaths
     public static string InstallStatePath => Path.Combine(DataDirectory, "install-state.json");
     public static string CustomCssPath => Path.Combine(DataDirectory, "overlay-custom.css");
     public static string LegacyCustomCssPath => Path.Combine(BaseDirectory, "overlay-custom.css");
-    public static string UpdaterExecutablePath => Path.Combine(BaseDirectory,
-        OperatingSystem.IsWindows() ? "Mania Map Analyzer Overlay.Updater.exe" : "Mania Map Analyzer Overlay.Updater");
+    public static string RuntimeDirectory => Path.Combine(DataDirectory, "runtime");
+    public static string ToolsDirectory => Path.Combine(DataDirectory, "tools");
+
+    internal static void UseResourceDirectory(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        _resourceDirectory = Path.GetFullPath(directory);
+    }
 
     private static string GetDataRoot()
     {

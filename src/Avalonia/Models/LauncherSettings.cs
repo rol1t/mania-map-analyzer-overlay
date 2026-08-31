@@ -17,10 +17,11 @@ public sealed class LauncherSettings
     {
         get; set;
     }
-    public string OverlayLayoutMode { get; set; } = "default";
-    public string OverlayPresetId { get; set; } = "default";
+    public string OverlayLayoutMode { get; set; } = "companella";
+    public string OverlayPresetId { get; set; } = "companella";
     public int OverlayScalePercent { get; set; } = 100;
     public int OverlayOpacityPercent { get; set; } = 100;
+    public string OverlayVisibilityPolicyOverride { get; set; } = string.Empty;
     public int CompanellaLayoutVersion { get; set; } = 3;
     public bool FullscreenOverlayEnabled
     {
@@ -49,6 +50,7 @@ public sealed class LauncherSettings
         OverlayPresetId = OverlayPresetId,
         OverlayScalePercent = OverlayScalePercent,
         OverlayOpacityPercent = OverlayOpacityPercent,
+        OverlayVisibilityPolicyOverride = OverlayVisibilityPolicyOverride,
         CompanellaLayoutVersion = CompanellaLayoutVersion,
         FullscreenOverlayEnabled = FullscreenOverlayEnabled,
         FullscreenOverlayStyleVersion = FullscreenOverlayStyleVersion,

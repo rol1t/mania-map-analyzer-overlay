@@ -78,6 +78,8 @@ repo_prefix="$repo_root/"
 launcher_binary="$payload_path/Mania Map Analyzer Overlay"
 [[ -f "$launcher_binary" ]] || die "Build the launcher payload before packaging the application package."
 [[ -x "$launcher_binary" ]] || die "The Linux launcher is not executable: $launcher_binary"
+payload_count="$(find "$payload_path" -mindepth 1 -maxdepth 1 -print | wc -l)"
+[[ "$payload_count" -eq 1 ]] || die "Payload must contain only the launcher executable."
 
 mkdir -p -- "$artifacts_path"
 archive_path="$artifacts_path/Mania-Map-Analyzer-Overlay-${version}-${runtime_identifier}.tar.gz"

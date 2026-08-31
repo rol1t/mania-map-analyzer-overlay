@@ -44,18 +44,7 @@ if (Test-Path -LiteralPath $outputPath) {
 }
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
-& $dotnet publish $projectPath `
-    --configuration Release `
-    --runtime $RuntimeIdentifier `
-    --self-contained true `
-    --output $outputPath `
-    /p:PublishSingleFile=false `
-    /p:PublishTrimmed=false `
-    --nologo
-if ($LASTEXITCODE -ne 0) { throw "Avalonia publish failed with exit code $LASTEXITCODE." }
-
-# The updater helper is a hidden, self-contained process used only when the GUI
-# replaces itself. It is not a user-facing launcher and never opens a console.
+# Build the helper first so its single binary can be embedded in the launcher.
 $updaterOutput = Join-Path $outputPath ".updater-build"
 New-Item -ItemType Directory -Force -Path $updaterOutput | Out-Null
 & $dotnet publish $updaterProjectPath `
@@ -74,68 +63,43 @@ $updaterName = if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Ord
 }
 $updaterBinary = Join-Path $updaterOutput $updaterName
 if (-not (Test-Path -LiteralPath $updaterBinary)) { throw "Published updater was not found: $updaterBinary" }
-Copy-Item $updaterBinary $outputPath -Force
+
+& $dotnet publish $projectPath `
+    --configuration Release `
+    --runtime $RuntimeIdentifier `
+    --self-contained true `
+    --output $outputPath `
+    /p:PublishSingleFile=true `
+    /p:IncludeNativeLibrariesForSelfExtract=true `
+    /p:EnableCompressionInSingleFile=true `
+    /p:PublishTrimmed=false `
+    /p:DebugSymbols=false `
+    /p:DebugType=None `
+    "/p:EmbeddedUpdaterPath=$updaterBinary" `
+    --nologo
+if ($LASTEXITCODE -ne 0) { throw "Avalonia publish failed with exit code $LASTEXITCODE." }
 Remove-Item $updaterOutput -Recurse -Force
-Copy-Item (Join-Path $repoRoot "assets\overlay-custom.css") $outputPath -Force
-$overlayAssetsSource = Join-Path $repoRoot "assets\overlay"
-$overlayAssetsDestination = Join-Path $outputPath "Assets\overlay"
-$analyzerAssetsSource = Join-Path $repoRoot "assets\analyzers"
-$analyzerAssetsDestination = Join-Path $outputPath "Assets\analyzers"
-$analyzerEngineAssetsSource = Join-Path $repoRoot "assets\analyzer-engines"
-$analyzerEngineAssetsDestination = Join-Path $outputPath "Assets\analyzer-engines"
-$localizationAssetsSource = Join-Path $repoRoot "assets\localization"
-$localizationAssetsDestination = Join-Path $outputPath "Assets\localization"
-New-Item -ItemType Directory -Force -Path $overlayAssetsDestination | Out-Null
-New-Item -ItemType Directory -Force -Path $analyzerAssetsDestination | Out-Null
-New-Item -ItemType Directory -Force -Path $analyzerEngineAssetsDestination | Out-Null
-New-Item -ItemType Directory -Force -Path $localizationAssetsDestination | Out-Null
-Copy-Item (Join-Path $overlayAssetsSource "*") $overlayAssetsDestination -Recurse -Force
-Copy-Item (Join-Path $analyzerAssetsSource "*") $analyzerAssetsDestination -Recurse -Force
-Copy-Item (Join-Path $analyzerEngineAssetsSource "*") $analyzerEngineAssetsDestination -Recurse -Force
-Copy-Item (Join-Path $localizationAssetsSource "*") $localizationAssetsDestination -Recurse -Force
-$requiredOverlayAssets = @(
-    "Assets\overlay\presets\default\manifest.json",
-    "Assets\overlay\presets\horizontal\manifest.json",
-    "Assets\overlay\presets\companella\manifest.json"
-)
-foreach ($asset in $requiredOverlayAssets) {
-    if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
-        throw "Published package is missing overlay resource: $asset"
-    }
+
+$launcherName = if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::OrdinalIgnoreCase)) {
+    'Mania Map Analyzer Overlay.exe'
+} else {
+    'Mania Map Analyzer Overlay'
 }
-$requiredAnalyzerAssets = @(
-    "Assets\analyzers\mania-map-analyser\manifest.json",
-    "Assets\analyzers\mania-map-analyser\adapter.js"
-)
-foreach ($asset in $requiredAnalyzerAssets) {
-    if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
-        throw "Published package is missing analyzer adapter resource: $asset"
-    }
+$launcherPath = Join-Path $outputPath $launcherName
+if (-not (Test-Path -LiteralPath $launcherPath)) { throw "Published launcher was not found: $launcherPath" }
+$payloadEntries = @(Get-ChildItem -LiteralPath $outputPath -Force)
+if ($payloadEntries.Count -ne 1 -or $payloadEntries[0].FullName -ne $launcherPath) {
+    throw "Single-file payload must contain only '$launcherName'. Found: $($payloadEntries.Name -join ', ')"
 }
-$requiredAnalyzerEngineAssets = @(
-    "Assets\analyzer-engines\mania-map-analyser\manifest.json",
-    "Assets\analyzer-engines\mania-map-analyser\runtime.mjs",
-    "Assets\analyzer-engines\mania-map-analyser\worker.mjs"
-)
-foreach ($asset in $requiredAnalyzerEngineAssets) {
-    if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
-        throw "Published package is missing analyzer engine resource: $asset"
-    }
+
+$verificationRoot = Join-Path ([IO.Path]::GetTempPath()) ('ManiaMapAnalyzerOverlay-PackageCheck-' + [guid]::NewGuid().ToString('N'))
+try {
+    & $launcherPath --verify-runtime-package $verificationRoot
+    if ($LASTEXITCODE -ne 0) { throw "Single-file runtime verification failed with exit code $LASTEXITCODE." }
 }
-$requiredLocalizationAssets = @(
-    "Assets\localization\manifest.json",
-    "Assets\localization\en.json",
-    "Assets\localization\ru.json"
-)
-foreach ($asset in $requiredLocalizationAssets) {
-    if (-not (Test-Path -LiteralPath (Join-Path $outputPath $asset))) {
-        throw "Published package is missing localization resource: $asset"
-    }
+finally {
+    Remove-Item -LiteralPath $verificationRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
-Copy-Item (Join-Path $repoRoot "README.md") $outputPath -Force
-Copy-Item (Join-Path $repoRoot "LICENSE") $outputPath -Force
-Copy-Item (Join-Path $repoRoot "LICENSES") $outputPath -Recurse -Force
-Copy-Item (Join-Path $repoRoot "docs") $outputPath -Recurse -Force
 
 Write-Host "Mania Map Analyzer Overlay $version built at: $outputPath"
 Write-Host "Launch the application executable; component setup runs inside the GUI."

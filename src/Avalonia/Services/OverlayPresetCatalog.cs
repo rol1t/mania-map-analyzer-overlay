@@ -13,20 +13,29 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Services;
 /// </summary>
 public sealed class OverlayPresetCatalog
 {
+    public const string DefaultPresetId = "companella";
+    private static readonly HashSet<string> _shippedPresetIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "companella",
+        "companella-replay",
+        "companella-glass",
+        "companella-radar"
+    };
+
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true
     };
 
-    public string BuiltInDirectory => Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay", "presets");
+    public string BuiltInDirectory => Path.Combine(AppPaths.ResourceDirectory, "Assets", "overlay", "presets");
     public string UserDirectory => Path.Combine(AppPaths.DataDirectory, "presets");
 
     public IReadOnlyList<OverlayPresetDefinition> List()
     {
         var result = new List<OverlayPresetDefinition>();
-        AddDefinitions(result, BuiltInDirectory);
-        AddDefinitions(result, UserDirectory);
+        AddDefinitions(result, BuiltInDirectory, shippedOnly: true);
+        AddDefinitions(result, UserDirectory, shippedOnly: false);
         return result
             .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.Last())
@@ -36,14 +45,15 @@ public sealed class OverlayPresetCatalog
 
     public OverlayPresetDefinition Get(string? id)
     {
-        var normalized = string.IsNullOrWhiteSpace(id) ? "default" : id.Trim();
+        var normalized = string.IsNullOrWhiteSpace(id) ? DefaultPresetId : id.Trim();
         return List().FirstOrDefault(x => string.Equals(x.Id, normalized, StringComparison.OrdinalIgnoreCase))
+            ?? List().FirstOrDefault(x => string.Equals(x.Id, DefaultPresetId, StringComparison.OrdinalIgnoreCase))
             ?? new OverlayPresetDefinition();
     }
 
     public OverlayPresetDefinition Require(string? id)
     {
-        var normalized = string.IsNullOrWhiteSpace(id) ? "default" : id.Trim();
+        var normalized = string.IsNullOrWhiteSpace(id) ? DefaultPresetId : id.Trim();
         var preset = List().FirstOrDefault(x => string.Equals(x.Id, normalized, StringComparison.OrdinalIgnoreCase));
         if (preset is null)
         {
@@ -51,20 +61,23 @@ public sealed class OverlayPresetCatalog
                 $"Overlay preset '{normalized}' was not found. Rebuild the application package so Assets/overlay/presets is included.");
         }
 
+        ValidateInheritance(preset, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         var directory = ResolveDirectory(preset.Id);
-        foreach (var asset in new[] { preset.Template, preset.Stylesheet })
+        if (string.IsNullOrWhiteSpace(preset.Stylesheet) || !File.Exists(Path.Combine(directory, preset.Stylesheet)))
         {
-            if (string.IsNullOrWhiteSpace(asset) || !File.Exists(Path.Combine(directory, asset)))
-            {
-                throw new FileNotFoundException(
-                    $"Overlay preset '{preset.Id}' is incomplete. Missing resource: {asset}", directory);
-            }
+            throw new FileNotFoundException(
+                $"Overlay preset '{preset.Id}' is incomplete. Missing resource: {preset.Stylesheet}", directory);
+        }
+
+        if (ReadTemplate(preset.Id) is null)
+        {
+            throw new FileNotFoundException(
+                $"Overlay preset '{preset.Id}' does not provide or inherit a template.", directory);
         }
 
         if (!string.IsNullOrWhiteSpace(preset.RequiredCssMarker))
         {
-            var stylesheetPath = Path.Combine(directory, preset.Stylesheet);
-            var stylesheet = File.ReadAllText(stylesheetPath);
+            var stylesheet = ReadStylesheet(preset.Id) ?? string.Empty;
             if (!stylesheet.Contains(preset.RequiredCssMarker, StringComparison.Ordinal))
             {
                 throw new InvalidDataException(
@@ -95,13 +108,29 @@ public sealed class OverlayPresetCatalog
     public string? ReadTemplate(string? id)
     {
         var definition = Get(id);
-        return ReadAsset(definition, definition.Template);
+        var template = string.IsNullOrWhiteSpace(definition.Template)
+            ? null
+            : ReadAsset(definition, definition.Template);
+        return template ?? (string.IsNullOrWhiteSpace(definition.BasePresetId)
+            ? null
+            : ReadTemplate(definition.BasePresetId));
     }
 
     public string? ReadStylesheet(string? id)
     {
         var definition = Get(id);
-        return ReadAsset(definition, definition.Stylesheet);
+        var ownStylesheet = string.IsNullOrWhiteSpace(definition.Stylesheet)
+            ? null
+            : ReadAsset(definition, definition.Stylesheet);
+        if (string.IsNullOrWhiteSpace(definition.BasePresetId))
+        {
+            return ownStylesheet;
+        }
+
+        var baseStylesheet = ReadStylesheet(definition.BasePresetId);
+        return string.Join(
+            Environment.NewLine,
+            new[] { baseStylesheet, ownStylesheet }.Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     public string? ReadScript(string? id)
@@ -112,7 +141,7 @@ public sealed class OverlayPresetCatalog
 
     public string? ReadRuntimeAsset(string fileName)
     {
-        var runtimeDirectory = Path.Combine(AppPaths.BaseDirectory, "Assets", "overlay", "runtime");
+        var runtimeDirectory = Path.Combine(AppPaths.ResourceDirectory, "Assets", "overlay", "runtime");
         var fullPath = Path.GetFullPath(Path.Combine(runtimeDirectory, fileName));
         var root = Path.GetFullPath(runtimeDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) && File.Exists(fullPath)
@@ -134,7 +163,7 @@ public sealed class OverlayPresetCatalog
         return destination;
     }
 
-    private void AddDefinitions(List<OverlayPresetDefinition> result, string root)
+    private void AddDefinitions(List<OverlayPresetDefinition> result, string root, bool shippedOnly)
     {
         if (!Directory.Exists(root))
         {
@@ -160,6 +189,10 @@ public sealed class OverlayPresetCatalog
                         new InvalidDataException($"Manifest '{manifestPath}' does not contain a preset id."));
                     continue;
                 }
+                if (shippedOnly && !_shippedPresetIds.Contains(definition.Id))
+                {
+                    continue;
+                }
                 definition.SourceDirectory = directory;
                 result.Add(definition);
             }
@@ -168,6 +201,32 @@ public sealed class OverlayPresetCatalog
                 AppLogger.Error($"Loading overlay preset manifest '{manifestPath}'", exception);
             }
         }
+    }
+
+    private void ValidateInheritance(OverlayPresetDefinition preset, HashSet<string> chain)
+    {
+        if (!chain.Add(preset.Id))
+        {
+            throw new InvalidDataException(
+                $"Overlay preset inheritance contains a cycle at '{preset.Id}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(preset.BasePresetId))
+        {
+            chain.Remove(preset.Id);
+            return;
+        }
+
+        var basePreset = List().FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, preset.BasePresetId, StringComparison.OrdinalIgnoreCase));
+        if (basePreset is null)
+        {
+            throw new FileNotFoundException(
+                $"Overlay preset '{preset.Id}' inherits missing preset '{preset.BasePresetId}'.");
+        }
+
+        ValidateInheritance(basePreset, chain);
+        chain.Remove(preset.Id);
     }
 
     private string? ReadAsset(OverlayPresetDefinition definition, string fileName)

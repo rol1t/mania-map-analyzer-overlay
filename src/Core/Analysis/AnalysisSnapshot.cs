@@ -77,6 +77,20 @@ public sealed record DifficultySnapshot
     }
     public string StarLabel { get; init; } = string.Empty;
     public string Unit { get; init; } = "SR";
+
+    /// <summary>
+    /// Analyzer engine that produced the displayed star estimate. This is
+    /// presentation provenance, not an assertion of compatibility with the
+    /// official osu! difficulty calculator.
+    /// </summary>
+    public string StarRatingProvider { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Actual estimator selected by the engine. In particular, this may be
+    /// different from a requested meta-algorithm such as Mixed.
+    /// </summary>
+    public string StarRatingAlgorithm { get; init; } = string.Empty;
+
     public double? LnPercent
     {
         get; init;
@@ -92,6 +106,24 @@ public sealed record DifficultySnapshot
     /// older/partial snapshots.
     /// </summary>
     public DifficultyTimelineSnapshot? Timeline
+    {
+        get; init;
+    }
+
+    /// <summary>
+    /// Regular-note (Rice) difficulty sampled along the beatmap timeline.
+    /// Timeline is retained as a backwards-compatible alias for this series.
+    /// </summary>
+    public DifficultyTimelineSnapshot? RiceTimeline
+    {
+        get; init;
+    }
+
+    /// <summary>
+    /// Long-note (LN) difficulty sampled along the beatmap timeline. It is
+    /// optional because maps without usable long-note content have no series.
+    /// </summary>
+    public DifficultyTimelineSnapshot? LnTimeline
     {
         get; init;
     }
@@ -133,6 +165,15 @@ public sealed record RankEstimate
     public string SystemId { get; init; } = string.Empty;
     public string Label { get; init; } = string.Empty;
     public string Value { get; init; } = string.Empty;
+    /// <summary>
+    /// Identifies the ladder that describes the chart itself. Other ranks may
+    /// still be carried as reference estimates, but presentation must not
+    /// imply that a hybrid chart belongs to both ladders at once.
+    /// </summary>
+    public bool IsPrimary
+    {
+        get; init;
+    }
     public double? NumericValue
     {
         get; init;

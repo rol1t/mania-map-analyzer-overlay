@@ -91,9 +91,11 @@ value.
 
 The final decision is then combined with the selected preset's
 `visibilityPolicy` from `manifest.json`. A preset can use `always`,
-`outside-play`, `during-play`, `paused-only`, or `never`. For example, the
-shipped Companella preset uses `outside-play`, while the Default preset uses
-`always`.
+`outside-play`, `outside-only`, `during-play`, `during-and-paused`,
+`outside-and-during-play`, `paused-only`, or `never`. The Appearance window
+exposes these as three independent hide checkboxes. Its saved override takes
+precedence over the manifest; the shipped Companella preset family otherwise uses
+`outside-play`.
 
 The application normalizes names to lowercase and removes non-letter
 characters. It recognizes these compatibility groups:

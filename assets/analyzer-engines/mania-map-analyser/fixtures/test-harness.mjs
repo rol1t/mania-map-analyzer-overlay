@@ -73,8 +73,16 @@ const normalized = normalizePipelineResult({
         numericDifficulty: null,
         graph: {
             times: [0, 1000, 2500, 4000],
-            values: [2.1, 3.4, 2.8, 4.2],
+            values: [8.1, 9.4, 8.8, 10.2],
         },
+    },
+    riceGraph: {
+        times: [0, 1000, 2500, 4000],
+        values: [2.1, 3.4, 2.8, 4.2],
+    },
+    lnGraph: {
+        times: [0, 1000, 2500, 4000],
+        values: [1.2, 2.4, 1.8, 3.1],
     },
     actualEstimatorAlgorithm: "Roxy",
     parsedSummary: {
@@ -111,6 +119,32 @@ assert.deepEqual(normalized.analysis.metrics["difficulty.timeline"].value, {
     times: [0, 1000, 2500, 4000],
     values: [2.1, 3.4, 2.8, 4.2],
 });
+assert.deepEqual(normalized.analysis.metrics["difficulty.rice.timeline"].value, {
+    times: [0, 1000, 2500, 4000],
+    values: [2.1, 3.4, 2.8, 4.2],
+});
+assert.deepEqual(normalized.analysis.metrics["difficulty.ln.timeline"].value, {
+    times: [0, 1000, 2500, 4000],
+    values: [1.2, 2.4, 1.8, 3.1],
+});
+
+// A regular Sunny graph is mixed on an LN map and must never silently regain
+// Rice authority when the explicit Hold Off pass is absent.
+const mixedGraphOnly = normalizePipelineResult({
+    rework: {
+        lnRatio: 0.75,
+        graph: {
+            times: [0, 1000],
+            values: [9.1, 9.8],
+        },
+    },
+    parsedSummary: { lnRatio: 0.75 },
+    errors: [],
+}, {
+    requestedAlgorithm: "Sunny",
+});
+assert.equal(mixedGraphOnly.analysis.metrics["difficulty.timeline"].value, null);
+assert.equal(mixedGraphOnly.analysis.metrics["difficulty.rice.timeline"].value, null);
 
 const missingNumbers = normalizePipelineResult({
     rework: {
@@ -133,6 +167,9 @@ assert.equal("difficulty.star" in missingNumbers.analysis.metrics, false);
 assert.equal("difficulty.lnPercent" in missingNumbers.analysis.metrics, false);
 assert.equal("difficulty.keys" in missingNumbers.analysis.metrics, false);
 assert.equal("pattern.lnPercent" in missingNumbers.analysis.metrics, false);
+assert.equal(missingNumbers.analysis.metrics["difficulty.timeline"].value, null);
+assert.equal(missingNumbers.analysis.metrics["difficulty.rice.timeline"].value, null);
+assert.equal(missingNumbers.analysis.metrics["difficulty.ln.timeline"].value, null);
 
 const postedMessages = [];
 const waiters = [];
@@ -161,6 +198,10 @@ workerMessageHandler({
     data: createConfigureRequest({
         baseUrl: fixtureBaseUrl,
         pipelinePath: "fake-pipeline.mjs",
+        riceAlgorithmPath: "fake-rice.mjs",
+        riceAlgorithmExport: "calculate",
+        lnAlgorithmPath: "fake-ln.mjs",
+        lnAlgorithmExport: "calculateLN",
         companellaPath: "fake-companella.mjs",
         mixedEstimatorPath: "fake-mixed.mjs",
     }),
@@ -205,6 +246,22 @@ assert.equal(
     false,
 );
 
+const riceOnlyCorrelationId = "rice-only";
+workerMessageHandler({
+    data: createAnalyzeRequest({
+        correlationId: riceOnlyCorrelationId,
+        rawText: "rice-only map",
+        requestedAlgorithm: "Sunny",
+    }),
+});
+const riceOnlyResult = await waitFor((message) => message.type === MESSAGE_TYPES.Result
+    && message.correlationId === riceOnlyCorrelationId);
+assert.deepEqual(riceOnlyResult.analysis.metrics["difficulty.rice.timeline"].value, {
+    times: [0, 1000, 2000],
+    values: [2.2, 3.3, 2.8],
+});
+assert.equal(riceOnlyResult.analysis.metrics["difficulty.ln.timeline"].value, null);
+
 const typedOptions = {
     withEtterna: true,
     label: "typed-options",
@@ -231,6 +288,18 @@ const directResult = await waitFor((message) => message.type === MESSAGE_TYPES.R
 assert.equal(directResult.status, "ok");
 assert.equal(directResult.analysis.metrics["difficulty.label"].value, "Reform 7 mid/high");
 assert.equal(directResult.analysis.metrics["difficulty.numeric"].value, 7.25);
+assert.deepEqual(directResult.analysis.metrics["difficulty.ln.timeline"].value, {
+    times: [0, 1000, 2500, 4000],
+    values: [1.2, 2.4, 1.8, 3.1],
+});
+assert.deepEqual(directResult.analysis.metrics["difficulty.rice.timeline"].value, {
+    times: [0, 1000, 2500, 4000],
+    values: [3.8, 4.6, 3.9, 5.2],
+});
+assert.notDeepEqual(
+    directResult.analysis.metrics["difficulty.rice.timeline"].value,
+    directResult.analysis.metrics["difficulty.ln.timeline"].value,
+);
 assert.deepEqual(directResult.analysis.rawResult.receivedOptions, {
     ...typedOptions,
     speedRate: 1.25,
@@ -267,6 +336,10 @@ workerMessageHandler({
     data: createConfigureRequest({
         baseUrl: fixtureBaseUrl,
         pipelinePath: "fake-pipeline.mjs",
+        riceAlgorithmPath: "fake-rice.mjs",
+        riceAlgorithmExport: "calculate",
+        lnAlgorithmPath: "fake-ln.mjs",
+        lnAlgorithmExport: "calculateLN",
         companellaPath: "fake-missing-exports.mjs",
         mixedEstimatorPath: "fake-missing-exports.mjs",
     }),

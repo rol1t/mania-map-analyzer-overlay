@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using ManiaMapAnalyzerOverlay.Avalonia.Analyzers;
 using ManiaMapAnalyzerOverlay.Avalonia.Models;
 using ManiaMapAnalyzerOverlay.Avalonia.Services;
+using ManiaMapAnalyzerOverlay.Core.Analysis;
 
 namespace ManiaMapAnalyzerOverlay.Avalonia.Views;
 
@@ -17,6 +18,7 @@ public partial class AppearanceDialog : Window
     private bool _resourcesAvailable;
     private bool _analyzerResourcesAvailable;
     private bool _closing;
+    private bool _initializing;
     private LauncherSettings? _previewBaseSettings;
     public bool OpenAnalyzerSettings
     {
@@ -28,6 +30,7 @@ public partial class AppearanceDialog : Window
 
     public AppearanceDialog(LauncherSettings settings) : this()
     {
+        _initializing = true;
         _previewBaseSettings = settings.Clone();
         Title = L("appearance.title");
         HeadingText.Text = Title;
@@ -35,14 +38,18 @@ public partial class AppearanceDialog : Window
         AnalyzerLabel.Text = L("appearance.analyzer");
         ScaleLabel.Text = L("appearance.size");
         OpacityLabel.Text = L("appearance.opacity");
+        VisibilityLabel.Text = L("appearance.visibility_hide");
+        HideOutsidePlayCheckBox.Content = L("appearance.visibility_outside_play");
+        HideDuringPlayCheckBox.Content = L("appearance.visibility_during_play");
+        HidePausedCheckBox.Content = L("appearance.visibility_paused");
         EditCssButton.Content = L("appearance.open_css");
         AnalyzerSettingsButton.Content = L("appearance.analyzer_settings");
         CancelButton.Content = L("appearance.cancel");
         ApplyButton.Content = L("appearance.apply");
         LayoutBox.Items.Clear();
-        AddLayoutOption("default", "appearance.layout_default");
-        AddLayoutOption("horizontal", "appearance.layout_horizontal");
         AddLayoutOption("companella", "appearance.layout_companella");
+        AddLayoutOption("companella-glass", "appearance.layout_companella_glass");
+        AddLayoutOption("companella-radar", "appearance.layout_companella_radar");
         AddLayoutOption("companella-replay", "appearance.layout_companella_replay");
         AddLayoutOption("custom", "appearance.layout_custom");
         var definitions = _presets.List();
@@ -76,9 +83,17 @@ public partial class AppearanceDialog : Window
                           (settings.OverlayPresetId == "default" && settings.OverlayLayoutMode != "default")
             ? settings.OverlayLayoutMode
             : settings.OverlayPresetId;
+        var normalizedLayout = OverlayPresentationService.NormalizeLayout(requestedId);
+        requestedId = normalizedLayout == "custom" ? requestedId : normalizedLayout;
         var selected = LayoutBox.Items.Cast<ComboBoxItem>().FirstOrDefault(x =>
             string.Equals(x.Tag?.ToString(), requestedId, StringComparison.OrdinalIgnoreCase));
         LayoutBox.SelectedItem = selected ?? LayoutBox.Items[0];
+        string visibilityPolicy = string.IsNullOrWhiteSpace(settings.OverlayVisibilityPolicyOverride)
+            ? OverlayVisibilityPolicy.Normalize(_presets.Get(requestedId).VisibilityPolicy)
+            : OverlayVisibilityPolicy.Normalize(settings.OverlayVisibilityPolicyOverride);
+        HideOutsidePlayCheckBox.IsChecked = !OverlayVisibilityPolicy.ShouldShow(visibilityPolicy, false, false);
+        HideDuringPlayCheckBox.IsChecked = !OverlayVisibilityPolicy.ShouldShow(visibilityPolicy, true, false);
+        HidePausedCheckBox.IsChecked = !OverlayVisibilityPolicy.ShouldShow(visibilityPolicy, true, true);
 
         AnalyzerBox.Items.Clear();
         var analyzerPackages = _analyzers.List();
@@ -108,14 +123,19 @@ public partial class AppearanceDialog : Window
         OpacitySlider.Value = Math.Clamp(settings.OverlayOpacityPercent, 10, 100);
         UpdateDescription();
         UpdateAnalyzerSettingsState();
+        _initializing = false;
     }
 
-    public string LayoutMode => (LayoutBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "default";
+    public string LayoutMode => (LayoutBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? OverlayPresetCatalog.DefaultPresetId;
     public string PresetId => LayoutMode;
     public string AnalyzerProviderId =>
         (AnalyzerBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "mania-map-analyser";
     public int ScalePercent => (int)ScaleSlider.Value;
     public int OpacityPercent => (int)OpacitySlider.Value;
+    public string VisibilityPolicy => OverlayVisibilityPolicy.FromVisibleStates(
+        HideOutsidePlayCheckBox.IsChecked != true,
+        HideDuringPlayCheckBox.IsChecked != true,
+        HidePausedCheckBox.IsChecked != true);
 
     private string L(string key) => ManiaMapAnalyzerOverlay.UiText.Get(key);
 
@@ -154,6 +174,8 @@ public partial class AppearanceDialog : Window
         RaisePreviewChanged();
     }
 
+    private void VisibilityCheckBox_Changed(object? sender, RoutedEventArgs e) => RaisePreviewChanged();
+
     private void ScaleDown_Click(object? sender, RoutedEventArgs e) =>
         ScaleSlider.Value = Math.Max(50, ScaleSlider.Value - 5);
 
@@ -162,7 +184,7 @@ public partial class AppearanceDialog : Window
 
     private void RaisePreviewChanged()
     {
-        if (_closing || _previewBaseSettings is null || LayoutBox is null || AnalyzerBox is null)
+        if (_initializing || _closing || _previewBaseSettings is null || LayoutBox is null || AnalyzerBox is null)
         {
             return;
         }
@@ -173,6 +195,7 @@ public partial class AppearanceDialog : Window
         preview.AnalyzerProviderId = AnalyzerProviderId;
         preview.OverlayScalePercent = ScalePercent;
         preview.OverlayOpacityPercent = OpacityPercent;
+        preview.OverlayVisibilityPolicyOverride = VisibilityPolicy;
         PreviewChanged?.Invoke(preview);
     }
 
@@ -214,6 +237,13 @@ public partial class AppearanceDialog : Window
 
     private void EditCss_Click(object? sender, RoutedEventArgs e)
     {
+        if (LayoutMode == "custom")
+        {
+            CustomCssService.EnsureExists();
+            Process.Start(new ProcessStartInfo(CustomCssService.Path) { UseShellExecute = true });
+            return;
+        }
+
         var preset = _presets.Get(LayoutMode);
         var path = Path.Combine(_presets.ResolveDirectory(preset.Id), preset.Stylesheet);
         if (!File.Exists(path))

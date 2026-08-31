@@ -7,9 +7,13 @@ namespace ManiaMapAnalyzerOverlay.Avalonia.Models;
 /// </summary>
 public sealed class OverlayPresetDefinition
 {
-    public string Id { get; set; } = "default";
+    public string Id { get; set; } = "companella";
     public string Name { get; set; } = string.Empty;
     public string? NameRu
+    {
+        get; set;
+    }
+    public string? BasePresetId
     {
         get; set;
     }
