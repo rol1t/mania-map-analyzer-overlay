@@ -8,6 +8,13 @@ Each platform payload must contain exactly one launcher executable. The build
 scripts enforce this and execute the published binary in verification mode to
 extract and validate its embedded runtime payload and updater helper.
 
+## 2.5.1 release notes
+
+- Fixed component preparation failing after ManiaMapAnalyser renamed its plugin archive in v3.0.0.
+- Accepts both the legacy archive name and the versioned plugin-only archive matching the release tag.
+- Keeps desktop-shell and bridge downloads excluded and preserves SHA-256 verification.
+- Adds regression tests for archive selection and root-level plugin contents.
+
 ## 2.5.0 release notes
 
 - Added synchronized Rice/LN difficulty timelines and the readable Radar, Glass, and Replay presentation presets.

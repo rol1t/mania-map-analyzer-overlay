@@ -38,21 +38,23 @@ public sealed class ComponentInstallerTests
         Assert.False(File.Exists(Path.Combine(tosuRoot, "tosu.exe.new")));
     }
 
-    [Fact]
-    public async Task InstallsAddonUnderInjectedTosuStaticRoot()
+    [Theory]
+    [InlineData("package/")]
+    [InlineData("")]
+    public async Task InstallsAddonUnderInjectedTosuStaticRoot(string archivePrefix)
     {
         using var root = new TemporaryDirectory();
         string tosuRoot = Path.Combine(root.Path, "tosu");
         var downloader = new ArchiveDownloader((destination, _) =>
         {
             using var archive = ZipFile.Open(destination, ZipArchiveMode.Create);
-            ZipArchiveEntry metadata = archive.CreateEntry("package/metadata.txt");
+            ZipArchiveEntry metadata = archive.CreateEntry(archivePrefix + "metadata.txt");
             using (var writer = new StreamWriter(metadata.Open()))
             {
                 writer.Write("Name: ManiaMapAnalyser\n");
             }
 
-            ZipArchiveEntry asset = archive.CreateEntry("package/runtime.js");
+            ZipArchiveEntry asset = archive.CreateEntry(archivePrefix + "runtime.js");
             using var assetWriter = new StreamWriter(asset.Open());
             assetWriter.Write("runtime");
         });

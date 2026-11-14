@@ -36,6 +36,9 @@ jobs:
         run: dotnet build ManiaMapAnalyzerOverlay.sln --configuration Release --no-restore --nologo
       - name: Run tests
         run: dotnet test ManiaMapAnalyzerOverlay.sln --configuration Release --no-build --nologo
+      - name: Test addon release selection in maintenance updater
+        shell: pwsh
+        run: ./tests/Packaging/addon-release-selection.test.ps1
       - name: Run production Pause Coach runtime tests
         run: node tests/Runtime/pause-coach-runtime.test.js
       - name: Run adapter Pause Coach integration tests

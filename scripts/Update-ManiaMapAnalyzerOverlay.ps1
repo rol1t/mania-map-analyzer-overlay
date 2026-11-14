@@ -115,6 +115,12 @@ function Get-ReleaseAsset($Release, [string]$NamePattern) {
     return $assets[0]
 }
 
+function Get-AddonReleaseAsset($Release) {
+    $version = [regex]::Escape(([string]$Release.tag_name).Trim().TrimStart('v', 'V'))
+    $pattern = '^ManiaMapAnalyser(?:\.by\.Leo_Black|-by-Leo_Black-v' + $version + ')\.zip$'
+    return Get-ReleaseAsset $Release $pattern
+}
+
 function ConvertTo-Version([string]$Value) {
     if ([string]::IsNullOrWhiteSpace($Value)) { return [version]'0.0.0.0' }
     $normalized = $Value.Trim().TrimStart('v', 'V')
@@ -584,7 +590,7 @@ try {
     $tosuRelease = Get-LatestRelease 'tosuapp/tosu'
     $addonRelease = Get-LatestRelease 'LeoBlackMT/osumania_map_analyser'
     $tosuAsset = Get-ReleaseAsset $tosuRelease '^tosu-windows-v.*\.zip$'
-    $addonAsset = Get-ReleaseAsset $addonRelease '^ManiaMapAnalyser\.by\.Leo_Black\.zip$'
+    $addonAsset = Get-AddonReleaseAsset $addonRelease
 
     $result.LatestTosu = [string]$tosuRelease.tag_name
     $result.LatestAddon = [string]$addonRelease.tag_name

@@ -161,7 +161,7 @@ public sealed class UpdateService : IDisposable
             }
 
             var tosuAsset = FindAsset(tosuRelease, tosuPattern);
-            var addonAsset = FindAsset(addonRelease, "^ManiaMapAnalyser\\.by\\.Leo_Black\\.zip$");
+            var addonAsset = FindAddonAsset(addonRelease);
             if (tosuAsset is null)
             {
                 throw new InvalidOperationException("The latest tosu release does not contain a compatible archive for this platform.");
@@ -418,6 +418,15 @@ STATIC_FOLDER_PATH=./static
         var assets = release.Assets.Where(asset => System.Text.RegularExpressions.Regex.IsMatch(asset.Name, pattern,
             System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
         return assets.Length == 1 ? assets[0] : null;
+    }
+
+    internal static GitHubAsset? FindAddonAsset(GitHubRelease release)
+    {
+        // v3 introduced versioned, hyphenated filenames alongside separate
+        // desktop-shell and bridge packages. Only the plugin belongs in Tosu.
+        string version = System.Text.RegularExpressions.Regex.Escape(release.TagName.Trim().TrimStart('v', 'V'));
+        return FindAsset(release,
+            "^ManiaMapAnalyser(?:\\.by\\.Leo_Black|-by-Leo_Black-v" + version + ")\\.zip$");
     }
 
     private static bool TryGetTosuAssetPattern(out string pattern)
